@@ -1,2 +1,2 @@
 # AutoComic
-An advanced comedy creates automatic flow
+An advanced video creates automatic flow
