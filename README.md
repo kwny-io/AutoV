@@ -1,5 +1,7 @@
 # AutoV
 
+> An advanced video creates automatic flow
+
 短剧 / 漫剧企业级生产平台的工程仓库。
 
 本仓库当前处于 **骨架阶段**：目录、服务元数据、契约与设计文档已经就位，业务服务尚未实现。所有服务的 `maturity` 均为 `design_only`。
