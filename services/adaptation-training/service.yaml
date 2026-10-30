@@ -1,0 +1,41 @@
+# S48 · LoRA与模型适配训练
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S48
+slug: adaptation-training
+name: LoRA与模型适配训练
+maturity: design_only
+
+domain: assets
+owner_team: assets
+schema_owner: adaptation_training
+deployment_unit: adaptation-training
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: TrainingJob/DatasetManifest/BaseModelCompatibility/LoRAArtifact/Evaluation/训练额度
+
+api:
+  command: POST /training-jobs
+  query: GET /adaptation-artifacts/{id}
+
+publishes:
+  - event_type: adaptation.training.completed
+    topic: drama.adaptation-training.v2
+    retention_days: 14
+
+depends_on:
+  - S23
+  - S22
+  - S28
+  - S11
+  - S24
+
+runtime:
+  scaling: 专用GPU队列、长checkpoint、训练与在线推理隔离
+  recovery: 训练checkpoint续跑；基座不兼容禁止挂载；授权撤销停止新训练
+
+acceptance: LoRA基座/hash与数据来源可追溯；训练不占满在线生成资源
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

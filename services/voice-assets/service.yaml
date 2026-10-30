@@ -1,0 +1,38 @@
+# S15 · 音色与声音授权
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S15
+slug: voice-assets
+name: 音色与声音授权
+maturity: design_only
+
+domain: assets
+owner_team: assets
+schema_owner: voice_assets
+deployment_unit: voice-assets
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: VoiceRevision/provider_voice映射/发音词典/克隆资格/授权撤销状态
+
+api:
+  command: POST /voices/{id}/revisions
+  query: GET /voices/{id}/bindings
+
+publishes:
+  - event_type: asset.voice.authorization.changed
+    topic: drama.voice-assets.v2
+    retention_days: 14
+
+depends_on:
+  - S28
+  - S01
+
+runtime:
+  scaling: 按语言与供应商池扩容；克隆准备独立任务
+  recovery: 撤销状态实时验证；不自动换成相似声线；保留来源审计
+
+acceptance: 跨供应商映射回归；未授权音色不可新调用
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

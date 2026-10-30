@@ -1,0 +1,40 @@
+# S26 · 统一生成任务协调
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S26
+slug: generation-jobs
+name: 统一生成任务协调
+maturity: design_only
+
+domain: execution
+owner_team: execution
+schema_owner: generation_jobs
+deployment_unit: generation-jobs
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: GenerationAttempt/ProviderJob/SubmissionIntent/准入Saga/幂等键/提交不确定状态
+
+api:
+  command: POST /generation-jobs
+  query: GET /generation-jobs/{id}
+
+publishes:
+  - event_type: generation.job.state-changed
+    topic: drama.generation-jobs.v2
+    retention_days: 14
+
+depends_on:
+  - S25
+  - S22
+  - S23
+  - S27
+
+runtime:
+  scaling: 按provider/account/region任务分片；轮询合并退避
+  recovery: 使用预算token与quota permit后持久化提交意图；无供应商幂等的未知提交不重提
+
+acceptance: LLM/VLM/图像/视频/TTS全经本服务；单任务不会因超时盲目重复付费
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

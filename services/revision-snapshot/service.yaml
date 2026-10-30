@@ -1,0 +1,37 @@
+# S08 · 版本快照与接受状态
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S08
+slug: revision-snapshot
+name: 版本快照与接受状态
+maturity: design_only
+
+domain: control
+owner_team: workflow
+schema_owner: revision_snapshot
+deployment_unit: revision-snapshot
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: EpisodeManifestRevision/accepted pointers/generation epoch/节点锁/AcceptanceCommit；当前生产状态唯一权威
+
+api:
+  command: POST /manifests/{id}:commit
+  query: GET /manifests/{id}/revisions/{revision}
+
+publishes:
+  - event_type: snapshot.manifest.committed
+    topic: drama.revision-snapshot.v2
+    retention_days: 14
+
+depends_on:
+  - S03
+
+runtime:
+  scaling: 按project串行CAS，跨项目水平分区
+  recovery: 唯一写主与fencing；提交事务+Outbox；接受旧epoch时拒绝
+
+acceptance: 旧结果、旧审核、旧QC不能切换当前指针；回滚生成新manifest而非改历史
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

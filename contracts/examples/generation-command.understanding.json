@@ -1,0 +1,76 @@
+{
+  "schema_version": "2.0",
+  "context": {
+    "schema_version": "2.0",
+    "tenant_id": "tenant_demo",
+    "project_id": "project_demo",
+    "series_id": "series_demo",
+    "branch_id": "canon",
+    "episode_id": "ep3",
+    "home_region": "region_demo",
+    "home_cell": "cell_a1",
+    "manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 12,
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "node_id": "shot_3_2.understanding",
+    "node_epoch": 4,
+    "execution_fence": 2,
+    "memory_checkpoint": {
+      "branch_id": "canon",
+      "commit_sequence": 27,
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "policy_ref": {
+      "service_id": "S02",
+      "id": "policy_demo",
+      "revision": 3,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "actor": {
+      "principal_id": "user_demo",
+      "principal_type": "human",
+      "delegation_id": "delegation_demo"
+    },
+    "command_id": "cmd_understanding_demo",
+    "request_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "trace_id": "trace_demo"
+  },
+  "attempt_id": "attempt_understanding_demo",
+  "variation_nonce": "variation_0",
+  "idempotency_key": "ep3:node4:understanding:attempt1",
+  "modality": "understanding",
+  "input": {
+    "media_refs": [
+      {
+        "service_id": "S28",
+        "id": "clip_demo",
+        "revision": 1,
+        "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "question": "检查右手持钥匙动作是否自然。",
+    "context_pack_ref": {
+      "service_id": "S18",
+      "id": "ctx_qc",
+      "revision": 1,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "output_schema_id": "qc-report-v1"
+  },
+  "route_policy_ref": {
+    "service_id": "S25",
+    "id": "routing_demo",
+    "revision": 1,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "template_ref": {
+    "service_id": "S20",
+    "id": "template_understanding_demo",
+    "revision": 1,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "budget_scope_id": "budget_ep3",
+  "deadline": "2026-10-29T23:30:00+08:00"
+}

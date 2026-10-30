@@ -1,0 +1,39 @@
+# S38 · 字幕与本地化
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S38
+slug: subtitles
+name: 字幕与本地化
+maturity: design_only
+
+domain: post
+owner_team: post
+schema_owner: subtitles
+deployment_unit: subtitles
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: SubtitleRevision/字幕文本排版/语言/时间码/安全区与交付格式
+
+api:
+  command: POST /subtitle-jobs
+  query: GET /subtitle-tracks/{id}
+
+publishes:
+  - event_type: post.subtitle.ready
+    topic: drama.subtitles.v2
+    retention_days: 14
+
+depends_on:
+  - S37
+  - S41
+  - S28
+
+runtime:
+  scaling: 按字幕条数和本地化作业扩容
+  recovery: EDL变化只重算相关时码；翻译新revision需验收
+
+acceptance: 字幕后期合成；对白文本与字幕版本关联，不交给视频模型画字
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

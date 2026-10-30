@@ -1,0 +1,63 @@
+design_version: '2.0'
+not_an_executable_workflow: true
+interactions:
+- id: accept_script_to_memory
+  steps:
+  - from: S40
+    to: S02
+    action: validate_review_decision
+  - from: S40
+    to: S08
+    action: request_acceptance_CAS
+  - from: S08
+    to: S16
+    event: snapshot.manifest.committed
+  - from: S16
+    to: S18
+    event: memory.canon.committed
+  - from: S16
+    to: S09
+    event: memory.canon.committed
+- id: paid_admission
+  steps:
+  - from: S26
+    to: S23
+    action: reserve_budget
+  - from: S26
+    to: S22
+    action: acquire_permit
+  - from: S26
+    to: S23
+    action: confirm_authorization
+  - from: S26
+    to: S22
+    action: confirm_dispatch_permit
+  - from: S26
+    to: S27
+    action: issue_fenced_dispatch_grant
+  - from: S27
+    to: S26
+    event: connector.observation.received
+  - from: S26
+    to: S23
+    action: accrue_and_settle
+  - from: S26
+    to: S22
+    action: release_confirmed_terminal_permit
+- id: local_change
+  steps:
+  - from: S07
+    to: S06
+    action: prepare_revision
+  - from: S07
+    to: S09
+    action: impact_closure
+  - from: S07
+    to: S02
+    action: evaluate_change_policy
+  - from: S07
+    to: S08
+    action: commit_manifest_and_affected_node_epochs
+  - from: S08
+    to: S21
+    event: snapshot.manifest.committed

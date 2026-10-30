@@ -1,0 +1,446 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/generation-request.v1.schema.json",
+  "title": "Normalized GenerationRequest v1 (MVP: video/image/speech)",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "episode_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "variation_nonce": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "modality": {
+      "type": "string",
+      "enum": [
+        "video",
+        "image",
+        "speech"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "budget_cap": {
+      "type": "object",
+      "properties": {
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      },
+      "required": [
+        "amount_minor",
+        "currency"
+      ],
+      "additionalProperties": false
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "tenant_id",
+    "project_id",
+    "episode_id",
+    "run_id",
+    "node_id",
+    "epoch",
+    "attempt_id",
+    "variation_nonce",
+    "idempotency_key",
+    "modality",
+    "input",
+    "budget_cap",
+    "deadline",
+    "policy_version",
+    "template_version",
+    "trace_id"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "modality": {
+            "const": "video"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "prompt_intent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "shot_revision": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "revision"
+                ],
+                "additionalProperties": false
+              },
+              "duration_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "aspect_ratio": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resolution": {
+                "type": "object",
+                "properties": {
+                  "width": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "references": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "artifact_id": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "character",
+                        "scene",
+                        "style",
+                        "first_frame",
+                        "last_frame",
+                        "video_reference",
+                        "audio_reference",
+                        "mask"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "artifact_id",
+                    "sha256",
+                    "role"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "audio_strategy": {
+                "type": "string",
+                "enum": [
+                  "silent_then_tts",
+                  "native_locked_voice",
+                  "non_dialogue_native"
+                ]
+              },
+              "required_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "allow_trim": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "prompt_intent",
+              "shot_revision",
+              "duration_seconds",
+              "aspect_ratio",
+              "resolution",
+              "references",
+              "audio_strategy",
+              "required_capabilities",
+              "allow_trim"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modality": {
+            "const": "image"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "prompt_intent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "generate",
+                  "edit"
+                ]
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "references": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "artifact_id": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "character",
+                        "scene",
+                        "style",
+                        "first_frame",
+                        "last_frame",
+                        "video_reference",
+                        "audio_reference",
+                        "mask"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "artifact_id",
+                    "sha256",
+                    "role"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "identity_constraints": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "prompt_intent",
+              "mode",
+              "width",
+              "height",
+              "references",
+              "identity_constraints"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modality": {
+            "const": "speech"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "locale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "voice_binding": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "revision"
+                ],
+                "additionalProperties": false
+              },
+              "emotion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pronunciation_lexicon": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "output_spec": {
+                "type": "object",
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "wav",
+                      "flac",
+                      "mp3"
+                    ]
+                  },
+                  "sample_rate_hz": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "format",
+                  "sample_rate_hz"
+                ],
+                "additionalProperties": false
+              },
+              "require_alignment": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "text",
+              "locale",
+              "voice_binding",
+              "emotion",
+              "pronunciation_lexicon",
+              "output_spec",
+              "require_alignment"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ]
+}

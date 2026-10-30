@@ -1,0 +1,28 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "event_demo",
+  "source": "/cells/cell_a1/services/S16",
+  "type": "memory.canon.committed",
+  "subject": "series_demo/canon",
+  "time": "2026-10-29T20:00:00+08:00",
+  "tenant_id": "tenant_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "series_demo:canon",
+  "aggregate_sequence": 27,
+  "correlation_id": "cmd_accept_ep2",
+  "causation_id": "event_manifest_ep2_8",
+  "traceparent": "00-00000000000000000000000000000001-0000000000000001-01",
+  "data": {
+    "commit_sequence": 27,
+    "changed_claim_refs": [
+      {
+        "service_id": "S16",
+        "id": "claim_key_owner",
+        "revision": 2,
+        "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "data_ref": null
+}

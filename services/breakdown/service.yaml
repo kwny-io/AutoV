@@ -1,0 +1,38 @@
+# S05 · 分集分场
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S05
+slug: breakdown
+name: 分集分场
+maturity: design_only
+
+domain: creation
+owner_team: creation
+schema_owner: breakdown
+deployment_unit: breakdown
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: Scene稳定ID、SceneBreakdownRevision、角色道具需求清单
+
+api:
+  command: POST /breakdowns
+  query: GET /breakdowns/{id}
+
+publishes:
+  - event_type: breakdown.revision.created
+    topic: drama.breakdown.v2
+    retention_days: 14
+
+depends_on:
+  - S04
+  - S19
+
+runtime:
+  scaling: 按分解任务数与文本长度扩容
+  recovery: 重试相同command返回同一场次分解；不重复造场次ID
+
+acceptance: 场次关联到固定剧本版本；显示序号与ID分离
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

@@ -1,0 +1,25 @@
+# veo / official
+
+provider: veo
+channel: official
+description: "Veo 各官方渠道"
+status: disabled
+
+# 真实供应商全默认 disabled；官方文档与账户探测后 validating → active
+lifecycle: disabled
+evidence_checked_at: null
+
+protocol:
+  - capabilities
+  - validate
+  - estimate
+  - submit
+  - get_status
+  - cancel
+  - verify_callback
+  - fetch_manifest
+
+# 连接器只做参数映射与协议处理，无权换模型、调预算或接受成片
+may_change_model: false
+may_adjust_budget: false
+may_accept_output: false

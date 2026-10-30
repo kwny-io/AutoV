@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/enterprise-change-plan.v2.schema.json",
+  "title": "enterprise-change-plan v2",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "context": {
+      "$ref": "execution-context.v2.schema.json"
+    },
+    "base_manifest_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prepared_revision_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^S[0-9]{2}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "service_id",
+          "id",
+          "revision",
+          "content_hash"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target_ref": {
+            "type": "object",
+            "properties": {
+              "service_id": {
+                "type": "string",
+                "pattern": "^S[0-9]{2}$"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "service_id",
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "before": {
+            "type": [
+              "object",
+              "array",
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "after": {
+            "type": [
+              "object",
+              "array",
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "target_ref",
+          "path",
+          "before",
+          "after"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "derived_adjustments": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "impact": {
+      "type": "object",
+      "properties": {
+        "regenerate_node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recheck_node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reuse_artifact_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "service_id": {
+                "type": "string",
+                "pattern": "^S[0-9]{2}$"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "service_id",
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "affected_episode_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "superseded_claim_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "service_id": {
+                "type": "string",
+                "pattern": "^S[0-9]{2}$"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "service_id",
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "lineage_watermark": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "regenerate_node_ids",
+        "recheck_node_ids",
+        "reuse_artifact_refs",
+        "affected_episode_ids",
+        "superseded_claim_refs",
+        "lineage_watermark"
+      ],
+      "additionalProperties": false
+    },
+    "memory_migration_required": {
+      "type": "boolean"
+    },
+    "required_policy_decisions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "estimated_cost_upper_micro": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "schema_version",
+    "plan_id",
+    "plan_hash",
+    "context",
+    "base_manifest_ref",
+    "instruction",
+    "prepared_revision_refs",
+    "patches",
+    "derived_adjustments",
+    "impact",
+    "memory_migration_required",
+    "required_policy_decisions",
+    "blocking_issues",
+    "estimated_cost_upper_micro",
+    "currency",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,39 @@
+# S04 · 创意与剧本
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S04
+slug: narrative
+name: 创意与剧本
+maturity: design_only
+
+domain: creation
+owner_team: creation
+schema_owner: narrative
+deployment_unit: narrative
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: BriefRevision/ScriptRevision/DialogueRevision/StoryArcProposal；剧本草稿事实
+
+api:
+  command: POST /scripts/{id}/revisions
+  query: GET /scripts/{id}/revisions/{revision}
+
+publishes:
+  - event_type: narrative.script.revision.created
+    topic: drama.narrative.v2
+    retention_days: 14
+
+depends_on:
+  - S03
+  - S18
+  - S19
+
+runtime:
+  scaling: 按创作请求与LLM额度独立Worker池
+  recovery: 创作失败保留上个版本与Agent检查点；候选不写入正式记忆
+
+acceptance: 改稿追加版本；未接受剧本不能提交为正史
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

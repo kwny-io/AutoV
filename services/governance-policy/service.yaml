@@ -1,0 +1,37 @@
+# S02 · 治理与自动化策略
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S02
+slug: governance-policy
+name: 治理与自动化策略
+maturity: design_only
+
+domain: enterprise
+owner_team: platform
+schema_owner: governance_policy
+deployment_unit: governance-policy
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: AutomationPolicyRevision/GateRule/PolicyDecision/PolicyException；策略发布指针
+
+api:
+  command: POST /policies/{id}/revisions
+  query: POST /policy-decisions:evaluate
+
+publishes:
+  - event_type: policy.revision.published
+    topic: drama.governance-policy.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+
+runtime:
+  scaling: 按策略决策QPS扩容；版本化本地缓存
+  recovery: 已固定策略可读取；无法确认新授权时停止新增付费动作；语义策略热更需显式checkpoint
+
+acceptance: 项目→单集→阶段→节点覆盖正确；安全/预算硬约束不能被低级覆盖
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

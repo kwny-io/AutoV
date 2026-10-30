@@ -1,0 +1,38 @@
+# S19 · Agent运行与工具沙箱
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S19
+slug: agent-runtime
+name: Agent运行与工具沙箱
+maturity: design_only
+
+domain: agents
+owner_team: agents
+schema_owner: agent_runtime
+deployment_unit: agent-runtime
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: AgentDefinitionRevision/AgentTask/执行步骤/工具调用审计/输出校验/允许工具集
+
+api:
+  command: POST /agent-tasks
+  query: GET /agent-tasks/{id}
+
+publishes:
+  - event_type: agent.task.completed
+    topic: drama.agent-runtime.v2
+    retention_days: 14
+
+depends_on:
+  - S02
+  - S26
+
+runtime:
+  scaling: 每个Agent角色独立Deployment/Task Queue/配额，复用运行镜像
+  recovery: 有界循环与检查点；所有模型调用经S26，工具不直接拿密钥
+
+acceptance: 编剧/分场/导演等角色工具权限不同；LLM不能绕过预算与接受门
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

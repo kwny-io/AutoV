@@ -1,0 +1,11 @@
+flowchart TB
+ EDGE[全局入口 / Tenant Directory] --> R1[Region A]
+ EDGE --> R2[Region B]
+ R1 --> C1[共享cell A1]
+ R1 --> C2[企业专属cell A2]
+ R2 --> C3[共享cell B1]
+ C1 --> CPU[创作与控制CPU池]
+ C1 --> IO[供应商连接与媒体IO池]
+ C1 --> GPU[质检 / 口型 / 渲染GPU池]
+ C1 --> DATA[各服务DB / Kafka / Temporal / Object Store]
+ DATA -. 受数据驻留约束的备份 .-> DR[同域或授权灾备region]

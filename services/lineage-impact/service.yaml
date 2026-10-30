@@ -1,0 +1,37 @@
+# S09 · 依赖溯源与影响分析
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S09
+slug: lineage-impact
+name: 依赖溯源与影响分析
+maturity: design_only
+
+domain: control
+owner_team: workflow
+schema_owner: lineage_impact
+deployment_unit: lineage-impact
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: Artifact/Revision/Memory claim引用边、字段投影、影响索引；内容事实由原服务持有
+
+api:
+  command: POST /lineage-edges
+  query: POST /impact-queries
+
+publishes:
+  - event_type: lineage.impact.computed
+    topic: drama.lineage-impact.v2
+    retention_days: 14
+
+depends_on:
+  - S08
+
+runtime:
+  scaling: 按项目分片；大型图按revision分段；拓扑查询CPU扩容
+  recovery: 投影落后时返回watermark；提交影响计划前缺边fail-closed或保守重检
+
+acceptance: 记忆事实改动可定位后续集、上下文包、剧本和镜头
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

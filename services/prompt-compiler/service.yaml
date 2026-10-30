@@ -1,0 +1,38 @@
+# S20 · Prompt模板与编译
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S20
+slug: prompt-compiler
+name: Prompt模板与编译
+maturity: design_only
+
+domain: agents
+owner_team: agents
+schema_owner: prompt_compiler
+deployment_unit: prompt-compiler
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: TemplateRevision/供应商映射/CompiledPromptManifest/编译回归结果
+
+api:
+  command: POST /prompt-compilations
+  query: GET /templates/{id}/revisions/{revision}
+
+publishes:
+  - event_type: prompt.compiled
+    topic: drama.prompt-compiler.v2
+    retention_days: 14
+
+depends_on:
+  - S24
+  - S10
+
+runtime:
+  scaling: 编译CPU与模板评测分离；按模型版本缓存
+  recovery: 必需字段不支持报错；固定模板版本可离线重编译
+
+acceptance: 导演意图保留；主体参考顺序正确；对白文本不被编译改写
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

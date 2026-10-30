@@ -1,0 +1,38 @@
+# S16 · 跨集记忆与正史
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S16
+slug: story-memory
+name: 跨集记忆与正史
+maturity: design_only
+
+domain: memory
+owner_team: memory
+schema_owner: story_memory
+deployment_unit: story-memory
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: CanonBranch/ClaimRevision/StoryEvent/EntityState/Relationship/KnowledgeState/PlotThread/双时间版本/记忆接受批次
+
+api:
+  command: POST /memory-commits
+  query: POST /memory-queries
+
+publishes:
+  - event_type: memory.canon.committed
+    topic: drama.story-memory.v2
+    retention_days: 14
+
+depends_on:
+  - S08
+  - S19
+
+runtime:
+  scaling: 按tenant/series/branch分片；结构化查询主，搜索索引辅
+  recovery: 消费已接受manifest后幂等提取；记忆checkpoint未就绪时阻止依赖集生成
+
+acceptance: 谁知道什么、钥匙归属、伤势、伏笔跨集正确；改前集触发失效
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

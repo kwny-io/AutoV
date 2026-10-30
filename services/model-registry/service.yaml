@@ -1,0 +1,37 @@
+# S24 · 模型能力与价格注册
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S24
+slug: model-registry
+name: 模型能力与价格注册
+maturity: design_only
+
+domain: models
+owner_team: models
+schema_owner: model_registry
+deployment_unit: model-registry
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: CapabilitySnapshot/PriceSnapshot/ProviderAccountPool/生命周期/能力探测与健康
+
+api:
+  command: POST /capability-snapshots
+  query: GET /model-candidates
+
+publishes:
+  - event_type: model.capability.changed
+    topic: drama.model-registry.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+
+runtime:
+  scaling: 按渠道/版本分片缓存；探测独立低配额
+  recovery: 过期/退役候选被过滤；探测不消耗业务预留外费用
+
+acceptance: 七家渠道能力按版本与地区建模；不把历史端点当active
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

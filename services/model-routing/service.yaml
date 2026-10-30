@@ -1,0 +1,39 @@
+# S25 · 模型路由与估价
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S25
+slug: model-routing
+name: 模型路由与估价
+maturity: design_only
+
+domain: models
+owner_team: models
+schema_owner: model_routing
+deployment_unit: model-routing
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: RouteDecision/候选拒绝原因/策略版本/报价有效期；不拥有余额或最终任务
+
+api:
+  command: POST /route-decisions
+  query: GET /route-decisions/{id}
+
+publishes:
+  - event_type: model.route.selected
+    topic: drama.model-routing.v2
+    retention_days: 14
+
+depends_on:
+  - S24
+  - S20
+  - S02
+
+runtime:
+  scaling: 按候选评分QPS扩容；评估数据带样本数与水位
+  recovery: 无可行候选明确失败；过期报价重新准入；不自动丢必需参考
+
+acceptance: 能力先过滤再评分；成本含下游口型和预计返工；决策可解释
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

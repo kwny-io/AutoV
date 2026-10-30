@@ -1,0 +1,39 @@
+# S32 · 口型生产
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S32
+slug: lipsync
+name: 口型生产
+maturity: design_only
+
+domain: production
+owner_team: generation
+schema_owner: lipsync
+deployment_unit: lipsync
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: LipsyncJob/说话人-人脸绑定/驱动音频引用/时序编辑结果
+
+api:
+  command: POST /lipsync-jobs
+  query: GET /lipsync-jobs/{id}
+
+publishes:
+  - event_type: production.lipsync.ready
+    topic: drama.lipsync.v2
+    retention_days: 14
+
+depends_on:
+  - S26
+  - S28
+  - S31
+
+runtime:
+  scaling: 按媒体时长、嘴部可见窗口/GPU池扩容
+  recovery: 多人/遮挡不支持则转策略决策；边界必须复检
+
+acceptance: 口型与锁定音频对齐；低可见度不伪装精确通过
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

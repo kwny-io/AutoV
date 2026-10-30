@@ -1,0 +1,38 @@
+# S33 · 音效生产
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S33
+slug: sound-effects
+name: 音效生产
+maturity: design_only
+
+domain: production
+owner_team: generation
+schema_owner: sound_effects
+deployment_unit: sound-effects
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: SfxCueRevision/音效素材/位置/授权与生成来源
+
+api:
+  command: POST /sfx-jobs
+  query: GET /sfx-cues/{id}
+
+publishes:
+  - event_type: production.sfx.ready
+    topic: drama.sound-effects.v2
+    retention_days: 14
+
+depends_on:
+  - S26
+  - S28
+
+runtime:
+  scaling: 按声效生成量与素材检索扩容
+  recovery: 素材不可用则标记缺口，替代需满足既定许可与音效约束
+
+acceptance: 脚步/关门等跟随EDL重定位；有独立stem与来源
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

@@ -1,0 +1,37 @@
+# S28 · 素材归档与制品目录
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S28
+slug: artifact-ingest
+name: 素材归档与制品目录
+maturity: design_only
+
+domain: media
+owner_team: media
+schema_owner: artifact_ingest
+deployment_unit: artifact-ingest
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ArtifactManifest/hash/位置/TTL导入状态/代理/媒体访问权限与保留策略
+
+api:
+  command: POST /artifact-imports
+  query: GET /artifacts/{id}
+
+publishes:
+  - event_type: artifact.ingested
+    topic: drama.artifact-ingest.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+
+runtime:
+  scaling: 按媒体bytes/s与导入队列扩容；存储region隔离
+  recovery: 先上传暂存后校验再原子发布manifest；下载失败不重生成
+
+acceptance: 供应商URL到期前归档；SSRF/内网/恶意媒体拒绝；不可变hash可验
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

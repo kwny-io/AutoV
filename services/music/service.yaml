@@ -1,0 +1,38 @@
+# S34 · BGM与音乐
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S34
+slug: music
+name: BGM与音乐
+maturity: design_only
+
+domain: production
+owner_team: generation
+schema_owner: music
+deployment_unit: music
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: MusicCueRevision/曲目授权/生成音乐候选/节拍与情绪/循环点
+
+api:
+  command: POST /music-jobs
+  query: GET /music-cues/{id}
+
+publishes:
+  - event_type: production.music.ready
+    topic: drama.music.v2
+    retention_days: 14
+
+depends_on:
+  - S26
+  - S28
+
+runtime:
+  scaling: 音乐生成和授权素材检索独立配额
+  recovery: 变时长重算切点；不能用未获许可曲目填补
+
+acceptance: BGM版本可替换、独立导出；不遮盖对白并可追溯许可
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

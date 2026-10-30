@@ -1,0 +1,23 @@
+flowchart TB
+ U[创作者 / 企业运营 / 外部Agent] --> G[API Gateway / WAF / 身份接入]
+ G --> B[Studio BFF / Developer API / MCP]
+ B --> ENT[企业：S01访问 S02策略 S45审计]
+ B --> CREATE[创作：S03项目 S04剧本 S05分场 S06分镜]
+ B --> CTL[控制：S07变更 S08快照 S09依赖图 S21编排]
+ CREATE --> MEM[记忆：S16正史 S17连续性 S18上下文]
+ CREATE --> AR[Agent：S19角色运行池 S20Prompt编译]
+ CTL --> GOV[S40审核 / S22调度 / S23预算]
+ CTL --> PROD[生产：S29图像 S30视频 S31配音 S32口型 S33音效 S34音乐]
+ PROD --> MODEL[S24能力价格 S25路由 S26任务 S27独立供应商连接器]
+ AR --> MODEL
+ MODEL --> V[外部模型 / 自托管推理]
+ PROD --> MEDIA[S28归档与制品 / S48适配训练]
+ CTL --> ASSET[S10目录 S11角色 S12服装 S13场景 S14道具 S15音色]
+ MEDIA --> QC[S35技术QC S36语义时序QC S37音频对齐 S39修复]
+ QC --> GOV
+ CTL --> POST[S38字幕 S41剪辑 S42混音合成 S43交付]
+ POST --> METRIC[S44评测经营 / S47实时投影]
+ BUS[区域事件总线 / Outbox Inbox / Schema Registry] -.-> CTL
+ BUS -.-> MEM
+ BUS -.-> QC
+ BUS -.-> METRIC

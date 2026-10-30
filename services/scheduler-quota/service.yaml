@@ -1,0 +1,38 @@
+# S22 · 调度与供应商配额
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S22
+slug: scheduler-quota
+name: 调度与供应商配额
+maturity: design_only
+
+domain: execution
+owner_team: execution
+schema_owner: scheduler_quota
+deployment_unit: scheduler-quota
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: PriorityQueue/QuotaPool/Permit/账号与区域在途槽/公平调度/执行租约
+
+api:
+  command: POST /permits:acquire
+  query: GET /quota-pools/{id}
+
+publishes:
+  - event_type: scheduler.permit.changed
+    topic: drama.scheduler-quota.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+  - S24
+
+runtime:
+  scaling: 按account-pool单写计数，跨池水平扩展；租户WFQ+aging
+  recovery: 租约到期不直接释放供应商在途槽；查询确认终态后释放
+
+acceptance: Redis丢失不超并发；账号跨租户共享上限仍严格守恒
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

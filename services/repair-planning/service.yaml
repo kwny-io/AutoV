@@ -1,0 +1,41 @@
+# S39 · 返工与修复决策
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S39
+slug: repair-planning
+name: 返工与修复决策
+maturity: design_only
+
+domain: quality
+owner_team: quality
+schema_owner: repair_planning
+deployment_unit: repair-planning
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: RepairPlan/缺陷归因/修复动作/尝试上限/局部影响；费用权威在S23
+
+api:
+  command: POST /repair-plans
+  query: GET /repair-plans/{id}
+
+publishes:
+  - event_type: quality.repair.planned
+    topic: drama.repair-planning.v2
+    retention_days: 14
+
+depends_on:
+  - S35
+  - S36
+  - S37
+  - S09
+  - S02
+
+runtime:
+  scaling: 按缺陷积压与修复计划QPS扩容
+  recovery: 跨run计数与预算由权威服务检查；次数耗尽交审核或隔离
+
+acceptance: 视频修复需时序能力；策略不能套子工作流绕过返工上限
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

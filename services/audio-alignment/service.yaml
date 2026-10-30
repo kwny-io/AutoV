@@ -1,0 +1,39 @@
+# S37 · 音频理解与对齐质检
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S37
+slug: audio-alignment
+name: 音频理解与对齐质检
+maturity: design_only
+
+domain: quality
+owner_team: quality
+schema_owner: audio_alignment
+deployment_unit: audio-alignment
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ASR/forced alignment/字音素时间码/说话人/音画偏移与音色评估
+
+api:
+  command: POST /alignment-jobs
+  query: GET /alignment-reports/{id}
+
+publishes:
+  - event_type: quality.alignment.completed
+    topic: drama.audio-alignment.v2
+    retention_days: 14
+
+depends_on:
+  - S28
+  - S26
+  - S15
+
+runtime:
+  scaling: 按音频秒数、语言与GPU扩容
+  recovery: 对齐不确定保留置信区间；文本冲突不自动改剧本
+
+acceptance: 口型检查使用连续音视频；错读/漏词与字幕偏移有独立证据
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

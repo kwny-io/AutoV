@@ -1,0 +1,41 @@
+# S42 · 混音与合成渲染
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S42
+slug: composition
+name: 混音与合成渲染
+maturity: design_only
+
+domain: post
+owner_team: post
+schema_owner: composition
+deployment_unit: composition
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: RenderJob/MixJob/分片检查点/滤镜图/成片候选manifest
+
+api:
+  command: POST /render-jobs
+  query: GET /render-jobs/{id}
+
+publishes:
+  - event_type: post.master.rendered
+    topic: drama.composition.v2
+    retention_days: 14
+
+depends_on:
+  - S41
+  - S38
+  - S33
+  - S34
+  - S28
+
+runtime:
+  scaling: 按输出像素秒/GPU/CPU独立资源池；长渲染分片
+  recovery: heartbeat+分片hash恢复；资源限制沙箱；不重复转码原始源
+
+acceptance: 音轨与字幕可分离导出；帧边界、色彩、响度与画幅一致
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

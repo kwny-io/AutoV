@@ -1,0 +1,39 @@
+# S18 · 上下文检索与组装
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S18
+slug: context-retrieval
+name: 上下文检索与组装
+maturity: design_only
+
+domain: memory
+owner_team: memory
+schema_owner: context_retrieval
+deployment_unit: context-retrieval
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ContextPackRevision/检索过滤/引用与token预算/记忆水位；不拥有正史
+
+api:
+  command: POST /context-packs
+  query: GET /context-packs/{id}
+
+publishes:
+  - event_type: context.pack.created
+    topic: drama.context-retrieval.v2
+    retention_days: 14
+
+depends_on:
+  - S16
+  - S10
+  - S09
+
+runtime:
+  scaling: 按检索QPS/索引CPU扩容；租户隔离缓存
+  recovery: 索引落后按memory watermark回源；禁止用旧pack冒充当前事实
+
+acceptance: 分集可见性、角色知情状态、分支、故事时间和权限过滤生效
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

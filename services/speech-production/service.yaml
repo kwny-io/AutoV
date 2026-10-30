@@ -1,0 +1,39 @@
+# S31 · 配音生产
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S31
+slug: speech-production
+name: 配音生产
+maturity: design_only
+
+domain: production
+owner_team: generation
+schema_owner: speech_production
+deployment_unit: speech-production
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: SpeechJob/UtteranceRevision/语音候选/韵律与词典绑定
+
+api:
+  command: POST /speech-jobs
+  query: GET /speech-jobs/{id}
+
+publishes:
+  - event_type: production.speech.ready
+    topic: drama.speech-production.v2
+    retention_days: 14
+
+depends_on:
+  - S15
+  - S26
+  - S28
+
+runtime:
+  scaling: 按语言、音色账户池与音频时长扩容
+  recovery: 音色授权变更重新验证；失败不偷偷换声线
+
+acceptance: 每句对白固定文本和声音版本；原生视频人声不覆盖锁定声音
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

@@ -1,0 +1,50 @@
+{
+  "schema_version": "2.0",
+  "claim_id": "claim_key_owner",
+  "revision": 2,
+  "tenant_id": "tenant_demo",
+  "series_id": "series_demo",
+  "branch_id": "canon",
+  "kind": "entity_state",
+  "status": "accepted",
+  "fact": {
+    "subject_id": "prop_key",
+    "predicate": "held_by",
+    "value": "char_chenmo"
+  },
+  "story_validity": {
+    "clock_id": "story_main",
+    "valid_from_tick": 2000,
+    "valid_to_tick": null
+  },
+  "recorded_at": "2026-10-29T20:00:00+08:00",
+  "commit_sequence": 27,
+  "source_refs": [
+    {
+      "service_id": "S04",
+      "id": "script_ep2",
+      "revision": 5,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "accepted_manifest_ref": {
+    "id": "manifest_ep2",
+    "revision": 8,
+    "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "epistemic_scope": {
+    "perspective": "omniscient",
+    "knower_ids": [],
+    "belief_type": "fact",
+    "audience_reveal_episode_order": 2
+  },
+  "supersedes_claim_refs": [
+    {
+      "service_id": "S16",
+      "id": "claim_key_owner",
+      "revision": 1,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "confidence": 1.0
+}

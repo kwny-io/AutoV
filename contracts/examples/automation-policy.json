@@ -1,0 +1,50 @@
+{
+  "schema_version": "2.0",
+  "policy_id": "policy_demo",
+  "revision": 3,
+  "tenant_id": "tenant_demo",
+  "mode": "exception_assisted",
+  "generation_mode": "auto",
+  "acceptance_mode": "auto_if_qc_pass",
+  "overrides": [
+    {
+      "scope_type": "stage",
+      "scope_id": "canonical_asset",
+      "generation_mode": "auto",
+      "acceptance_mode": "manual",
+      "reviewer_roles": [
+        "director"
+      ],
+      "locked": false
+    },
+    {
+      "scope_type": "node",
+      "scope_id": "shot_3_2.video",
+      "generation_mode": "auto",
+      "acceptance_mode": "manual",
+      "reviewer_roles": [
+        "director"
+      ],
+      "locked": false
+    }
+  ],
+  "repair_limits": {
+    "max_business_attempts_per_shot": 3,
+    "max_identical_strategy_repeats": 1
+  },
+  "exception_behavior": "wait_review",
+  "required_gates": [
+    "canonical_asset",
+    "budget_increase",
+    "external_publish"
+  ],
+  "hard_rules": {
+    "budget_scope_id": "budget_ep3",
+    "rights_required": true,
+    "enforce_data_residency": true,
+    "no_incomplete_formal_delivery": true,
+    "allow_silent_identity_downgrade": false
+  },
+  "effective_at": "2026-10-29T20:00:00+08:00",
+  "created_by": "admin_demo"
+}

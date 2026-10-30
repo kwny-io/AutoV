@@ -1,0 +1,39 @@
+# S40 · 人工审核与接管
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S40
+slug: human-review
+name: 人工审核与接管
+maturity: design_only
+
+domain: governance
+owner_team: platform
+schema_owner: human_review
+deployment_unit: human-review
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ReviewTask/分配/决定/理由/委派/审核截止；决定不直接写接受指针
+
+api:
+  command: POST /review-tasks/{id}/decisions
+  query: GET /review-tasks
+
+publishes:
+  - event_type: review.decision.recorded
+    topic: drama.human-review.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+  - S02
+  - S08
+
+runtime:
+  scaling: 按待审任务/团队队列扩容；审批与读取分池
+  recovery: 旧版本审核标stale；超时按模式等待或阻塞分支，不能伪造通过
+
+acceptance: 四档模式门一致；预算增加与创作接受使用不同权限
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

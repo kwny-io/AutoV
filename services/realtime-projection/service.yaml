@@ -1,0 +1,37 @@
+# S47 · 实时状态与通知投影
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S47
+slug: realtime-projection
+name: 实时状态与通知投影
+maturity: design_only
+
+domain: experience
+owner_team: experience
+schema_owner: realtime_projection
+deployment_unit: realtime-projection
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: RunDashboardProjection/SSECursor/NotificationPreference/通知投递回执
+
+api:
+  command: POST /subscriptions
+  query: GET /runs/{id}/events
+
+publishes:
+  - event_type: projection.cursor.advanced
+    topic: drama.realtime-projection.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+
+runtime:
+  scaling: 按长连接数/事件扇出扩容；按tenant/run分片
+  recovery: 投影可重建；cursor过期要求snapshot重同步；断线不重提生成
+
+acceptance: SSE重复乱序去重；通知只按用户配置渠道与权限发送
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

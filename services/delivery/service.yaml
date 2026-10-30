@@ -1,0 +1,41 @@
+# S43 · 交付与外部分发
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S43
+slug: delivery
+name: 交付与外部分发
+maturity: design_only
+
+domain: post
+owner_team: post
+schema_owner: delivery
+deployment_unit: delivery
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: DeliveryPackage/交付接受状态/签名下载/发布意图与外部回执
+
+api:
+  command: POST /delivery-packages
+  query: GET /delivery-packages/{id}
+
+publishes:
+  - event_type: delivery.package.ready
+    topic: drama.delivery.v2
+    retention_days: 14
+
+depends_on:
+  - S08
+  - S28
+  - S35
+  - S36
+  - S37
+
+runtime:
+  scaling: 按下载带宽与外部分发渠道独立池
+  recovery: 包准备与外部发布分操作；发布需独立授权和幂等回执
+
+acceptance: 无缺口且验收通过才标完整交付；预览水印与正式包明确区分
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

@@ -1,0 +1,18 @@
+sequenceDiagram
+ participant N as S04 Narrative
+ participant M as S16 Memory
+ participant R as S40 Review
+ participant S as S08 Snapshot
+ participant X as S18 Context
+ participant L as S09 Lineage
+ N->>M: Extract candidate claims from fixed script
+ M-->>R: Candidate evidence/conflicts
+ R->>S: Authorized acceptance decision
+ S->>S: CAS manifest + outbox
+ S-->>M: Accepted source manifest event
+ M->>M: Validate source + commit canon checkpoint
+ M-->>X: Canon committed
+ M-->>L: Changed claim refs
+ X->>M: Read minimum checkpoint and scoped facts
+ X-->>N: Versioned ContextPack for next episode
+ L->>L: Compute downstream impact for superseded claims

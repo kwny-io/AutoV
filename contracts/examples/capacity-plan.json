@@ -1,0 +1,25 @@
+{
+  "design_only": true,
+  "daily_shots": 500000,
+  "video_attempts_per_shot": 1.8,
+  "generated_seconds_per_attempt": 5,
+  "mean_inflight_seconds": 300,
+  "peak_factor": 5,
+  "safety_factor": 1.3,
+  "video_bitrate_mbps": 8,
+  "retention_days": 30,
+  "daily_accepted_seconds_per_shot": 4,
+  "all_real_provider_calls_enabled": false,
+  "derived": {
+    "video_attempts_per_day": 900000,
+    "average_requests_per_second": 10.416666666666666,
+    "peak_requests_per_second": 52.08333333333333,
+    "average_inflight": 3125.0,
+    "peak_inflight": 15624.999999999998,
+    "planned_inflight_with_margin": 20313,
+    "video_generated_seconds_per_day": 4500000,
+    "video_terabytes_per_day_decimal": 4.5,
+    "video_retention_terabytes_decimal": 135.0,
+    "accepted_minutes_per_day": 33333.333333333336
+  }
+}

@@ -1,0 +1,885 @@
+openapi: 3.1.0
+info:
+  title: Enterprise Drama Platform API
+  version: 2.0.0-design
+  description: 核心API设计，非完整48服务实现。tenant/actor/home_cell由可信认证派生；客户端context仅能断言预期引用，不自授权限。所有读查询不得隐式付费。
+servers:
+- url: https://api.example.invalid/v2
+  description: placeholder
+security:
+- bearerAuth: []
+paths:
+  /episodes/{episode_id}/runs:
+    post:
+      operationId: createEpisodeRun
+      x-service-id: S21
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context: &id002
+                  $ref: execution-context.v2.schema.json
+                budget_scope_id: &id001
+                  type: string
+                  minLength: 1
+                command_id: *id001
+              required:
+              - context
+              - budget_scope_id
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /runs/{run_id}:
+    get:
+      operationId: getRun
+      x-service-id: S21
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: *id001
+  /runs/{run_id}/commands:
+    post:
+      operationId: commandRun
+      x-service-id: S21
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  enum:
+                  - pause
+                  - resume
+                  - cancel
+                command_id: *id001
+              required:
+              - action
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /runs/{run_id}/events:
+    get:
+      operationId: streamRun
+      x-service-id: S47
+      responses:
+        '200':
+          description: Result
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Cursor expired; reload snapshot before resubscribe
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Last-Event-ID
+        in: header
+        required: false
+        schema: *id001
+  /change-plans:
+    post:
+      operationId: planChange
+      x-service-id: S07
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: enterprise-change-plan.v2.schema.json
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context: *id002
+                instruction: *id001
+                planning_budget_scope_id: *id001
+                command_id: *id001
+              required:
+              - context
+              - instruction
+              - planning_budget_scope_id
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /change-plans/{plan_id}/apply:
+    post:
+      operationId: applyChange
+      x-service-id: S07
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expected_manifest_revision: &id003
+                  type: integer
+                  minimum: 1
+                plan_hash:
+                  type: string
+                  pattern: ^[0-9a-f]{64}$
+                command_id: *id001
+              required:
+              - expected_manifest_revision
+              - plan_hash
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: plan_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /projects/{project_id}/effective-policy:
+    get:
+      operationId: getEffectivePolicy
+      x-service-id: S02
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: automation-policy.v2.schema.json
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema: *id001
+  /policies/{policy_id}/revisions:
+    post:
+      operationId: createPolicyRevision
+      x-service-id: S02
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expected_revision: *id003
+                policy:
+                  $ref: automation-policy.v2.schema.json
+                command_id: *id001
+              required:
+              - expected_revision
+              - policy
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: policy_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /series/{series_id}/memory/query:
+    post:
+      operationId: queryMemory
+      x-service-id: S16
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkpoint: &id004
+                    type: integer
+                    minimum: 0
+                  claims:
+                    type: array
+                    items:
+                      $ref: memory-claim.v2.schema.json
+                required:
+                - checkpoint
+                - claims
+                additionalProperties: false
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id: *id001
+                minimum_checkpoint: *id004
+                story_tick: *id004
+                perspective:
+                  enum:
+                  - omniscient
+                  - character
+                  - audience
+                entity_ids:
+                  type: array
+                  items: *id001
+              required:
+              - branch_id
+              - minimum_checkpoint
+              - story_tick
+              - perspective
+              - entity_ids
+              additionalProperties: false
+      parameters:
+      - name: series_id
+        in: path
+        required: true
+        schema: *id001
+  /series/{series_id}/memory/commits:
+    post:
+      operationId: commitMemory
+      x-service-id: S16
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expected_checkpoint: *id004
+                source_manifest_ref:
+                  type: object
+                claim_refs:
+                  type: array
+                  items:
+                    type: object
+                command_id: *id001
+              required:
+              - expected_checkpoint
+              - source_manifest_ref
+              - claim_refs
+              - command_id
+              additionalProperties: false
+      x-access-boundary: internal_or_explicit_service_scope
+      parameters:
+      - name: series_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /context-packs:
+    post:
+      operationId: createContextPack
+      x-service-id: S18
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: context-pack.v2.schema.json
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context: *id002
+                task_role: *id001
+                token_budget: *id003
+                command_id: *id001
+              required:
+              - context
+              - task_role
+              - token_budget
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /manifests/{manifest_id}/commits:
+    post:
+      operationId: commitManifest
+      x-service-id: S08
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expected_revision: *id003
+                candidate_manifest:
+                  $ref: episode-manifest.v2.schema.json
+                policy_decision_id: *id001
+                command_id: *id001
+              required:
+              - expected_revision
+              - candidate_manifest
+              - policy_decision_id
+              - command_id
+              additionalProperties: false
+      x-access-boundary: internal_or_explicit_service_scope
+      parameters:
+      - name: manifest_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /manifests/{manifest_id}/revisions/{revision}:
+    get:
+      operationId: getManifest
+      x-service-id: S08
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: episode-manifest.v2.schema.json
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-access-boundary: internal_or_explicit_service_scope
+      parameters:
+      - name: manifest_id
+        in: path
+        required: true
+        schema: *id001
+      - name: revision
+        in: path
+        required: true
+        schema: *id003
+  /route-decisions:
+    post:
+      operationId: estimateRoute
+      x-service-id: S25
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  route_id: *id001
+                  feasible:
+                    type: boolean
+                  rejection_reasons:
+                    type: array
+                    items: *id001
+                required:
+                - route_id
+                - feasible
+                - rejection_reasons
+                additionalProperties: false
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                generation_command:
+                  $ref: generation-command.v2.schema.json
+                command_id: *id001
+              required:
+              - generation_command
+              - command_id
+              additionalProperties: false
+      parameters: []
+  /generation-jobs:
+    post:
+      operationId: createGenerationJob
+      x-service-id: S26
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                route_decision_id: *id001
+                generation_command:
+                  $ref: generation-command.v2.schema.json
+                command_id: *id001
+              required:
+              - route_decision_id
+              - generation_command
+              - command_id
+              additionalProperties: false
+      x-access-boundary: internal_or_explicit_service_scope
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /admissions/{admission_id}:
+    get:
+      operationId: getAdmission
+      x-service-id: S26
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: admission-record.v2.schema.json
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-access-boundary: internal_or_explicit_service_scope
+      parameters:
+      - name: admission_id
+        in: path
+        required: true
+        schema: *id001
+  /review-tasks/{review_task_id}/decisions:
+    post:
+      operationId: decideReview
+      x-service-id: S40
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context: *id002
+                decision:
+                  enum:
+                  - accept
+                  - reject
+                  - request_repair
+                reason: *id001
+                command_id: *id001
+              required:
+              - context
+              - decision
+              - reason
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: review_task_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /delivery-packages:
+    post:
+      operationId: prepareDelivery
+      x-service-id: S43
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context: *id002
+                master_artifact_id: *id001
+                command_id: *id001
+              required:
+              - context
+              - master_artifact_id
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /delivery-packages/{delivery_id}/publish:
+    post:
+      operationId: publishDelivery
+      x-service-id: S43
+      responses:
+        '202':
+          description: Accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel_id: *id001
+                publish_authorization_ref: *id001
+                command_id: *id001
+              required:
+              - channel_id
+              - publish_authorization_ref
+              - command_id
+              additionalProperties: false
+      parameters:
+      - name: delivery_id
+        in: path
+        required: true
+        schema: *id001
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: *id001
+  /budgets/{budget_id}:
+    get:
+      operationId: getBudget
+      x-service-id: S23
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  budget_id: *id001
+                  currency: *id001
+                  limit_micro: *id004
+                  consumed_micro: *id004
+                  outstanding_reserved_micro: *id004
+                  pending_reconciliation:
+                    type: boolean
+                required:
+                - budget_id
+                - currency
+                - limit_micro
+                - consumed_micro
+                - outstanding_reserved_micro
+                - pending_reconciliation
+                additionalProperties: false
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: budget_id
+        in: path
+        required: true
+        schema: *id001
+  /series/{series_id}/metrics:
+    get:
+      operationId: getMetrics
+      x-service-id: S44
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  series_id: *id001
+                  cohort_id: *id001
+                  projection_watermark: *id004
+                  report_ref: *id001
+                required:
+                - series_id
+                - cohort_id
+                - projection_watermark
+                - report_ref
+                additionalProperties: false
+        default:
+          description: Domain/auth/transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: series_id
+        in: path
+        required: true
+        schema: *id001
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Operation:
+      type: object
+      properties:
+        operation_id: *id001
+        state:
+          enum:
+          - accepted
+          - waiting_input
+          - waiting_review
+          - waiting_budget
+          - waiting_memory
+        run_id: *id001
+      required:
+      - operation_id
+      - state
+      additionalProperties: false
+    Error:
+      type: object
+      properties:
+        code: *id001
+        message: *id001
+        retryable:
+          type: boolean
+        correlation_id: *id001
+        details:
+          type: object
+      required:
+      - code
+      - message
+      - retryable
+      - correlation_id
+      additionalProperties: false
+    Run:
+      type: object
+      properties:
+        run_id: *id001
+        manifest_revision: *id003
+        execution_fence: *id003
+        state:
+          enum:
+          - QUEUED
+          - RUNNING
+          - WAITING_INPUT
+          - WAITING_REVIEW
+          - WAITING_MEMORY
+          - WAITING_BUDGET
+          - PAUSED
+          - SUCCEEDED
+          - INCOMPLETE
+          - FAILED
+          - CANCELED
+        completed_nodes: *id004
+        blocked_nodes: *id004
+        projection_watermark: *id004
+      required:
+      - run_id
+      - manifest_revision
+      - execution_fence
+      - state
+      - completed_nodes
+      - blocked_nodes
+      - projection_watermark
+      additionalProperties: false

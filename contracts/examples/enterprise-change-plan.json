@@ -1,0 +1,119 @@
+{
+  "schema_version": "2.0",
+  "plan_id": "change_demo",
+  "plan_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "context": {
+    "schema_version": "2.0",
+    "tenant_id": "tenant_demo",
+    "project_id": "project_demo",
+    "series_id": "series_demo",
+    "branch_id": "canon",
+    "episode_id": "ep3",
+    "home_region": "region_demo",
+    "home_cell": "cell_a1",
+    "manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 12,
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "node_id": "shot_3_2.video",
+    "node_epoch": 4,
+    "execution_fence": 2,
+    "memory_checkpoint": {
+      "branch_id": "canon",
+      "commit_sequence": 27,
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "policy_ref": {
+      "service_id": "S02",
+      "id": "policy_demo",
+      "revision": 3,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "actor": {
+      "principal_id": "user_demo",
+      "principal_type": "human",
+      "delegation_id": "delegation_demo"
+    },
+    "command_id": "cmd_demo",
+    "request_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "trace_id": "trace_demo"
+  },
+  "base_manifest_ref": {
+    "id": "manifest_ep3",
+    "revision": 12,
+    "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "instruction": "把第3场第2镜改成仰拍，时长缩到4秒",
+  "prepared_revision_refs": [
+    {
+      "service_id": "S06",
+      "id": "shot_3_2",
+      "revision": 8,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "patches": [
+    {
+      "target_ref": {
+        "service_id": "S06",
+        "id": "shot_3_2",
+        "revision": 7,
+        "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "path": "/camera/angle",
+      "before": "eye_level",
+      "after": "low"
+    },
+    {
+      "target_ref": {
+        "service_id": "S06",
+        "id": "shot_3_2",
+        "revision": 7,
+        "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "path": "/duration/target_seconds",
+      "before": 6,
+      "after": 4
+    }
+  ],
+  "derived_adjustments": [
+    "结尾停顿由3秒缩1秒，固定对白1–3秒不改；需实际音频可行性验证"
+  ],
+  "impact": {
+    "regenerate_node_ids": [
+      "shot_3_2.keyframe",
+      "shot_3_2.video",
+      "shot_3_2.lipsync",
+      "ep3.edl",
+      "ep3.subtitle_timing",
+      "ep3.mix",
+      "ep3.master"
+    ],
+    "recheck_node_ids": [
+      "shot_3_2.qc",
+      "scene3.cut_2_3"
+    ],
+    "reuse_artifact_refs": [
+      {
+        "service_id": "S28",
+        "id": "tts_line_3_2",
+        "revision": 1,
+        "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "affected_episode_ids": [
+      "ep3"
+    ],
+    "superseded_claim_refs": [],
+    "lineage_watermark": 220
+  },
+  "memory_migration_required": false,
+  "required_policy_decisions": [
+    "node_change_allowed"
+  ],
+  "blocking_issues": [],
+  "estimated_cost_upper_micro": 900000,
+  "currency": "USD",
+  "expires_at": "2026-10-29T23:00:00+08:00"
+}

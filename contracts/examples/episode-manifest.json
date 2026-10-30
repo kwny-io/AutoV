@@ -1,0 +1,64 @@
+{
+  "schema_version": "2.0",
+  "manifest_id": "manifest_ep3",
+  "revision": 12,
+  "tenant_id": "tenant_demo",
+  "project_id": "project_demo",
+  "series_id": "series_demo",
+  "episode_id": "ep3",
+  "branch_id": "canon",
+  "execution_fence": 2,
+  "home_cell": "cell_a1",
+  "source_revisions": [
+    {
+      "service_id": "S04",
+      "id": "script_ep3",
+      "revision": 2,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "service_id": "S06",
+      "id": "shot_3_2",
+      "revision": 7,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "binding_set_ref": {
+    "service_id": "S10",
+    "id": "bindings_ep3",
+    "revision": 4,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "memory_checkpoint": {
+    "commit_sequence": 27,
+    "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "policy_ref": {
+    "service_id": "S02",
+    "id": "policy_demo",
+    "revision": 3,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "node_states": [
+    {
+      "node_id": "shot_3_2.video",
+      "node_epoch": 4,
+      "input_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "locked": false,
+      "accepted_artifact_ref": null
+    },
+    {
+      "node_id": "shot_3_3.video",
+      "node_epoch": 2,
+      "input_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+      "locked": false,
+      "accepted_artifact_ref": null
+    }
+  ],
+  "parent_manifest_ref": {
+    "id": "manifest_ep3",
+    "revision": 11,
+    "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

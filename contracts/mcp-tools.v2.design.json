@@ -1,0 +1,484 @@
+{
+  "design_version": "2.0",
+  "transport": "streamable-http",
+  "note": "工具设计，非已运行MCP；服务器覆盖客户端身份，解析schema refs，落实scope与预算。",
+  "tools": [
+    {
+      "name": "drama.memory.query",
+      "required_scope": "read",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "series_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "branch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minimum_checkpoint": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "perspective": {
+            "type": "string",
+            "enum": [
+              "omniscient",
+              "character",
+              "audience"
+            ]
+          }
+        },
+        "required": [
+          "series_id",
+          "branch_id",
+          "minimum_checkpoint",
+          "perspective"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.context.preview",
+      "required_scope": "read",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "series_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "branch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "episode_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_role": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "series_id",
+          "branch_id",
+          "episode_id",
+          "task_role"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.policy.get",
+      "required_scope": "read",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "episode_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project_id",
+          "episode_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.policy.change",
+      "required_scope": "admin",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "policy": {
+            "$ref": "automation-policy.v2.schema.json"
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "expected_revision",
+          "policy",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.episode.generate",
+      "required_scope": "execute",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "execution-context.v2.schema.json"
+          },
+          "budget_scope_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "context",
+          "budget_scope_id",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "drama.change.plan",
+      "required_scope": "plan",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "execution-context.v2.schema.json"
+          },
+          "instruction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "planning_budget_scope_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "context",
+          "instruction",
+          "planning_budget_scope_id",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.change.apply",
+      "required_scope": "execute",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "expected_manifest": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "plan_id",
+          "plan_hash",
+          "expected_manifest",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "drama.run.get",
+      "required_scope": "read",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.run.command",
+      "required_scope": "execute",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "resume",
+              "cancel"
+            ]
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "run_id",
+          "action",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "drama.review.decide",
+      "required_scope": "review",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "review_task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "reject",
+              "request_repair"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_manifest": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "review_task_id",
+          "decision",
+          "reason",
+          "expected_manifest",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "drama.delivery.prepare",
+      "required_scope": "execute",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "manifest_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "manifest_ref",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "drama.delivery.publish",
+      "required_scope": "publish",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "delivery_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "channel_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "publish_authorization_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "delivery_id",
+          "channel_id",
+          "publish_authorization_ref",
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "idempotentHint": true,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    }
+  ]
+}

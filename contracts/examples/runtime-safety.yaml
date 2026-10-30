@@ -1,0 +1,27 @@
+design_version: '2.0'
+environment: design_only
+real_provider_calls_enabled: false
+business_services_deployed: false
+external_publish_enabled: false
+real_credential_values_present: false
+providers:
+  seedance: {enabled: false, verification: required}
+  kling: {enabled: false, verification: required}
+  wan: {enabled: false, verification: required}
+  veo: {enabled: false, verification: per_channel_required}
+  sora_historical: {enabled: false, lifecycle: retired}
+  vidu: {enabled: false, verification: required}
+  minimax: {enabled: false, verification: required}
+  llm_vlm_image_tts_sound_music: {enabled: false, verification: required}
+enterprise_defaults:
+  mode: stage_review
+  scope_precedence: [enterprise, project, episode, stage, node]
+  require_current_dispatch_authorization: true
+  shared_database_writes: false
+  one_home_cell_per_series: true
+  automatic_region_failover_paid_resubmission: false
+  financial_authority: S23
+  quota_authority: S22
+  accepted_manifest_authority: S08
+  memory_authority: S16
+  provider_job_authority: S26

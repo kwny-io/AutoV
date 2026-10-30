@@ -1,0 +1,40 @@
+{
+  "schema_version": "2.0",
+  "context_pack_id": "ctx_ep3_writer",
+  "revision": 1,
+  "tenant_id": "tenant_demo",
+  "series_id": "series_demo",
+  "branch_id": "canon",
+  "task_role": "writer",
+  "target_episode_order": 3,
+  "perspective": "omniscient",
+  "checkpoint": {
+    "commit_sequence": 27,
+    "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "claim_refs": [
+    {
+      "service_id": "S16",
+      "id": "claim_key_owner",
+      "revision": 2,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "asset_refs": [
+    {
+      "service_id": "S11",
+      "id": "char_linlan",
+      "revision": 3,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "unresolved_conflicts": [],
+  "prohibited_assumptions": [
+    "林岚尚不知道陈默真实身份",
+    "钥匙不可无事件回到林岚手中"
+  ],
+  "token_budget": 4000,
+  "tokens_used": 650,
+  "source_watermark": 27,
+  "content_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+}

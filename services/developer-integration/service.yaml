@@ -1,0 +1,40 @@
+# S46 · 开发者API与MCP
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S46
+slug: developer-integration
+name: 开发者API与MCP
+maturity: design_only
+
+domain: experience
+owner_team: experience
+schema_owner: developer_integration
+deployment_unit: developer-integration
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: APIClient/IntegrationCommandReceipt/WebhookSubscription/外部映射；无核心领域事实
+
+api:
+  command: POST /integrations/commands
+  query: GET /operations/{id}
+
+publishes:
+  - event_type: integration.command.accepted
+    topic: drama.developer-integration.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+  - S02
+  - S07
+  - S21
+
+runtime:
+  scaling: API与MCP独立Deployment；按连接数与QPS扩容
+  recovery: 服务端command_id去重；长工具立即返回operation；支持限流与权限撤销
+
+acceptance: 外部Agent可计划和查询；执行需scope与预算；只读不能付费
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

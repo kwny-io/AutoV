@@ -1,0 +1,38 @@
+# S13 · 场景与空间资产
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S13
+slug: scene-assets
+name: 场景与空间资产
+maturity: design_only
+
+domain: assets
+owner_team: assets
+schema_owner: scene_assets
+deployment_unit: scene-assets
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: SceneAssetRevision/平面图/多角度anchor/门窗固定物/光照变体
+
+api:
+  command: POST /scene-assets/{id}/revisions
+  query: GET /scene-assets/{id}/revisions/{revision}
+
+publishes:
+  - event_type: asset.scene.revision.accepted
+    topic: drama.scene-assets.v2
+    retention_days: 14
+
+depends_on:
+  - S28
+  - S01
+
+runtime:
+  scaling: 高分图和空间处理独立Worker池
+  recovery: 场景anchor不可变；跨镜头空间检查可复用
+
+acceptance: 日夜与闪回引用正确版本；门窗位置与运动轴可检查
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

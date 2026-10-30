@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+*.tsbuildinfo
+
+# Secrets — 客户配置里不能有密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# 本地环境
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 设计包原始 zip 与解压产物不入库
+_inbox/
+*.zip
+
+# 本地生成物
+coverage/
+*.log

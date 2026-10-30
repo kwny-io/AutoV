@@ -1,0 +1,34 @@
+# S01 · 租户与访问
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S01
+slug: tenant-access
+name: 租户与访问
+maturity: design_only
+
+domain: enterprise
+owner_team: platform
+schema_owner: tenant_access
+deployment_unit: tenant-access
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: tenant/org/member/service-principal/role-grant/quota-plan；企业IdP映射
+
+api:
+  command: POST /access-grants
+  query: GET /authorization-context
+
+publishes:
+  - event_type: access.grant.changed
+    topic: drama.tenant-access.v2
+    retention_days: 14
+
+runtime:
+  scaling: 按认证QPS与租户数量扩容；企业IdP独立连接池
+  recovery: IdP异常按令牌有效期与撤销策略处理；关键写操作不使用过期授权
+
+acceptance: 跨租户对象、撤销凭证、服务身份越权均被拒绝
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

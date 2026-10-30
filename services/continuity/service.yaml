@@ -1,0 +1,40 @@
+# S17 · 连续性校验
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S17
+slug: continuity
+name: 连续性校验
+maturity: design_only
+
+domain: memory
+owner_team: memory
+schema_owner: continuity
+deployment_unit: continuity
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ContinuityReport/预期state_in-out/跨集矛盾/轴线视线检查/规则例外
+
+api:
+  command: POST /continuity-checks
+  query: GET /continuity-reports/{id}
+
+publishes:
+  - event_type: continuity.check.completed
+    topic: drama.continuity.v2
+    retention_days: 14
+
+depends_on:
+  - S16
+  - S06
+  - S10
+  - S28
+
+runtime:
+  scaling: 文本逻辑与多模态校验分池
+  recovery: 冲突返回证据与严重度；不直接更改正史或素材
+
+acceptance: 闪回、误导、合法特效与真实矛盾有区分；低置信度abstain
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

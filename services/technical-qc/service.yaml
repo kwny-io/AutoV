@@ -1,0 +1,37 @@
+# S35 · 媒体技术质检
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S35
+slug: technical-qc
+name: 媒体技术质检
+maturity: design_only
+
+domain: quality
+owner_team: quality
+schema_owner: technical_qc
+deployment_unit: technical-qc
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: TechnicalQCReport/解码与黑帧/实际时长/编码/分辨率/响度等测量
+
+api:
+  command: POST /technical-checks
+  query: GET /technical-reports/{id}
+
+publishes:
+  - event_type: quality.technical.completed
+    topic: drama.technical-qc.v2
+    retention_days: 14
+
+depends_on:
+  - S28
+
+runtime:
+  scaling: CPU/IO按媒体时长扩容；媒体沙箱
+  recovery: 坏媒体隔离；确定性检查可幂等重跑
+
+acceptance: 截断/空文件/错误时长必须检出；报告不依赖VLM主观判断
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

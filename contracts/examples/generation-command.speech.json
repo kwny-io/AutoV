@@ -1,0 +1,73 @@
+{
+  "schema_version": "2.0",
+  "context": {
+    "schema_version": "2.0",
+    "tenant_id": "tenant_demo",
+    "project_id": "project_demo",
+    "series_id": "series_demo",
+    "branch_id": "canon",
+    "episode_id": "ep3",
+    "home_region": "region_demo",
+    "home_cell": "cell_a1",
+    "manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 12,
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "node_id": "shot_3_2.speech",
+    "node_epoch": 4,
+    "execution_fence": 2,
+    "memory_checkpoint": {
+      "branch_id": "canon",
+      "commit_sequence": 27,
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "policy_ref": {
+      "service_id": "S02",
+      "id": "policy_demo",
+      "revision": 3,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "actor": {
+      "principal_id": "user_demo",
+      "principal_type": "human",
+      "delegation_id": "delegation_demo"
+    },
+    "command_id": "cmd_speech_demo",
+    "request_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "trace_id": "trace_demo"
+  },
+  "attempt_id": "attempt_speech_demo",
+  "variation_nonce": "variation_0",
+  "idempotency_key": "ep3:node4:speech:attempt1",
+  "modality": "speech",
+  "input": {
+    "text": "你终于来了。",
+    "locale": "zh-CN",
+    "voice_binding": {
+      "id": "voice_linlan",
+      "revision": 2
+    },
+    "emotion": "紧张克制",
+    "pronunciation_lexicon": null,
+    "output_spec": {
+      "format": "wav",
+      "sample_rate_hz": 48000
+    },
+    "require_alignment": true
+  },
+  "route_policy_ref": {
+    "service_id": "S25",
+    "id": "routing_demo",
+    "revision": 1,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "template_ref": {
+    "service_id": "S20",
+    "id": "template_speech_demo",
+    "revision": 1,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "budget_scope_id": "budget_ep3",
+  "deadline": "2026-10-29T23:30:00+08:00"
+}

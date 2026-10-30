@@ -1,0 +1,40 @@
+# S07 · 对话修改与变更计划
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S07
+slug: change-management
+name: 对话修改与变更计划
+maturity: design_only
+
+domain: control
+owner_team: workflow
+schema_owner: change_management
+deployment_unit: change-management
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ChangePlan/ChangeSaga/字段补丁/派生改动/成本影响摘要；不拥有接受指针
+
+api:
+  command: POST /change-plans/{id}:apply
+  query: GET /change-plans/{id}
+
+publishes:
+  - event_type: change.plan.applied
+    topic: drama.change-management.v2
+    retention_days: 14
+
+depends_on:
+  - S08
+  - S09
+  - S18
+  - S02
+
+runtime:
+  scaling: 按修改命令与影响分析规模扩容
+  recovery: 通过Saga恢复已创建内容与未提交manifest；最终指针只由S08 CAS提交
+
+acceptance: 重复命令同结果；并发修改409；只重做相关子图
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

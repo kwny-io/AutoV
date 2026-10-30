@@ -1,0 +1,40 @@
+# S21 · 长任务编排
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S21
+slug: orchestration
+name: 长任务编排
+maturity: design_only
+
+domain: control
+owner_team: workflow
+schema_owner: orchestration
+deployment_unit: orchestration
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: WorkflowBinding/Run业务投影/任务阶段检查点；执行history由Temporal持有
+
+api:
+  command: POST /runs
+  query: GET /runs/{id}
+
+publishes:
+  - event_type: orchestration.run.state-changed
+    topic: drama.orchestration.v2
+    retention_days: 14
+
+depends_on:
+  - S08
+  - S02
+  - S22
+  - S23
+
+runtime:
+  scaling: 按cell和任务类型独立Temporal队列；限制扇出与历史大小
+  recovery: Replay-safe Workflow；所有I/O在Activities；Continue-As-New跨run幂等
+
+acceptance: 数千子任务重启后续跑；暂停阻止新准入并继续结算已提交任务
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

@@ -1,0 +1,39 @@
+# S36 · 视觉语义与时序质检
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S36
+slug: semantic-qc
+name: 视觉语义与时序质检
+maturity: design_only
+
+domain: quality
+owner_team: quality
+schema_owner: semantic_qc
+deployment_unit: semantic-qc
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: VisualQCReport/身份肢体手部动作机位/时序缺陷证据/采样覆盖
+
+api:
+  command: POST /semantic-checks
+  query: GET /semantic-reports/{id}
+
+publishes:
+  - event_type: quality.semantic.completed
+    topic: drama.semantic-qc.v2
+    retention_days: 14
+
+depends_on:
+  - S28
+  - S17
+  - S26
+
+runtime:
+  scaling: VLM任务与本地检测器分池；连续窗口抽检
+  recovery: 评估器超时不当pass；保留abstain和人工复核
+
+acceptance: 缺陷有时间段与证据；合法特效/妆造变化不简单误判
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

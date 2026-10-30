@@ -1,0 +1,29 @@
+sequenceDiagram
+ participant P as Production/Agent
+ participant J as S26 Job
+ participant F as S23 Budget
+ participant Q as S22 Quota
+ participant C as S27 Connector
+ participant V as Provider
+ P->>J: Create attempt + request hash
+ J->>F: Reserve budget (idempotent)
+ F-->>J: Reservation
+ J->>Q: Acquire permit
+ Q-->>J: Reserved permit
+ J->>J: Persist submission intent + outbox
+ J->>F: Confirm authorization
+ F-->>J: Durable authorization
+ J->>Q: Confirm dispatch/inflight permit
+ Q-->>J: Durable permit acknowledgment
+ J->>C: Fenced dispatch grant
+ C->>J: Claim grant once
+ C->>V: Submit with stable provider key if supported
+ alt Response lost and provider lacks idempotency
+  C-->>J: Submission unknown
+  J->>J: Retain budget and permit, reconcile without resubmit
+ else Authoritative terminal
+  V-->>C: Status/result
+  C-->>J: Verified observation
+  J->>F: Accrue/settle + release remaining reserve
+  J->>Q: Release terminal permit
+ end

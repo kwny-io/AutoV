@@ -1,0 +1,38 @@
+# S11 · 角色身份资产
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S11
+slug: character-assets
+name: 角色身份资产
+maturity: design_only
+
+domain: assets
+owner_team: assets
+schema_owner: character_assets
+deployment_unit: character-assets
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: CharacterRevision/多视图manifest/身份特征/canonical接受状态/角色权利引用
+
+api:
+  command: POST /characters/{id}/revisions
+  query: GET /characters/{id}/revisions/{revision}
+
+publishes:
+  - event_type: asset.character.revision.accepted
+    topic: drama.character-assets.v2
+    retention_days: 14
+
+depends_on:
+  - S28
+  - S01
+
+runtime:
+  scaling: 按设定集生成与检索分池；身份特征提取GPU可选
+  recovery: canonical独立审批；漂移生成物不能自动成为新身份基准
+
+acceptance: 跨集同人物固定ID；妆造变化不偷偷改变身份
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

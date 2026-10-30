@@ -1,0 +1,39 @@
+# S06 · 分镜与导演规范
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S06
+slug: storyboard
+name: 分镜与导演规范
+maturity: design_only
+
+domain: creation
+owner_team: creation
+schema_owner: storyboard
+deployment_unit: storyboard
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: Shot稳定ID/ShotSpecRevision/动作节拍/机位构图/镜头顺序
+
+api:
+  command: POST /storyboards/{id}/revisions
+  query: GET /shots/{id}/revisions/{revision}
+
+publishes:
+  - event_type: storyboard.shot.revision.created
+    topic: drama.storyboard.v2
+    retention_days: 14
+
+depends_on:
+  - S05
+  - S18
+  - S19
+
+runtime:
+  scaling: 按镜头规划量扩容；独立导演任务池
+  recovery: 不修改旧镜头内容；时长不可行返回具体问题
+
+acceptance: 仰拍4秒指令能产生合法DSL；对白及主动作不被默默删改
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

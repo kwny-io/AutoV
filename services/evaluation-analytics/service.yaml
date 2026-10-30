@@ -1,0 +1,42 @@
+# S44 · 效果评测与经营分析
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S44
+slug: evaluation-analytics
+name: 效果评测与经营分析
+maturity: design_only
+
+domain: analytics
+owner_team: data
+schema_owner: evaluation_analytics
+deployment_unit: evaluation-analytics
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: BenchmarkDataset/盲评/实验/质量成本时长投影/客户项目ROI；原账本由S23持有
+
+api:
+  command: POST /evaluation-runs
+  query: GET /metrics
+
+publishes:
+  - event_type: evaluation.report.published
+    topic: drama.evaluation-analytics.v2
+    retention_days: 14
+
+depends_on:
+  - S23
+  - S35
+  - S36
+  - S37
+  - S40
+  - S43
+
+runtime:
+  scaling: OLAP独立扩容；按tenant/时间分区；事件批量消费
+  recovery: 可重放投影与watermark；分析故障不阻断已授权制作
+
+acceptance: 成片可用率/每可用分钟成本/人工干预/返工可从事件重算
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

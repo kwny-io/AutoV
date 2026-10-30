@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/change-plan.v1.schema.json",
+  "title": "ChangePlan v1 (MVP camera angle and duration)",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "episode_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "base_episode_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "target_shot_revision": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "const": "replace"
+          },
+          "path": {
+            "type": "string",
+            "enum": [
+              "/camera/angle",
+              "/duration/target_seconds"
+            ]
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "eye_level",
+                  "low",
+                  "high",
+                  "overhead",
+                  "dutch"
+                ]
+              },
+              {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            ]
+          }
+        },
+        "required": [
+          "op",
+          "path",
+          "value"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "path": {
+                  "const": "/camera/angle"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "enum": [
+                    "eye_level",
+                    "low",
+                    "high",
+                    "overhead",
+                    "dutch"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "path": {
+                  "const": "/duration/target_seconds"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 1
+    },
+    "impact": {
+      "type": "object",
+      "properties": {
+        "regenerate_nodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+          }
+        },
+        "recheck_nodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+          }
+        },
+        "reuse_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+          }
+        },
+        "timeline_policy": {
+          "type": "string",
+          "enum": [
+            "ripple",
+            "preserve_episode_duration"
+          ]
+        }
+      },
+      "required": [
+        "regenerate_nodes",
+        "recheck_nodes",
+        "reuse_artifacts",
+        "timeline_policy"
+      ],
+      "additionalProperties": false
+    },
+    "derived_adjustments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "before": {
+            "type": "number"
+          },
+          "after": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path",
+          "before",
+          "after",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "estimated_incremental_cost": {
+      "type": "object",
+      "properties": {
+        "low": {
+          "type": "object",
+          "properties": {
+            "amount_minor": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$"
+            }
+          },
+          "required": [
+            "amount_minor",
+            "currency"
+          ],
+          "additionalProperties": false
+        },
+        "high": {
+          "type": "object",
+          "properties": {
+            "amount_minor": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$"
+            }
+          },
+          "required": [
+            "amount_minor",
+            "currency"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "low",
+        "high"
+      ],
+      "additionalProperties": false
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "options"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "apply_policy": {
+      "type": "string",
+      "enum": [
+        "preview_only",
+        "auto_within_policy"
+      ]
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "plan_id",
+    "plan_hash",
+    "episode_id",
+    "base_episode_revision",
+    "target_shot_revision",
+    "instruction",
+    "patches",
+    "impact",
+    "derived_adjustments",
+    "estimated_incremental_cost",
+    "blocking_issues",
+    "apply_policy",
+    "expires_at",
+    "policy_version"
+  ],
+  "additionalProperties": false
+}

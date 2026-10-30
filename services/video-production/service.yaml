@@ -1,0 +1,39 @@
+# S30 · 视频片段生产
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S30
+slug: video-production
+name: 视频片段生产
+maturity: design_only
+
+domain: production
+owner_team: generation
+schema_owner: video_production
+deployment_unit: video-production
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: VideoJob/ClipCandidate/生成时长与目标时长映射/视频编辑计划
+
+api:
+  command: POST /video-jobs
+  query: GET /video-jobs/{id}
+
+publishes:
+  - event_type: production.video.ready
+    topic: drama.video-production.v2
+    retention_days: 14
+
+depends_on:
+  - S26
+  - S28
+  - S29
+
+runtime:
+  scaling: 视频请求按时长/分辨率/供应商队列隔离
+  recovery: 已归档候选复用；未知提交交S26；长运镜可拆镜但需导演计划
+
+acceptance: 4s目标可选原生或允许裁切档位；对白主动作不被截断
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

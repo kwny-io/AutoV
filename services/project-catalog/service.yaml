@@ -1,0 +1,37 @@
+# S03 · 项目与剧集目录
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S03
+slug: project-catalog
+name: 项目与剧集目录
+maturity: design_only
+
+domain: creation
+owner_team: creation
+schema_owner: project_catalog
+deployment_unit: project-catalog
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: Project/Series/Episode稳定ID、成员引用、规格与业务目标；场次ID由S05负责
+
+api:
+  command: POST /projects/{id}/episodes
+  query: GET /projects/{id}/episodes
+
+publishes:
+  - event_type: project.episode.created
+    topic: drama.project-catalog.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+
+runtime:
+  scaling: 按租户/项目分区；目录查询缓存
+  recovery: 目录暂不可用时已有快照任务可继续；新项目创建停止
+
+acceptance: 重排集序不改变稳定ID；归档项目阻止新Run
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

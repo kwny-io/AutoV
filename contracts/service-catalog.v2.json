@@ -1,0 +1,1137 @@
+{
+  "schema_version": "2.0",
+  "services": [
+    {
+      "service_id": "S01",
+      "slug": "tenant-access",
+      "name": "租户与访问",
+      "domain": "enterprise",
+      "data_owner": "tenant/org/member/service-principal/role-grant/quota-plan；企业IdP映射",
+      "command_api": "POST /access-grants",
+      "query_api": "GET /authorization-context",
+      "published_events": [
+        "access.grant.changed"
+      ],
+      "depends_on": [],
+      "scaling": "按认证QPS与租户数量扩容；企业IdP独立连接池",
+      "recovery": "IdP异常按令牌有效期与撤销策略处理；关键写操作不使用过期授权",
+      "acceptance": "跨租户对象、撤销凭证、服务身份越权均被拒绝",
+      "deployment_unit": "tenant-access",
+      "schema_owner": "tenant_access",
+      "maturity": "design_only",
+      "runtime_owner_team": "platform"
+    },
+    {
+      "service_id": "S02",
+      "slug": "governance-policy",
+      "name": "治理与自动化策略",
+      "domain": "enterprise",
+      "data_owner": "AutomationPolicyRevision/GateRule/PolicyDecision/PolicyException；策略发布指针",
+      "command_api": "POST /policies/{id}/revisions",
+      "query_api": "POST /policy-decisions:evaluate",
+      "published_events": [
+        "policy.revision.published"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "按策略决策QPS扩容；版本化本地缓存",
+      "recovery": "已固定策略可读取；无法确认新授权时停止新增付费动作；语义策略热更需显式checkpoint",
+      "acceptance": "项目→单集→阶段→节点覆盖正确；安全/预算硬约束不能被低级覆盖",
+      "deployment_unit": "governance-policy",
+      "schema_owner": "governance_policy",
+      "maturity": "design_only",
+      "runtime_owner_team": "platform"
+    },
+    {
+      "service_id": "S03",
+      "slug": "project-catalog",
+      "name": "项目与剧集目录",
+      "domain": "creation",
+      "data_owner": "Project/Series/Episode稳定ID、成员引用、规格与业务目标；场次ID由S05负责",
+      "command_api": "POST /projects/{id}/episodes",
+      "query_api": "GET /projects/{id}/episodes",
+      "published_events": [
+        "project.episode.created"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "按租户/项目分区；目录查询缓存",
+      "recovery": "目录暂不可用时已有快照任务可继续；新项目创建停止",
+      "acceptance": "重排集序不改变稳定ID；归档项目阻止新Run",
+      "deployment_unit": "project-catalog",
+      "schema_owner": "project_catalog",
+      "maturity": "design_only",
+      "runtime_owner_team": "creation"
+    },
+    {
+      "service_id": "S04",
+      "slug": "narrative",
+      "name": "创意与剧本",
+      "domain": "creation",
+      "data_owner": "BriefRevision/ScriptRevision/DialogueRevision/StoryArcProposal；剧本草稿事实",
+      "command_api": "POST /scripts/{id}/revisions",
+      "query_api": "GET /scripts/{id}/revisions/{revision}",
+      "published_events": [
+        "narrative.script.revision.created"
+      ],
+      "depends_on": [
+        "S03",
+        "S18",
+        "S19"
+      ],
+      "scaling": "按创作请求与LLM额度独立Worker池",
+      "recovery": "创作失败保留上个版本与Agent检查点；候选不写入正式记忆",
+      "acceptance": "改稿追加版本；未接受剧本不能提交为正史",
+      "deployment_unit": "narrative",
+      "schema_owner": "narrative",
+      "maturity": "design_only",
+      "runtime_owner_team": "creation"
+    },
+    {
+      "service_id": "S05",
+      "slug": "breakdown",
+      "name": "分集分场",
+      "domain": "creation",
+      "data_owner": "Scene稳定ID、SceneBreakdownRevision、角色道具需求清单",
+      "command_api": "POST /breakdowns",
+      "query_api": "GET /breakdowns/{id}",
+      "published_events": [
+        "breakdown.revision.created"
+      ],
+      "depends_on": [
+        "S04",
+        "S19"
+      ],
+      "scaling": "按分解任务数与文本长度扩容",
+      "recovery": "重试相同command返回同一场次分解；不重复造场次ID",
+      "acceptance": "场次关联到固定剧本版本；显示序号与ID分离",
+      "deployment_unit": "breakdown",
+      "schema_owner": "breakdown",
+      "maturity": "design_only",
+      "runtime_owner_team": "creation"
+    },
+    {
+      "service_id": "S06",
+      "slug": "storyboard",
+      "name": "分镜与导演规范",
+      "domain": "creation",
+      "data_owner": "Shot稳定ID/ShotSpecRevision/动作节拍/机位构图/镜头顺序",
+      "command_api": "POST /storyboards/{id}/revisions",
+      "query_api": "GET /shots/{id}/revisions/{revision}",
+      "published_events": [
+        "storyboard.shot.revision.created"
+      ],
+      "depends_on": [
+        "S05",
+        "S18",
+        "S19"
+      ],
+      "scaling": "按镜头规划量扩容；独立导演任务池",
+      "recovery": "不修改旧镜头内容；时长不可行返回具体问题",
+      "acceptance": "仰拍4秒指令能产生合法DSL；对白及主动作不被默默删改",
+      "deployment_unit": "storyboard",
+      "schema_owner": "storyboard",
+      "maturity": "design_only",
+      "runtime_owner_team": "creation"
+    },
+    {
+      "service_id": "S07",
+      "slug": "change-management",
+      "name": "对话修改与变更计划",
+      "domain": "control",
+      "data_owner": "ChangePlan/ChangeSaga/字段补丁/派生改动/成本影响摘要；不拥有接受指针",
+      "command_api": "POST /change-plans/{id}:apply",
+      "query_api": "GET /change-plans/{id}",
+      "published_events": [
+        "change.plan.applied"
+      ],
+      "depends_on": [
+        "S08",
+        "S09",
+        "S18",
+        "S02"
+      ],
+      "scaling": "按修改命令与影响分析规模扩容",
+      "recovery": "通过Saga恢复已创建内容与未提交manifest；最终指针只由S08 CAS提交",
+      "acceptance": "重复命令同结果；并发修改409；只重做相关子图",
+      "deployment_unit": "change-management",
+      "schema_owner": "change_management",
+      "maturity": "design_only",
+      "runtime_owner_team": "workflow"
+    },
+    {
+      "service_id": "S08",
+      "slug": "revision-snapshot",
+      "name": "版本快照与接受状态",
+      "domain": "control",
+      "data_owner": "EpisodeManifestRevision/accepted pointers/generation epoch/节点锁/AcceptanceCommit；当前生产状态唯一权威",
+      "command_api": "POST /manifests/{id}:commit",
+      "query_api": "GET /manifests/{id}/revisions/{revision}",
+      "published_events": [
+        "snapshot.manifest.committed"
+      ],
+      "depends_on": [
+        "S03"
+      ],
+      "scaling": "按project串行CAS，跨项目水平分区",
+      "recovery": "唯一写主与fencing；提交事务+Outbox；接受旧epoch时拒绝",
+      "acceptance": "旧结果、旧审核、旧QC不能切换当前指针；回滚生成新manifest而非改历史",
+      "deployment_unit": "revision-snapshot",
+      "schema_owner": "revision_snapshot",
+      "maturity": "design_only",
+      "runtime_owner_team": "workflow"
+    },
+    {
+      "service_id": "S09",
+      "slug": "lineage-impact",
+      "name": "依赖溯源与影响分析",
+      "domain": "control",
+      "data_owner": "Artifact/Revision/Memory claim引用边、字段投影、影响索引；内容事实由原服务持有",
+      "command_api": "POST /lineage-edges",
+      "query_api": "POST /impact-queries",
+      "published_events": [
+        "lineage.impact.computed"
+      ],
+      "depends_on": [
+        "S08"
+      ],
+      "scaling": "按项目分片；大型图按revision分段；拓扑查询CPU扩容",
+      "recovery": "投影落后时返回watermark；提交影响计划前缺边fail-closed或保守重检",
+      "acceptance": "记忆事实改动可定位后续集、上下文包、剧本和镜头",
+      "deployment_unit": "lineage-impact",
+      "schema_owner": "lineage_impact",
+      "maturity": "design_only",
+      "runtime_owner_team": "workflow"
+    },
+    {
+      "service_id": "S10",
+      "slug": "asset-catalog",
+      "name": "资产目录与绑定解析",
+      "domain": "assets",
+      "data_owner": "GlobalAssetID/类型/owner-service映射/跨类型BindingSetRevision/检索投影；不拥有角色外观细节",
+      "command_api": "POST /binding-sets",
+      "query_api": "GET /assets/{id}/resolve",
+      "published_events": [
+        "asset.binding-set.created"
+      ],
+      "depends_on": [
+        "S11",
+        "S12",
+        "S13",
+        "S14",
+        "S15"
+      ],
+      "scaling": "按资产检索与绑定请求扩容；索引可重建",
+      "recovery": "各资产服务不齐时保留固定绑定，缺必要版本停止新生成",
+      "acceptance": "绑定必须固定revision与权利版本；升级资产显示影响清单",
+      "deployment_unit": "asset-catalog",
+      "schema_owner": "asset_catalog",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    },
+    {
+      "service_id": "S11",
+      "slug": "character-assets",
+      "name": "角色身份资产",
+      "domain": "assets",
+      "data_owner": "CharacterRevision/多视图manifest/身份特征/canonical接受状态/角色权利引用",
+      "command_api": "POST /characters/{id}/revisions",
+      "query_api": "GET /characters/{id}/revisions/{revision}",
+      "published_events": [
+        "asset.character.revision.accepted"
+      ],
+      "depends_on": [
+        "S28",
+        "S01"
+      ],
+      "scaling": "按设定集生成与检索分池；身份特征提取GPU可选",
+      "recovery": "canonical独立审批；漂移生成物不能自动成为新身份基准",
+      "acceptance": "跨集同人物固定ID；妆造变化不偷偷改变身份",
+      "deployment_unit": "character-assets",
+      "schema_owner": "character_assets",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    },
+    {
+      "service_id": "S12",
+      "slug": "costume-assets",
+      "name": "服装与妆造资产",
+      "domain": "assets",
+      "data_owner": "CostumeRevision/穿着组合/材质配色/破损湿度妆造变体",
+      "command_api": "POST /costumes/{id}/revisions",
+      "query_api": "GET /costumes/{id}/revisions/{revision}",
+      "published_events": [
+        "asset.costume.revision.accepted"
+      ],
+      "depends_on": [
+        "S28",
+        "S01"
+      ],
+      "scaling": "服装制作与检索独立池",
+      "recovery": "服装服务失败只阻塞相关绑定；历史版本可继续读取",
+      "acceptance": "角色身份与服装拆开；场次换装与破损有明确状态",
+      "deployment_unit": "costume-assets",
+      "schema_owner": "costume_assets",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    },
+    {
+      "service_id": "S13",
+      "slug": "scene-assets",
+      "name": "场景与空间资产",
+      "domain": "assets",
+      "data_owner": "SceneAssetRevision/平面图/多角度anchor/门窗固定物/光照变体",
+      "command_api": "POST /scene-assets/{id}/revisions",
+      "query_api": "GET /scene-assets/{id}/revisions/{revision}",
+      "published_events": [
+        "asset.scene.revision.accepted"
+      ],
+      "depends_on": [
+        "S28",
+        "S01"
+      ],
+      "scaling": "高分图和空间处理独立Worker池",
+      "recovery": "场景anchor不可变；跨镜头空间检查可复用",
+      "acceptance": "日夜与闪回引用正确版本；门窗位置与运动轴可检查",
+      "deployment_unit": "scene-assets",
+      "schema_owner": "scene_assets",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    },
+    {
+      "service_id": "S14",
+      "slug": "prop-assets",
+      "name": "道具资产",
+      "domain": "assets",
+      "data_owner": "PropRevision/尺寸外观/文字/开合破损变体；持有者历史由S16管理",
+      "command_api": "POST /props/{id}/revisions",
+      "query_api": "GET /props/{id}/revisions/{revision}",
+      "published_events": [
+        "asset.prop.revision.accepted"
+      ],
+      "depends_on": [
+        "S28",
+        "S01"
+      ],
+      "scaling": "按道具数量和图像生成量扩容",
+      "recovery": "无法读取关键道具版本时禁止以文字临时代替必需参考",
+      "acceptance": "同道具跨集外观稳定；持有关系与外观来源可区分",
+      "deployment_unit": "prop-assets",
+      "schema_owner": "prop_assets",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    },
+    {
+      "service_id": "S15",
+      "slug": "voice-assets",
+      "name": "音色与声音授权",
+      "domain": "assets",
+      "data_owner": "VoiceRevision/provider_voice映射/发音词典/克隆资格/授权撤销状态",
+      "command_api": "POST /voices/{id}/revisions",
+      "query_api": "GET /voices/{id}/bindings",
+      "published_events": [
+        "asset.voice.authorization.changed"
+      ],
+      "depends_on": [
+        "S28",
+        "S01"
+      ],
+      "scaling": "按语言与供应商池扩容；克隆准备独立任务",
+      "recovery": "撤销状态实时验证；不自动换成相似声线；保留来源审计",
+      "acceptance": "跨供应商映射回归；未授权音色不可新调用",
+      "deployment_unit": "voice-assets",
+      "schema_owner": "voice_assets",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    },
+    {
+      "service_id": "S16",
+      "slug": "story-memory",
+      "name": "跨集记忆与正史",
+      "domain": "memory",
+      "data_owner": "CanonBranch/ClaimRevision/StoryEvent/EntityState/Relationship/KnowledgeState/PlotThread/双时间版本/记忆接受批次",
+      "command_api": "POST /memory-commits",
+      "query_api": "POST /memory-queries",
+      "published_events": [
+        "memory.canon.committed"
+      ],
+      "depends_on": [
+        "S08",
+        "S19"
+      ],
+      "scaling": "按tenant/series/branch分片；结构化查询主，搜索索引辅",
+      "recovery": "消费已接受manifest后幂等提取；记忆checkpoint未就绪时阻止依赖集生成",
+      "acceptance": "谁知道什么、钥匙归属、伤势、伏笔跨集正确；改前集触发失效",
+      "deployment_unit": "story-memory",
+      "schema_owner": "story_memory",
+      "maturity": "design_only",
+      "runtime_owner_team": "memory"
+    },
+    {
+      "service_id": "S17",
+      "slug": "continuity",
+      "name": "连续性校验",
+      "domain": "memory",
+      "data_owner": "ContinuityReport/预期state_in-out/跨集矛盾/轴线视线检查/规则例外",
+      "command_api": "POST /continuity-checks",
+      "query_api": "GET /continuity-reports/{id}",
+      "published_events": [
+        "continuity.check.completed"
+      ],
+      "depends_on": [
+        "S16",
+        "S06",
+        "S10",
+        "S28"
+      ],
+      "scaling": "文本逻辑与多模态校验分池",
+      "recovery": "冲突返回证据与严重度；不直接更改正史或素材",
+      "acceptance": "闪回、误导、合法特效与真实矛盾有区分；低置信度abstain",
+      "deployment_unit": "continuity",
+      "schema_owner": "continuity",
+      "maturity": "design_only",
+      "runtime_owner_team": "memory"
+    },
+    {
+      "service_id": "S18",
+      "slug": "context-retrieval",
+      "name": "上下文检索与组装",
+      "domain": "memory",
+      "data_owner": "ContextPackRevision/检索过滤/引用与token预算/记忆水位；不拥有正史",
+      "command_api": "POST /context-packs",
+      "query_api": "GET /context-packs/{id}",
+      "published_events": [
+        "context.pack.created"
+      ],
+      "depends_on": [
+        "S16",
+        "S10",
+        "S09"
+      ],
+      "scaling": "按检索QPS/索引CPU扩容；租户隔离缓存",
+      "recovery": "索引落后按memory watermark回源；禁止用旧pack冒充当前事实",
+      "acceptance": "分集可见性、角色知情状态、分支、故事时间和权限过滤生效",
+      "deployment_unit": "context-retrieval",
+      "schema_owner": "context_retrieval",
+      "maturity": "design_only",
+      "runtime_owner_team": "memory"
+    },
+    {
+      "service_id": "S19",
+      "slug": "agent-runtime",
+      "name": "Agent运行与工具沙箱",
+      "domain": "agents",
+      "data_owner": "AgentDefinitionRevision/AgentTask/执行步骤/工具调用审计/输出校验/允许工具集",
+      "command_api": "POST /agent-tasks",
+      "query_api": "GET /agent-tasks/{id}",
+      "published_events": [
+        "agent.task.completed"
+      ],
+      "depends_on": [
+        "S02",
+        "S26"
+      ],
+      "scaling": "每个Agent角色独立Deployment/Task Queue/配额，复用运行镜像",
+      "recovery": "有界循环与检查点；所有模型调用经S26，工具不直接拿密钥",
+      "acceptance": "编剧/分场/导演等角色工具权限不同；LLM不能绕过预算与接受门",
+      "deployment_unit": "agent-runtime",
+      "schema_owner": "agent_runtime",
+      "maturity": "design_only",
+      "runtime_owner_team": "agents"
+    },
+    {
+      "service_id": "S20",
+      "slug": "prompt-compiler",
+      "name": "Prompt模板与编译",
+      "domain": "agents",
+      "data_owner": "TemplateRevision/供应商映射/CompiledPromptManifest/编译回归结果",
+      "command_api": "POST /prompt-compilations",
+      "query_api": "GET /templates/{id}/revisions/{revision}",
+      "published_events": [
+        "prompt.compiled"
+      ],
+      "depends_on": [
+        "S24",
+        "S10"
+      ],
+      "scaling": "编译CPU与模板评测分离；按模型版本缓存",
+      "recovery": "必需字段不支持报错；固定模板版本可离线重编译",
+      "acceptance": "导演意图保留；主体参考顺序正确；对白文本不被编译改写",
+      "deployment_unit": "prompt-compiler",
+      "schema_owner": "prompt_compiler",
+      "maturity": "design_only",
+      "runtime_owner_team": "agents"
+    },
+    {
+      "service_id": "S21",
+      "slug": "orchestration",
+      "name": "长任务编排",
+      "domain": "control",
+      "data_owner": "WorkflowBinding/Run业务投影/任务阶段检查点；执行history由Temporal持有",
+      "command_api": "POST /runs",
+      "query_api": "GET /runs/{id}",
+      "published_events": [
+        "orchestration.run.state-changed"
+      ],
+      "depends_on": [
+        "S08",
+        "S02",
+        "S22",
+        "S23"
+      ],
+      "scaling": "按cell和任务类型独立Temporal队列；限制扇出与历史大小",
+      "recovery": "Replay-safe Workflow；所有I/O在Activities；Continue-As-New跨run幂等",
+      "acceptance": "数千子任务重启后续跑；暂停阻止新准入并继续结算已提交任务",
+      "deployment_unit": "orchestration",
+      "schema_owner": "orchestration",
+      "maturity": "design_only",
+      "runtime_owner_team": "workflow"
+    },
+    {
+      "service_id": "S22",
+      "slug": "scheduler-quota",
+      "name": "调度与供应商配额",
+      "domain": "execution",
+      "data_owner": "PriorityQueue/QuotaPool/Permit/账号与区域在途槽/公平调度/执行租约",
+      "command_api": "POST /permits:acquire",
+      "query_api": "GET /quota-pools/{id}",
+      "published_events": [
+        "scheduler.permit.changed"
+      ],
+      "depends_on": [
+        "S01",
+        "S24"
+      ],
+      "scaling": "按account-pool单写计数，跨池水平扩展；租户WFQ+aging",
+      "recovery": "租约到期不直接释放供应商在途槽；查询确认终态后释放",
+      "acceptance": "Redis丢失不超并发；账号跨租户共享上限仍严格守恒",
+      "deployment_unit": "scheduler-quota",
+      "schema_owner": "scheduler_quota",
+      "maturity": "design_only",
+      "runtime_owner_team": "execution"
+    },
+    {
+      "service_id": "S23",
+      "slug": "budget-ledger",
+      "name": "预算与成本账本",
+      "domain": "finance",
+      "data_owner": "Budget/Reservation/Authorization/UsageAccrual/Settlement/Adjustment/退款与汇率快照",
+      "command_api": "POST /budget-authorizations",
+      "query_api": "GET /budgets/{id}",
+      "published_events": [
+        "finance.ledger.entry-posted"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "按预算scope单写事务；跨租户分区；账单对账独立池",
+      "recovery": "幂等追加记账；未知提交保留额度；DR先对账再恢复付费准入",
+      "acceptance": "并发抢额度不越界；预留和实际分离；跨run返工不能绕过集预算",
+      "deployment_unit": "budget-ledger",
+      "schema_owner": "budget_ledger",
+      "maturity": "design_only",
+      "runtime_owner_team": "finance"
+    },
+    {
+      "service_id": "S24",
+      "slug": "model-registry",
+      "name": "模型能力与价格注册",
+      "domain": "models",
+      "data_owner": "CapabilitySnapshot/PriceSnapshot/ProviderAccountPool/生命周期/能力探测与健康",
+      "command_api": "POST /capability-snapshots",
+      "query_api": "GET /model-candidates",
+      "published_events": [
+        "model.capability.changed"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "按渠道/版本分片缓存；探测独立低配额",
+      "recovery": "过期/退役候选被过滤；探测不消耗业务预留外费用",
+      "acceptance": "七家渠道能力按版本与地区建模；不把历史端点当active",
+      "deployment_unit": "model-registry",
+      "schema_owner": "model_registry",
+      "maturity": "design_only",
+      "runtime_owner_team": "models"
+    },
+    {
+      "service_id": "S25",
+      "slug": "model-routing",
+      "name": "模型路由与估价",
+      "domain": "models",
+      "data_owner": "RouteDecision/候选拒绝原因/策略版本/报价有效期；不拥有余额或最终任务",
+      "command_api": "POST /route-decisions",
+      "query_api": "GET /route-decisions/{id}",
+      "published_events": [
+        "model.route.selected"
+      ],
+      "depends_on": [
+        "S24",
+        "S20",
+        "S02"
+      ],
+      "scaling": "按候选评分QPS扩容；评估数据带样本数与水位",
+      "recovery": "无可行候选明确失败；过期报价重新准入；不自动丢必需参考",
+      "acceptance": "能力先过滤再评分；成本含下游口型和预计返工；决策可解释",
+      "deployment_unit": "model-routing",
+      "schema_owner": "model_routing",
+      "maturity": "design_only",
+      "runtime_owner_team": "models"
+    },
+    {
+      "service_id": "S26",
+      "slug": "generation-jobs",
+      "name": "统一生成任务协调",
+      "domain": "execution",
+      "data_owner": "GenerationAttempt/ProviderJob/SubmissionIntent/准入Saga/幂等键/提交不确定状态",
+      "command_api": "POST /generation-jobs",
+      "query_api": "GET /generation-jobs/{id}",
+      "published_events": [
+        "generation.job.state-changed"
+      ],
+      "depends_on": [
+        "S25",
+        "S22",
+        "S23",
+        "S27"
+      ],
+      "scaling": "按provider/account/region任务分片；轮询合并退避",
+      "recovery": "使用预算token与quota permit后持久化提交意图；无供应商幂等的未知提交不重提",
+      "acceptance": "LLM/VLM/图像/视频/TTS全经本服务；单任务不会因超时盲目重复付费",
+      "deployment_unit": "generation-jobs",
+      "schema_owner": "generation_jobs",
+      "maturity": "design_only",
+      "runtime_owner_team": "execution"
+    },
+    {
+      "service_id": "S27",
+      "slug": "provider-connectors",
+      "name": "供应商连接器",
+      "domain": "execution",
+      "data_owner": "ConnectorRequestReceipt/供应商响应映射/回调Inbox/轮询水位；ProviderJob权威在S26",
+      "command_api": "POST /connector-commands",
+      "query_api": "GET /connector-receipts/{id}",
+      "published_events": [
+        "connector.observation.received"
+      ],
+      "depends_on": [
+        "S26"
+      ],
+      "scaling": "Seedance/Kling/Wan/Veo/Sora/Vidu/MiniMax及图像语音渠道逐个独立Deployment与网络身份",
+      "recovery": "稳定client key、fencing、验签和对账；不能承诺不支持幂等供应商的exactly-once",
+      "acceptance": "单一供应商故障隔离；重复乱序回调不倒退状态；无业务路由权限",
+      "deployment_unit": "provider-connectors",
+      "schema_owner": "provider_connectors",
+      "maturity": "design_only",
+      "runtime_owner_team": "execution"
+    },
+    {
+      "service_id": "S28",
+      "slug": "artifact-ingest",
+      "name": "素材归档与制品目录",
+      "domain": "media",
+      "data_owner": "ArtifactManifest/hash/位置/TTL导入状态/代理/媒体访问权限与保留策略",
+      "command_api": "POST /artifact-imports",
+      "query_api": "GET /artifacts/{id}",
+      "published_events": [
+        "artifact.ingested"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "按媒体bytes/s与导入队列扩容；存储region隔离",
+      "recovery": "先上传暂存后校验再原子发布manifest；下载失败不重生成",
+      "acceptance": "供应商URL到期前归档；SSRF/内网/恶意媒体拒绝；不可变hash可验",
+      "deployment_unit": "artifact-ingest",
+      "schema_owner": "artifact_ingest",
+      "maturity": "design_only",
+      "runtime_owner_team": "media"
+    },
+    {
+      "service_id": "S29",
+      "slug": "image-production",
+      "name": "图像与关键帧生产",
+      "domain": "production",
+      "data_owner": "ImageJob/KeyframeCandidate/编辑mask/参考组合/镜头图像生产检查点",
+      "command_api": "POST /image-jobs",
+      "query_api": "GET /image-jobs/{id}",
+      "published_events": [
+        "production.image.ready"
+      ],
+      "depends_on": [
+        "S26",
+        "S28",
+        "S10"
+      ],
+      "scaling": "图像生成与编辑按渠道独立队列",
+      "recovery": "只恢复对应阶段；不将静态修复直接套到所有视频帧",
+      "acceptance": "多视图参考和mask可追溯；关键帧版本变化传播相关视频失效",
+      "deployment_unit": "image-production",
+      "schema_owner": "image_production",
+      "maturity": "design_only",
+      "runtime_owner_team": "generation"
+    },
+    {
+      "service_id": "S30",
+      "slug": "video-production",
+      "name": "视频片段生产",
+      "domain": "production",
+      "data_owner": "VideoJob/ClipCandidate/生成时长与目标时长映射/视频编辑计划",
+      "command_api": "POST /video-jobs",
+      "query_api": "GET /video-jobs/{id}",
+      "published_events": [
+        "production.video.ready"
+      ],
+      "depends_on": [
+        "S26",
+        "S28",
+        "S29"
+      ],
+      "scaling": "视频请求按时长/分辨率/供应商队列隔离",
+      "recovery": "已归档候选复用；未知提交交S26；长运镜可拆镜但需导演计划",
+      "acceptance": "4s目标可选原生或允许裁切档位；对白主动作不被截断",
+      "deployment_unit": "video-production",
+      "schema_owner": "video_production",
+      "maturity": "design_only",
+      "runtime_owner_team": "generation"
+    },
+    {
+      "service_id": "S31",
+      "slug": "speech-production",
+      "name": "配音生产",
+      "domain": "production",
+      "data_owner": "SpeechJob/UtteranceRevision/语音候选/韵律与词典绑定",
+      "command_api": "POST /speech-jobs",
+      "query_api": "GET /speech-jobs/{id}",
+      "published_events": [
+        "production.speech.ready"
+      ],
+      "depends_on": [
+        "S15",
+        "S26",
+        "S28"
+      ],
+      "scaling": "按语言、音色账户池与音频时长扩容",
+      "recovery": "音色授权变更重新验证；失败不偷偷换声线",
+      "acceptance": "每句对白固定文本和声音版本；原生视频人声不覆盖锁定声音",
+      "deployment_unit": "speech-production",
+      "schema_owner": "speech_production",
+      "maturity": "design_only",
+      "runtime_owner_team": "generation"
+    },
+    {
+      "service_id": "S32",
+      "slug": "lipsync",
+      "name": "口型生产",
+      "domain": "production",
+      "data_owner": "LipsyncJob/说话人-人脸绑定/驱动音频引用/时序编辑结果",
+      "command_api": "POST /lipsync-jobs",
+      "query_api": "GET /lipsync-jobs/{id}",
+      "published_events": [
+        "production.lipsync.ready"
+      ],
+      "depends_on": [
+        "S26",
+        "S28",
+        "S31"
+      ],
+      "scaling": "按媒体时长、嘴部可见窗口/GPU池扩容",
+      "recovery": "多人/遮挡不支持则转策略决策；边界必须复检",
+      "acceptance": "口型与锁定音频对齐；低可见度不伪装精确通过",
+      "deployment_unit": "lipsync",
+      "schema_owner": "lipsync",
+      "maturity": "design_only",
+      "runtime_owner_team": "generation"
+    },
+    {
+      "service_id": "S33",
+      "slug": "sound-effects",
+      "name": "音效生产",
+      "domain": "production",
+      "data_owner": "SfxCueRevision/音效素材/位置/授权与生成来源",
+      "command_api": "POST /sfx-jobs",
+      "query_api": "GET /sfx-cues/{id}",
+      "published_events": [
+        "production.sfx.ready"
+      ],
+      "depends_on": [
+        "S26",
+        "S28"
+      ],
+      "scaling": "按声效生成量与素材检索扩容",
+      "recovery": "素材不可用则标记缺口，替代需满足既定许可与音效约束",
+      "acceptance": "脚步/关门等跟随EDL重定位；有独立stem与来源",
+      "deployment_unit": "sound-effects",
+      "schema_owner": "sound_effects",
+      "maturity": "design_only",
+      "runtime_owner_team": "generation"
+    },
+    {
+      "service_id": "S34",
+      "slug": "music",
+      "name": "BGM与音乐",
+      "domain": "production",
+      "data_owner": "MusicCueRevision/曲目授权/生成音乐候选/节拍与情绪/循环点",
+      "command_api": "POST /music-jobs",
+      "query_api": "GET /music-cues/{id}",
+      "published_events": [
+        "production.music.ready"
+      ],
+      "depends_on": [
+        "S26",
+        "S28"
+      ],
+      "scaling": "音乐生成和授权素材检索独立配额",
+      "recovery": "变时长重算切点；不能用未获许可曲目填补",
+      "acceptance": "BGM版本可替换、独立导出；不遮盖对白并可追溯许可",
+      "deployment_unit": "music",
+      "schema_owner": "music",
+      "maturity": "design_only",
+      "runtime_owner_team": "generation"
+    },
+    {
+      "service_id": "S35",
+      "slug": "technical-qc",
+      "name": "媒体技术质检",
+      "domain": "quality",
+      "data_owner": "TechnicalQCReport/解码与黑帧/实际时长/编码/分辨率/响度等测量",
+      "command_api": "POST /technical-checks",
+      "query_api": "GET /technical-reports/{id}",
+      "published_events": [
+        "quality.technical.completed"
+      ],
+      "depends_on": [
+        "S28"
+      ],
+      "scaling": "CPU/IO按媒体时长扩容；媒体沙箱",
+      "recovery": "坏媒体隔离；确定性检查可幂等重跑",
+      "acceptance": "截断/空文件/错误时长必须检出；报告不依赖VLM主观判断",
+      "deployment_unit": "technical-qc",
+      "schema_owner": "technical_qc",
+      "maturity": "design_only",
+      "runtime_owner_team": "quality"
+    },
+    {
+      "service_id": "S36",
+      "slug": "semantic-qc",
+      "name": "视觉语义与时序质检",
+      "domain": "quality",
+      "data_owner": "VisualQCReport/身份肢体手部动作机位/时序缺陷证据/采样覆盖",
+      "command_api": "POST /semantic-checks",
+      "query_api": "GET /semantic-reports/{id}",
+      "published_events": [
+        "quality.semantic.completed"
+      ],
+      "depends_on": [
+        "S28",
+        "S17",
+        "S26"
+      ],
+      "scaling": "VLM任务与本地检测器分池；连续窗口抽检",
+      "recovery": "评估器超时不当pass；保留abstain和人工复核",
+      "acceptance": "缺陷有时间段与证据；合法特效/妆造变化不简单误判",
+      "deployment_unit": "semantic-qc",
+      "schema_owner": "semantic_qc",
+      "maturity": "design_only",
+      "runtime_owner_team": "quality"
+    },
+    {
+      "service_id": "S37",
+      "slug": "audio-alignment",
+      "name": "音频理解与对齐质检",
+      "domain": "quality",
+      "data_owner": "ASR/forced alignment/字音素时间码/说话人/音画偏移与音色评估",
+      "command_api": "POST /alignment-jobs",
+      "query_api": "GET /alignment-reports/{id}",
+      "published_events": [
+        "quality.alignment.completed"
+      ],
+      "depends_on": [
+        "S28",
+        "S26",
+        "S15"
+      ],
+      "scaling": "按音频秒数、语言与GPU扩容",
+      "recovery": "对齐不确定保留置信区间；文本冲突不自动改剧本",
+      "acceptance": "口型检查使用连续音视频；错读/漏词与字幕偏移有独立证据",
+      "deployment_unit": "audio-alignment",
+      "schema_owner": "audio_alignment",
+      "maturity": "design_only",
+      "runtime_owner_team": "quality"
+    },
+    {
+      "service_id": "S38",
+      "slug": "subtitles",
+      "name": "字幕与本地化",
+      "domain": "post",
+      "data_owner": "SubtitleRevision/字幕文本排版/语言/时间码/安全区与交付格式",
+      "command_api": "POST /subtitle-jobs",
+      "query_api": "GET /subtitle-tracks/{id}",
+      "published_events": [
+        "post.subtitle.ready"
+      ],
+      "depends_on": [
+        "S37",
+        "S41",
+        "S28"
+      ],
+      "scaling": "按字幕条数和本地化作业扩容",
+      "recovery": "EDL变化只重算相关时码；翻译新revision需验收",
+      "acceptance": "字幕后期合成；对白文本与字幕版本关联，不交给视频模型画字",
+      "deployment_unit": "subtitles",
+      "schema_owner": "subtitles",
+      "maturity": "design_only",
+      "runtime_owner_team": "post"
+    },
+    {
+      "service_id": "S39",
+      "slug": "repair-planning",
+      "name": "返工与修复决策",
+      "domain": "quality",
+      "data_owner": "RepairPlan/缺陷归因/修复动作/尝试上限/局部影响；费用权威在S23",
+      "command_api": "POST /repair-plans",
+      "query_api": "GET /repair-plans/{id}",
+      "published_events": [
+        "quality.repair.planned"
+      ],
+      "depends_on": [
+        "S35",
+        "S36",
+        "S37",
+        "S09",
+        "S02"
+      ],
+      "scaling": "按缺陷积压与修复计划QPS扩容",
+      "recovery": "跨run计数与预算由权威服务检查；次数耗尽交审核或隔离",
+      "acceptance": "视频修复需时序能力；策略不能套子工作流绕过返工上限",
+      "deployment_unit": "repair-planning",
+      "schema_owner": "repair_planning",
+      "maturity": "design_only",
+      "runtime_owner_team": "quality"
+    },
+    {
+      "service_id": "S40",
+      "slug": "human-review",
+      "name": "人工审核与接管",
+      "domain": "governance",
+      "data_owner": "ReviewTask/分配/决定/理由/委派/审核截止；决定不直接写接受指针",
+      "command_api": "POST /review-tasks/{id}/decisions",
+      "query_api": "GET /review-tasks",
+      "published_events": [
+        "review.decision.recorded"
+      ],
+      "depends_on": [
+        "S01",
+        "S02",
+        "S08"
+      ],
+      "scaling": "按待审任务/团队队列扩容；审批与读取分池",
+      "recovery": "旧版本审核标stale；超时按模式等待或阻塞分支，不能伪造通过",
+      "acceptance": "四档模式门一致；预算增加与创作接受使用不同权限",
+      "deployment_unit": "human-review",
+      "schema_owner": "human_review",
+      "maturity": "design_only",
+      "runtime_owner_team": "platform"
+    },
+    {
+      "service_id": "S41",
+      "slug": "editorial",
+      "name": "剪辑与时间线",
+      "domain": "post",
+      "data_owner": "TimelineRevision/EDL/轨道与切点/trim/speed/ripple/混音计划",
+      "command_api": "POST /timelines/{id}/revisions",
+      "query_api": "GET /timelines/{id}/revisions/{revision}",
+      "published_events": [
+        "post.timeline.revision.created"
+      ],
+      "depends_on": [
+        "S08",
+        "S28",
+        "S19"
+      ],
+      "scaling": "按时间线编辑QPS和预览任务扩容",
+      "recovery": "同timeline乐观并发；保留源媒体不可变",
+      "acceptance": "4秒修改使下游时码变化；缺必要素材不能提交正式合成",
+      "deployment_unit": "editorial",
+      "schema_owner": "editorial",
+      "maturity": "design_only",
+      "runtime_owner_team": "post"
+    },
+    {
+      "service_id": "S42",
+      "slug": "composition",
+      "name": "混音与合成渲染",
+      "domain": "post",
+      "data_owner": "RenderJob/MixJob/分片检查点/滤镜图/成片候选manifest",
+      "command_api": "POST /render-jobs",
+      "query_api": "GET /render-jobs/{id}",
+      "published_events": [
+        "post.master.rendered"
+      ],
+      "depends_on": [
+        "S41",
+        "S38",
+        "S33",
+        "S34",
+        "S28"
+      ],
+      "scaling": "按输出像素秒/GPU/CPU独立资源池；长渲染分片",
+      "recovery": "heartbeat+分片hash恢复；资源限制沙箱；不重复转码原始源",
+      "acceptance": "音轨与字幕可分离导出；帧边界、色彩、响度与画幅一致",
+      "deployment_unit": "composition",
+      "schema_owner": "composition",
+      "maturity": "design_only",
+      "runtime_owner_team": "post"
+    },
+    {
+      "service_id": "S43",
+      "slug": "delivery",
+      "name": "交付与外部分发",
+      "domain": "post",
+      "data_owner": "DeliveryPackage/交付接受状态/签名下载/发布意图与外部回执",
+      "command_api": "POST /delivery-packages",
+      "query_api": "GET /delivery-packages/{id}",
+      "published_events": [
+        "delivery.package.ready"
+      ],
+      "depends_on": [
+        "S08",
+        "S28",
+        "S35",
+        "S36",
+        "S37"
+      ],
+      "scaling": "按下载带宽与外部分发渠道独立池",
+      "recovery": "包准备与外部发布分操作；发布需独立授权和幂等回执",
+      "acceptance": "无缺口且验收通过才标完整交付；预览水印与正式包明确区分",
+      "deployment_unit": "delivery",
+      "schema_owner": "delivery",
+      "maturity": "design_only",
+      "runtime_owner_team": "post"
+    },
+    {
+      "service_id": "S44",
+      "slug": "evaluation-analytics",
+      "name": "效果评测与经营分析",
+      "domain": "analytics",
+      "data_owner": "BenchmarkDataset/盲评/实验/质量成本时长投影/客户项目ROI；原账本由S23持有",
+      "command_api": "POST /evaluation-runs",
+      "query_api": "GET /metrics",
+      "published_events": [
+        "evaluation.report.published"
+      ],
+      "depends_on": [
+        "S23",
+        "S35",
+        "S36",
+        "S37",
+        "S40",
+        "S43"
+      ],
+      "scaling": "OLAP独立扩容；按tenant/时间分区；事件批量消费",
+      "recovery": "可重放投影与watermark；分析故障不阻断已授权制作",
+      "acceptance": "成片可用率/每可用分钟成本/人工干预/返工可从事件重算",
+      "deployment_unit": "evaluation-analytics",
+      "schema_owner": "evaluation_analytics",
+      "maturity": "design_only",
+      "runtime_owner_team": "data"
+    },
+    {
+      "service_id": "S45",
+      "slug": "audit",
+      "name": "审计与证据保全",
+      "domain": "enterprise",
+      "data_owner": "AppendOnlyAuditRecord/访问与策略决定证据/保留与导出清单",
+      "command_api": "POST /audit-records",
+      "query_api": "GET /audit-exports/{id}",
+      "published_events": [
+        "audit.export.ready"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "追加写高吞吐；分租户分日归档，可配置WORM",
+      "recovery": "写入关键命令本地Outbox后异步保全；严格租户配置审计阻塞策略",
+      "acceptance": "谁改何版本、谁接受、谁授权费用均可追踪；导出可校验完整性",
+      "deployment_unit": "audit",
+      "schema_owner": "audit",
+      "maturity": "design_only",
+      "runtime_owner_team": "platform"
+    },
+    {
+      "service_id": "S46",
+      "slug": "developer-integration",
+      "name": "开发者API与MCP",
+      "domain": "experience",
+      "data_owner": "APIClient/IntegrationCommandReceipt/WebhookSubscription/外部映射；无核心领域事实",
+      "command_api": "POST /integrations/commands",
+      "query_api": "GET /operations/{id}",
+      "published_events": [
+        "integration.command.accepted"
+      ],
+      "depends_on": [
+        "S01",
+        "S02",
+        "S07",
+        "S21"
+      ],
+      "scaling": "API与MCP独立Deployment；按连接数与QPS扩容",
+      "recovery": "服务端command_id去重；长工具立即返回operation；支持限流与权限撤销",
+      "acceptance": "外部Agent可计划和查询；执行需scope与预算；只读不能付费",
+      "deployment_unit": "developer-integration",
+      "schema_owner": "developer_integration",
+      "maturity": "design_only",
+      "runtime_owner_team": "experience"
+    },
+    {
+      "service_id": "S47",
+      "slug": "realtime-projection",
+      "name": "实时状态与通知投影",
+      "domain": "experience",
+      "data_owner": "RunDashboardProjection/SSECursor/NotificationPreference/通知投递回执",
+      "command_api": "POST /subscriptions",
+      "query_api": "GET /runs/{id}/events",
+      "published_events": [
+        "projection.cursor.advanced"
+      ],
+      "depends_on": [
+        "S01"
+      ],
+      "scaling": "按长连接数/事件扇出扩容；按tenant/run分片",
+      "recovery": "投影可重建；cursor过期要求snapshot重同步；断线不重提生成",
+      "acceptance": "SSE重复乱序去重；通知只按用户配置渠道与权限发送",
+      "deployment_unit": "realtime-projection",
+      "schema_owner": "realtime_projection",
+      "maturity": "design_only",
+      "runtime_owner_team": "experience"
+    },
+    {
+      "service_id": "S48",
+      "slug": "adaptation-training",
+      "name": "LoRA与模型适配训练",
+      "domain": "assets",
+      "data_owner": "TrainingJob/DatasetManifest/BaseModelCompatibility/LoRAArtifact/Evaluation/训练额度",
+      "command_api": "POST /training-jobs",
+      "query_api": "GET /adaptation-artifacts/{id}",
+      "published_events": [
+        "adaptation.training.completed"
+      ],
+      "depends_on": [
+        "S23",
+        "S22",
+        "S28",
+        "S11",
+        "S24"
+      ],
+      "scaling": "专用GPU队列、长checkpoint、训练与在线推理隔离",
+      "recovery": "训练checkpoint续跑；基座不兼容禁止挂载；授权撤销停止新训练",
+      "acceptance": "LoRA基座/hash与数据来源可追溯；训练不占满在线生成资源",
+      "deployment_unit": "adaptation-training",
+      "schema_owner": "adaptation_training",
+      "maturity": "design_only",
+      "runtime_owner_team": "assets"
+    }
+  ]
+}

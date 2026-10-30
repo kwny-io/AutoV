@@ -1,0 +1,37 @@
+# S45 · 审计与证据保全
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S45
+slug: audit
+name: 审计与证据保全
+maturity: design_only
+
+domain: enterprise
+owner_team: platform
+schema_owner: audit
+deployment_unit: audit
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: AppendOnlyAuditRecord/访问与策略决定证据/保留与导出清单
+
+api:
+  command: POST /audit-records
+  query: GET /audit-exports/{id}
+
+publishes:
+  - event_type: audit.export.ready
+    topic: drama.audit.v2
+    retention_days: 14
+
+depends_on:
+  - S01
+
+runtime:
+  scaling: 追加写高吞吐；分租户分日归档，可配置WORM
+  recovery: 写入关键命令本地Outbox后异步保全；严格租户配置审计阻塞策略
+
+acceptance: 谁改何版本、谁接受、谁授权费用均可追踪；导出可校验完整性
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

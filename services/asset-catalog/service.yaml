@@ -1,0 +1,41 @@
+# S10 · 资产目录与绑定解析
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S10
+slug: asset-catalog
+name: 资产目录与绑定解析
+maturity: design_only
+
+domain: assets
+owner_team: assets
+schema_owner: asset_catalog
+deployment_unit: asset-catalog
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: GlobalAssetID/类型/owner-service映射/跨类型BindingSetRevision/检索投影；不拥有角色外观细节
+
+api:
+  command: POST /binding-sets
+  query: GET /assets/{id}/resolve
+
+publishes:
+  - event_type: asset.binding-set.created
+    topic: drama.asset-catalog.v2
+    retention_days: 14
+
+depends_on:
+  - S11
+  - S12
+  - S13
+  - S14
+  - S15
+
+runtime:
+  scaling: 按资产检索与绑定请求扩容；索引可重建
+  recovery: 各资产服务不齐时保留固定绑定，缺必要版本停止新生成
+
+acceptance: 绑定必须固定revision与权利版本；升级资产显示影响清单
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false

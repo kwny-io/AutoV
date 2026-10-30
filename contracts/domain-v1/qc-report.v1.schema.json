@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/qc-report.v1.schema.json",
+  "title": "QCReport v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "report_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "artifact_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "shot_revision": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "evaluator_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "repair",
+        "human_review",
+        "abstain"
+      ]
+    },
+    "dimensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name",
+          "score",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "defects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "identity",
+              "anatomy",
+              "hands",
+              "costume",
+              "prop",
+              "continuity",
+              "camera_adherence",
+              "action_adherence",
+              "temporal",
+              "subtitle",
+              "lipsync",
+              "voice",
+              "technical",
+              "audio_mix"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "major",
+              "minor",
+              "info"
+            ]
+          },
+          "time_range": {
+            "type": "object",
+            "properties": {
+              "start_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "end_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "start_seconds",
+              "end_seconds"
+            ],
+            "additionalProperties": false
+          },
+          "region_bbox": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "character_id": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_artifact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+            },
+            "minItems": 1
+          },
+          "recommended_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "reingest",
+                "transcode",
+                "keyframe_edit",
+                "regenerate_video",
+                "temporal_edit",
+                "redo_lipsync",
+                "realign_subtitles",
+                "remix",
+                "human_review"
+              ]
+            }
+          }
+        },
+        "required": [
+          "type",
+          "severity",
+          "time_range",
+          "region_bbox",
+          "character_id",
+          "expected",
+          "observed",
+          "confidence",
+          "evidence_artifact_ids",
+          "recommended_actions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "media_duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "frames_sampled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "temporal_windows_evaluated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audio_analyzed": {
+          "type": "boolean"
+        },
+        "sampling_policy_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "media_duration_seconds",
+        "frames_sampled",
+        "temporal_windows_evaluated",
+        "audio_analyzed",
+        "sampling_policy_version"
+      ],
+      "additionalProperties": false
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "schema_version",
+    "report_id",
+    "artifact_id",
+    "artifact_sha256",
+    "shot_revision",
+    "evaluator_version",
+    "policy_version",
+    "decision",
+    "dimensions",
+    "defects",
+    "coverage",
+    "confidence",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

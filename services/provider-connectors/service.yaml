@@ -1,0 +1,37 @@
+# S27 · 供应商连接器
+# 由 contracts/service-catalog.v2.json 生成，勿手工编辑；改动请改 catalog。
+
+service_id: S27
+slug: provider-connectors
+name: 供应商连接器
+maturity: design_only
+
+domain: execution
+owner_team: execution
+schema_owner: provider_connectors
+deployment_unit: provider-connectors
+
+# 数据所有权：本服务是下列事实的唯一写者
+data_owner: ConnectorRequestReceipt/供应商响应映射/回调Inbox/轮询水位；ProviderJob权威在S26
+
+api:
+  command: POST /connector-commands
+  query: GET /connector-receipts/{id}
+
+publishes:
+  - event_type: connector.observation.received
+    topic: drama.provider-connectors.v2
+    retention_days: 14
+
+depends_on:
+  - S26
+
+runtime:
+  scaling: Seedance/Kling/Wan/Veo/Sora/Vidu/MiniMax及图像语音渠道逐个独立Deployment与网络身份
+  recovery: 稳定client key、fencing、验签和对账；不能承诺不支持幂等供应商的exactly-once
+
+acceptance: 单一供应商故障隔离；重复乱序回调不倒退状态；无业务路由权限
+
+# SLO 为 docs/03 的规划目标，尚未实测
+slo:
+  verified: false
