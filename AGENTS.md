@@ -45,6 +45,17 @@
 
 `services/*/service.yaml`、`agents/*/agent.yaml`、`connectors/*/*/connector.yaml` 从 `contracts/service-catalog.v2.json` 派生。改内容请改 catalog 再重新生成。
 
+## 文档放哪里
+
+| 目录 | 放什么 | 能不能改 |
+|---|---|---|
+| `services/<slug>/` | **只放代码**：`src/ api/ events/ migrations/ tests/ deploy/ runbooks/` | 能 |
+| `plans/` | 实现方案，`plans/<服务ID>-<slug>.md` | 能 |
+| `docs/01`–`17` | 设计文档 | 能，但改要同步 `docs/design-package/` 的对照关系 |
+| `docs/design-package/` | **原始设计包存档，只读** | **不能** |
+
+实现方案不要写进 `services/<slug>/`，会和代码抢位置。新写的任何文档都不放 `docs/design-package/` —— 那是原始输入，改了就没法对照了。
+
 ## 验收
 
 交付前对照 [E01–E40](docs/16-migration-acceptance.md)。至少要能证明：跨租户拒绝、重复投递幂等、乱序/缺失事件、重启恢复、版本冲突、审计可追溯、独立升级回滚。

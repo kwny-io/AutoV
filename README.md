@@ -15,7 +15,10 @@
 | 9 个供应商连接器 | `connectors/<provider>/<channel>/` | 全部 `disabled` |
 | 契约（OpenAPI / schema / 事件） | `contracts/` | 设计稿，已校验可解析 |
 | 设计文档 17 篇 | `docs/` | 从设计包迁入，链接已修正 |
-| 原始设计包存档 | `docs/design-package/` | 未改动内容，仅修正链接 |
+| 实现方案 | `plans/` | 按服务分文件，进行中 |
+| 原始设计包存档 | `docs/design-package/` | **只读**，未改动内容 |
+
+`services/<slug>/` 只放代码。实现方案一律放 `plans/`，原始设计包存档不动。
 
 ## 五条硬约束
 
@@ -41,7 +44,8 @@ infra/                global/ regions/<region>/cells/<cell>/
 evals/                datasets/ rubrics/ manifests/ reports/
 customer-configs/     按租户的版本化策略与模板（无密钥）
 delivery/             playbooks/ capacity/ acceptance/ training/
-docs/                 17 篇设计文档 + 设计包存档
+plans/                实现方案，按服务分文件
+docs/                 17 篇设计文档 + 设计包存档（后者只读）
 ```
 
 ## 从哪开始读
