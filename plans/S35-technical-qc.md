@@ -93,7 +93,17 @@ QCReport v2 envelope      ← contracts 拥有，三个服务共用一份 schema
   └─ check_id（命名空间开放）← 各服务私有，前缀 TECH./VIS./AUD./SUB.
 ```
 
-关键取舍：**S39 按 `type` + `recommended_actions` 决策，永不按 `check_id` 决策。** 这样任一质检服务新增一个检查项，不需要 S39 发版；同时新增检查项也不能改变修复路由，因为路由维度被锁在闭集里。
+关键取舍：**`type` 决定动作族，`check_id` 只决定窗口与升级条件，S39 永不按 `check_id` 分支。**
+
+三个维度各有唯一的拥有者，谁都不能越界：
+
+| 维度 | 拥有者 | 决定什么 | 改动代价 |
+|---|---|---|---|
+| `type`（14 值闭集） | contracts | 这一族缺陷**可以**用哪几种动作、兜底是什么 | 改闭集 = 全体发版，几乎不做 |
+| `check_id` + 其登记项 | 各质检服务 | 这一条检查的**最小动作**、**窗口范围**、**何时升级** | 注册即生效，S39 不发版 |
+| `recommended_actions` | 质检服务运行时 | 该次检测的**建议**（输入，不是指令） | 无 |
+
+这样拆的理由：只按 `type` 路由表达不出"同样的 `identity`，单帧可用 `keyframe_edit`、连续只能 `regenerate_video`"；只按 `check_id` 路由则每加一条检查都要 S39 发版。把**族**锁在闭集、把**窗口**放进 registry 数据，两个问题同时消失——新增 check 只需在 registry 写一行，S39 读数据不改代码。
 
 `type` 闭集（沿用 v1，不扩不缩）：
 
@@ -102,7 +112,76 @@ identity  anatomy  hands  costume  prop  continuity  camera_adherence
 action_adherence  temporal  subtitle  lipsync  voice  technical  audio_mix
 ```
 
-`check_id` 命名规约：`<LAYER>.<GROUP>.<NAME>`，全大写下划线，全局唯一，登记在 `contracts/quality/check-registry.v2.json`。每个 check 登记：`severity_default`、`severity_max`、`layer`、`defect_type`、`allowed_actions`、`recheck_scope`。**严重度由登记表决定，模型只能往上提，不能往下压**——防止被注入的 prompt 或幻觉把 blocker 说成 minor。
+### 2.2.1 `type` → 动作族（S39 的路由维度）
+
+`action_family[type]` 是**有序候选链**：从最便宜、影响面最小的动作开始，逐级升级；全部不可达或有禁忌时落到该族的兜底。
+
+`human_review` **不出现在任何族里**——它是所有族的共同终点（兜底列里的 `human_review` 表示"该族的自动动作走不通时转人审"）。把它写进族会让"选不到自动动作"和"主动选择人审"混为一谈。
+
+| `type` | 动作族（按最小→最大） | 兜底 | 禁忌 |
+|---|---|---|---|
+| `technical` | `reingest` → `transcode` → `remix` → `temporal_edit` → `regenerate_video` | `regenerate_video` | 音频类缺陷不得走 `reingest`（源没坏） |
+| `identity` | `keyframe_edit`（仅 `window_scope ≤ 6 帧`）→ `temporal_edit` → `regenerate_video` | `regenerate_video` | 连续窗口**禁止** `keyframe_edit` |
+| `anatomy` | `temporal_edit` → `regenerate_video` | `regenerate_video` | 无时序能力时直接回退，不得逐帧重绘 |
+| `hands` | `temporal_edit` → `regenerate_video` | `regenerate_video` | 同上 |
+| `costume` | `regenerate_video` → `change_spec` | `human_review` | 涉及角色设定变更必须 `human_review` |
+| `prop` | `regenerate_video` → `change_spec` | `human_review` | 同上 |
+| `continuity` | `regenerate_video` → `change_spec` | `human_review` | 跨集事实冲突默认 `human_review` |
+| `camera_adherence` | `regenerate_video` → `change_spec` | `human_review` | 需改分镜时走 `change_spec`，不是重生成 |
+| `action_adherence` | `regenerate_video` → `change_spec` | `human_review` | 同上 |
+| `temporal` | `temporal_edit` → `regenerate_video` | `regenerate_video` | — |
+| `subtitle` | `realign_subtitles`（时码，用 S37 对齐结果）→ `re_render_subtitles`（版式/格式，S38 内部重建，零生成费用） | `human_review` | 不得触发视频重生成；**不自动重译**（见下） |
+| `lipsync` | `redo_lipsync` | `human_review` | 音频本身有问题时先修音频；不自动重做 TTS（见下） |
+| `voice` | `re_synthesize_speech` → `regenerate_video` | `human_review` | 音色授权失效时**禁止**自动重生成 |
+| `audio_mix` | `remix` → `regenerate_video` | `remix` | 不得 `reingest`（源的混音问题不在容器） |
+
+`audio_mix` 目前没有检查项指向它——闭集不能缩，保留给后续音频层使用。
+
+**族里的每个动作必须是 `recommended_actions` 枚举的成员**，否则族没法机器可读。上面用到的 `re_synthesize_speech` 与 `re_render_subtitles` 是本次新增的枚举值（见 §12 C7）——S37/S38/S39 原先都用"重新 TTS"、"重排版"这类自然语言描述，实现时没有对应值。
+
+新值与既有值的分工，避免误用：
+
+| 值 | 做什么 | 谁执行 | 花钱 |
+|---|---|---|---|
+| `realign_subtitles` | 按 S37 对齐结果**改时码**，文本不动 | S38 | 否 |
+| `re_render_subtitles` | 版式/格式重排、重渲染轨道，**时码与文本都不动** | S38 | 否 |
+| `re_synthesize_speech` | 重新做语音合成（新音频） | S26 `speech` | 是 |
+
+**两处刻意不进族**：
+
+- **字幕重译**走 S26 翻译，要花钱且译文需人验收（S38 `service.yaml` recovery）。它不在 `subtitle` 族里，`SUB.TEXT.*_STALE` 命中时走 `human_review`。
+- **口型缺陷的 TTS 重做**：`lipsync` 族只到 `redo_lipsync`。音频本身有问题时应由 `voice` 类的缺陷单独报出来先修，而不是让 S39 从口型缺陷推断出"重做语音"。这条防的是跨族越权。
+
+### 2.2.2 registry 里必须登记的字段
+
+`check_id` 命名规约：`<LAYER>.<GROUP>.<NAME>`，全大写下划线，全局唯一，登记在 `contracts/quality/check-registry.v2.json`。每条登记：
+
+| 字段 | 作用 | S39 怎么用 |
+|---|---|---|
+| `layer` | `technical` / `semantic` / `alignment` / `subtitle` | 归类与复检层选择 |
+| `defect_type` | 落在 14 值闭集内 | **选中动作族**（唯一的路由入口） |
+| `default_action` | 该 check 的最小动作 | 族的起点；必须是 `action_family[defect_type]` 的成员 |
+| `window_scope` | `frame` / `window` / `shot` / `track` / `all` | 决定 `keyframe_edit` 是否可用、复检范围 |
+| `escalation_rule` | 数值阈值 + 升级后动作 | 族内的升级判定 |
+| `severity_default` / `severity_max` | 严重度上下界 | 门禁判定 |
+| `allowed_actions` | 该 check 允许的动作（族的子集） | 交叉校验，防止登记错 |
+
+两条硬约束，实现时必须有测试守着：
+
+1. **`default_action` 和 `allowed_actions` 必须是该 `defect_type` 动作族的子集。** 登记时校验，越界直接拒绝注册——否则 registry 会成为绕过闭集的旁路。
+2. **严重度由登记表决定，模型只能往上提，不能往下压**——防止被注入的 prompt 或幻觉把 blocker 说成 minor。
+
+S39 解析一条缺陷的动作候选，等于：
+
+```text
+candidates = action_family[defect.defect_type]           # 闭集，contracts 拥有
+             ∩ registry[defect.check_id].allowed_actions  # 数据，质检服务拥有
+             ∩ policy.allowed_actions                    # 数据，S02 下发
+```
+
+交集为空 → `human_review`（`reason=no_capable_route`），**不是**猜一个动作。起点取 `registry[check_id].default_action`，按 `escalation_rule` 与能力可达性在交集内逐级升。
+
+新增一条 check 只改 registry 数据：`action_family` 没变，S39 的代码路径没变，所以不需要发版。
 
 ### 2.3 envelope（完整）
 
@@ -504,7 +583,8 @@ action_adherence  temporal  subtitle  lipsync  voice  technical  audio_mix
           "items": {
             "type": "string",
             "enum": ["reingest", "transcode", "keyframe_edit", "regenerate_video",
-                     "temporal_edit", "redo_lipsync", "realign_subtitles", "remix",
+                     "temporal_edit", "redo_lipsync", "realign_subtitles",
+                     "re_render_subtitles", "remix", "re_synthesize_speech",
                      "human_review", "change_spec"]
           }
         }
@@ -514,7 +594,7 @@ action_adherence  temporal  subtitle  lipsync  voice  technical  audio_mix
 }
 ```
 
-v1 兼容性说明：v2 的 `defect` 字段是 v1 的超集，`type` / `severity` / `recommended_actions` 枚举全等（只多了 `change_spec`，需要 `min` 兼容时降级为 `human_review`）。`dimensions` / `coverage` 的核心字段名保持 v1 拼写。
+v1 兼容性说明：v2 的 `defect` 字段是 v1 的超集，`type` / `severity` 枚举全等。`recommended_actions` **多了三个值**：`change_spec`、`re_synthesize_speech`、`re_render_subtitles`。需要与 v1 最小兼容时，三者都降级为 `human_review`——降级只会让处置变保守，不会变成更激进的动作。`dimensions` / `coverage` 的核心字段名保持 v1 拼写。
 
 ### 2.4 defect_fingerprint
 
@@ -910,6 +990,17 @@ Runbook 要点：
 | E26-T1 | 同一 shot 第 2 个 Run 的复检报告 | `report_id` 派生键含 `attempt_slot_id`，与 Run 1 不同；`shot_lineage_id` 相同 |
 | E26-T2 | 报告被 S39 消费两次 | 计数只 +1（slot 唯一约束） |
 
+### 10.3.1 路由不变量（S35 定族，S39 消费 —— 两个仓都要有对应测试）
+
+| # | 用例 | 断言 |
+|---|---|---|
+| ROUTE-T1 | registry 每条登记都过一遍族校验 | 所有 `default_action` / `allowed_actions` ⊆ `action_family[defect_type]`；有越族则**加载期失败**，不是运行期跳过 |
+| ROUTE-T2 | 新增一条 check（只改 registry JSON） | registry validator 接受；S39 无需改代码即可路由 |
+| ROUTE-T3 | 给 `technical` 类 check 登记 `redo_lipsync` | 加载期拒绝，报 `registry_cross_family{check_id}` |
+| ROUTE-T4 | 给 `window_scope=shot` 的 check 登记 `keyframe_edit` | 加载期拒绝，报 `keyframe_edit_out_of_window{check_id}` |
+| ROUTE-T5 | `audio_mix` 族目前无 check 指向 | 允许（闭集不缩）；若某 check 登记 `audio_mix`，其动作必在 `remix`/`regenerate_video` 内 |
+| ROUTE-T6 | `never_auto_repair: true` 的登记项带 `no_auto_reason` | 该字段必填，值为三个枚举之一；缺失即加载失败 |
+
 ### 10.4 通用验收（docs/16 末段）
 
 跨租户拒绝（含 404 不泄漏）、重复投递、乱序/缺失事件、重启恢复（outbox 重放不重发副作用）、依赖超时（S28 不可达 → abstain）、版本冲突（manifest 换代后的报告不被新 manifest 复用）、审计可追溯（每条报告可从 trace_id 反查命令与 run）、独立升级回滚。
@@ -938,4 +1029,7 @@ Runbook 要点：
 | C2 | `contracts/event-topics.v2.json` 的 `quality.*` 事件没有定义 `data` 最小字段集 | 按本文 §7 补 `event-payload/quality-*.v2.schema.json` |
 | C3 | `service-catalog.v2.json` 的 S35 `depends_on` 只有 S28，但读 ShotSpec 需要 S06 | 依赖表是运行协作关系而非拓扑，读 ShotSpec 走 query 可接受；若要求显式化，需改 catalog |
 | C4 | S38 需要发缺陷但没有 `quality.subtitle.*` 事件 | 见 [S38 §7](S38-subtitles.md)：缺陷随 `post.subtitle.ready` 的 `data_ref` 携带，不新增 topic |
-| C5 | 没有 `contracts/quality/check-registry.v2.json` | 新增；S39 路由不依赖它，但 validator 依赖它 |
+| C5 | 没有 `contracts/quality/check-registry.v2.json` | 新增。**S39 的修复路由依赖它**（§2.2.1 的族是代码，§2.2.2 的登记项是这个文件）；同时 validator 用它的 `severity_max` 与 `allowed_actions` 做交叉校验 |
+| C6 | registry 的 `default_action` / `allowed_actions` 必须是 `defect_type` 动作族的子集，但没有任何机制强制这一点 | 在 `platform/qc-sdk` 的 registry validator 里做**加载期校验**：越族即拒绝加载并报警。不要依赖人工 review —— registry 是数据，会漂移 |
+| C7 | `recommended_actions` 缺两个实际在用的动作：重新语音合成、重排字幕轨道。S37/S38/S39 只能用自然语言描述 | 新增 `re_synthesize_speech` 与 `re_render_subtitles`（§2.3）。不加这两个值，`voice` 与 `subtitle` 动作族无法机器可读，S39 只能硬编码 check_id 绕过去 |
+| C8 | `action_family[type]` 只存在于本文表格里，没有机器可读契约 | 见 [S39 §11 C5b](S39-repair-planning.md)：落到 `contracts/quality/` 下，S39 读数据不硬编码 |

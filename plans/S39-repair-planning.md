@@ -1,6 +1,6 @@
 # S39 · 返工与修复决策 —— 实现方案
 
-状态：`design_only`。QCReport v2 规范在 [S35 §2](S35-technical-qc.md)。
+状态：`design_only`。QCReport v2 规范与 `type → 动作族` 定义在 [S35 §2](S35-technical-qc.md)；本文只写 S39 怎么消费这两样数据。
 
 ---
 
@@ -73,38 +73,45 @@ S02 政策检查 → S21 编排 → S26 准入 → S27 执行
 
 ## 3. 缺陷 → 修复动作
 
-### 3.1 主映射表
+### 3.1 路由算法：族由闭集定，细节由 registry 定
 
-docs/11 §2 给了 8 行；下表是它的完整实现，补了动作的**最小性**与**前置能力**要求。
+docs/11 §2 给了 8 行。**这不是一张 check_id 表**——S39 不认识任何具体的 `check_id`。它只做三件事，全部按数据走：
 
-| 缺陷类型 / check_id | 最小动作 | 前置条件 | 复检范围 | 升级条件 |
-|---|---|---|---|---|
-| `TECH.CONTAINER.PARSE` / `FILE.*` / `DECODE.*` | `reingest` → 失败则 `transcode` | S28 可重取源 | technical + hash | 重取 2 次仍坏 |
-| `TECH.DURATION.MISMATCH` | `temporal_edit`（trim/pad）→ `regenerate_video` | 差值 ≤ 1 帧可 trim | technical | 差值 > 0.5s |
-| `TECH.RESOLUTION.*` / `FPS.*` / `CODEC.*` | `transcode` | 目标规格明确 | technical | 需要重生成 |
-| `TECH.BLACK_FRAME` / `FREEZE_FRAME` / `FLASH_FRAME` | `temporal_edit` | 缺陷在可裁剪区间 | 连续窗口 ±0.5s | 缺陷占 >30% 时长 → `regenerate_video` |
-| `TECH.AUDIO.MISSING` | `remix` → `regenerate_video` | 有可用音频源 | technical+audio | 无音频源 |
-| `TECH.AUDIO.OFFSET` | `transcode`（remux） | — | audio + ±0.5s | — |
-| `TECH.LOUDNESS.*` / `AUDIO.CLIPPING` | `remix` | — | 全轨 | — |
-| `TECH.SUBTITLE.BURNED_IN` | `regenerate_video` | — | 全片抽检 | — |
-| `VIS.IDENTITY.FACE_DRIFT`（静态关键帧） | `keyframe_edit` | 缺陷在单帧/短窗口 | identity + 对应视频下游 | 缺陷 > 6 帧 |
-| `VIS.IDENTITY.FACE_DRIFT`（连续） | `regenerate_video` | — | 连续窗口、边界、身份、切点 | — |
-| `VIS.HANDS.*` / `VIS.ANATOMY.*` | `temporal_edit`（有时序能力）→ `regenerate_video` | **必须有时序能力**（§3.2） | 连续窗口、边界、身份、切点 | 无时序工具 |
-| `VIS.CAMERA.*` / `VIS.ACTION.*` | `regenerate_video`（简化节拍/兼容路由）或 `change_spec` | 需要 S09 影响分析 | 导演遵循、连续性 | 需改剧本 → `human_review` |
-| `VIS.SPACE.PROP_*` / `VIS.STATE.*` | `regenerate_video` | expected 来源必须可解析 | 身份、连续性 | expected 冲突 → `human_review` |
-| `VIS.CONTINUITY.AXIS_CROSSING` | `regenerate_video` 或 `change_spec` | — | 跨镜连续性 | 默认 `human_review` |
-| `VIS.SAFE_AREA.TEXT_OVERLAP` | `realign_subtitles` | — | 文本覆盖与时码 | — |
-| `AUD.LIPSYNC.*` | `redo_lipsync` | 有 face track + 音频 | 连续音视频与边界 | 音频本身有问题 → 先修音频 |
-| `AUD.TEXT.MISSING_WORD` / `MISPRONOUNCE`（TTS 问题） | 重新 TTS（S26 `speech`） | 文本未变 | voice + 对齐 | 文本本身要改 → `human_review` |
-| `AUD.TEXT.SUBSTITUTION`（关键台词） | `human_review` | — | — | 默认不自动 |
-| `AUD.ALIGN.DURATION_VS_SPEC` | `human_review` | — | — | 属创作决策（§4.4） |
-| `AUD.VOICE.EMBEDDING_DRIFT` | 重新 TTS | 音色授权有效 | voice | 授权失效 → `human_review` |
-| `AUD.VOICE.AUTHORIZATION` | `human_review` | — | — | 不能自动重生成 |
-| `SUB.TIMING.*` | `realign_subtitles` | 有 S37 对齐结果 | 文本覆盖与时码 | 台词过长 → `human_review` |
-| `SUB.LAYOUT.*` | 重排版（S38 内部，不产生生成费用） | — | 版式 | 仍超限 → `human_review` |
-| `SUB.TEXT.*_STALE` | 重译/重排版（S26 翻译） | — | 文本版本 | 译文未验收 |
-| `SUB.FORMAT.*` | 重渲染 | — | 格式 | — |
-| S17 `continuity`（跨集事实冲突） | 选合适候选 或 `change_spec` | 需要 S09 跨集影响 | 记忆与所有受影响依赖 | **默认 `human_review`** |
+```text
+1. family  = action_family[defect.defect_type]              ← contracts，14 值闭集
+2. entry   = registry[defect.check_id]                       ← 质检服务的登记项
+3. candidates = family ∩ entry.allowed_actions ∩ policy.allowed_actions
+   起点 = entry.default_action
+   升级 = entry.escalation_rule（数值阈值 + 升级后动作）
+   窗口 = entry.window_scope（决定 keyframe_edit 能不能用、复检范围多大）
+   candidates 为空 → human_review，reason=no_capable_route
+```
+
+新增一条 check 时，质检服务在 registry 加一行，S39 **不发版、不改代码**。`action_family` 只在"整个缺陷族要换处置策略"时才动，那是 contracts 层面的变更。
+
+`action_family` 的权威定义在 [S35 §2.2.1](S35-technical-qc.md)，本文不复述——复述就会漂移。
+
+### 3.1.1 registry 字段如何影响决策
+
+| registry 字段 | 对 S39 的作用 | 缺省行为 |
+|---|---|---|
+| `default_action` | 动作链的起点 | 取 `family[0]` |
+| `window_scope` | `frame`/`window` 且 ≤ 6 帧才允许 `keyframe_edit`；决定复检范围 | 取 `shot`，即最保守（不允许逐帧修） |
+| `escalation_rule` | 族内升级的数值阈值（如"缺陷占 >30% 时长 → `regenerate_video`"） | 不自动升级，达上限后 `human_review` |
+| `allowed_actions` | 与族取交集，收窄可选范围 | 等于族 |
+| `severity_max` | 门禁判定：`blocker` 不可自动接受 | 取登记的 `severity_default` |
+
+**登记无效时的处理**：registry 缺失该 `check_id`，或 `default_action ∉ family`，或 `allowed_actions ⊄ family` → 该缺陷按 `human_review` 处理并告警 `registry_entry_invalid_total{check_id}`。**不做 best-effort 猜测**——猜错的动作可能花钱、可能改坏已验收内容。
+
+这条是强制约束：registry 是数据，数据可以写错，S39 必须能识别并拒绝，而不是拿错的数据继续跑。
+
+### 3.1.2 几个必须在算法层表达、不能只写在 registry 里的规则
+
+以下三条来自 `docs/11` 与 `service.yaml` 的 acceptance，属于**不可被 registry 数据覆盖**的硬规则：
+
+1. **禁止逐帧修连续缺陷。** `keyframe_edit` 只在 `window_scope ∈ {frame, window}` 且窗口 ≤ 6 帧时可用（§3.2）。registry 把它登记到 `shot`/`all` 范围的 check 上 → 登记无效。
+2. **授权失效类缺陷禁止自动重生成。** 落点在 registry：相关 check 登记 `never_auto_repair: true` + `no_auto_reason: rights_authorization`（§3.3）。族算出什么都不采纳——这是侵权风险，不是质量问题。S39 的代码里不写死任何授权类 check_id。
+3. **动作必须属于该 type 的动作族。** 跨族动作（例如给 `technical` 缺陷开 `redo_lipsync`）一律拒绝，即使 registry 这么写。
 
 ### 3.2 "视频修复需时序能力"（service.yaml acceptance）
 
@@ -135,17 +142,24 @@ S39 在生成计划前向 S24/S25 查询候选能力（**只查不调用**），
 | 授权/合权 | 自动修复会绕过需要人批准的门 | 音色授权失效（`AUD.VOICE.AUTHORIZATION`） |
 | 不可逆或跨集 | 修复会影响已验收内容或其它集 | 跨集事实冲突（S17 `continuity`） |
 
-落到具体 check：
+这些判据**不写在 check_id 上**，写在 registry 的 `escalation_rule` 里，用两个字段表达：
 
-| check_id | 不自动修的理由 |
+| registry 字段 | 含义 |
 |---|---|
-| `AUD.ALIGN.DURATION_VS_SPEC` | 创作决策。S37 只报"台词比镜头长 X ms"，怎么消解是导演的 |
-| `AUD.TEXT.SUBSTITUTION`（关键台词） | 换词会改语义，不能当成发音问题处理 |
-| `AUD.VOICE.AUTHORIZATION` | 授权失效时重生成是侵权风险，不是质量问题 |
-| `VIS.CONTINUITY.AXIS_CROSSING`（未声明越轴意图） | 要么改分镜要么重拍整场，是创作决策 |
-| S17 `continuity`（跨集） | 改一个事实要重算所有依赖它的集 |
+| `never_auto_repair: true` | 该 check 命中即进人审，不看动作族 |
+| `no_auto_reason` | `creative_decision` / `rights_authorization` / `irreversible_or_cross_episode` |
 
-这类缺陷仍然进 `RepairTarget`、仍然参与去重和排序，但 `action_candidates = []`，`RepairPlan.state = escalated`，`escalation.reason = creative_decision_required`。
+按判据归类（示例，不是穷举——清单在 registry 里，S39 不维护）：
+
+| 判据 | 典型 check |
+|---|---|
+| 创作决策 `creative_decision` | `AUD.ALIGN.DURATION_VS_SPEC`（台词比镜头长，怎么消解是导演的）、`AUD.TEXT.SUBSTITUTION`（换词改语义）、`VIS.CONTINUITY.AXIS_CROSSING`（改分镜还是重拍整场） |
+| 授权/合权 `rights_authorization` | `AUD.VOICE.AUTHORIZATION`（重生成是侵权风险） |
+| 不可逆或跨集 `irreversible_or_cross_episode` | 跨集事实冲突（改一个事实要重算所有依赖它的集） |
+
+**S39 只认 `never_auto_repair` 这个布尔值**，不认具体 check_id。质检服务新增一条"必须人审"的检查，登记 `never_auto_repair: true` 即可，S39 不需要发版。
+
+这类缺陷仍然进 `RepairTarget`、仍然参与去重和排序，但 `action_candidates = []`，`RepairPlan.state = escalated`，`escalation.reason` 取 registry 的 `no_auto_reason`。
 
 **不要把它们当作"修不了所以放过"**：它们进人审队列，不推进 S08 接受指针。
 
@@ -188,6 +202,9 @@ ingest(event):
        f. decision 与 defects/abstain 自洽（uses 共享 decide()，输出必须相同）
        g. time_range.end > start；bbox 在 [0,1]
        h. defect.type 与 check_registry[check_id].defect_type 一致
+       i. check_registry 里该 check_id 存在，且登记项通过族校验
+          （default_action/allowed_actions ⊆ action_family[defect_type]）
+       j. defect.recommended_actions ⊆ 该 type 的动作族（建议不能跨族）
   3. 任一失败 → quarantine，metric qc_report_rejected_total{reason,layer}+1，P1 告警
      不生成计划、不 best-effort 解析
 ```
@@ -797,6 +814,12 @@ CREATE TABLE repair_planning.inbox (...);
 | E24-R10 | 修复后 hash 变了但复用旧 QC | ingest 拒收（`subject.artifact_sha256` 不等于新 artifact hash） |
 | E24-R11 | S17 报告里 `disposition=suppressed` 的闪回服装条目 | 不生成计划；记入 `suppressed_defects`；不消耗计数 |
 | E24-R12 | 同一指纹 S17 说 suppressed、S36 说 reported（S36 没收到例外） | `escalated` + `exception_not_propagated`；不静默压掉 S36 的观测 |
+| E24-R13 | **新增一条 check（registry 加一行，S39 代码不变）** | 该 check 的缺陷能正常产出计划；断言 S39 二进制未重新构建 |
+| E24-R14 | registry 缺该 `check_id` 条目 | `human_review` + `registry_entry_invalid_total{check_id}` 告警；不猜动作 |
+| E24-R15 | registry 把 `redo_lipsync` 登记到 `technical` 类 check 上 | 登记被拒（跨族）；即使强行写入，运行期按族裁剪后为空 → `human_review` |
+| E24-R16 | registry 给 `shot` 范围的 check 登记 `keyframe_edit` | 登记无效（§3.1.2 第 1 条）；不允许逐帧修连续缺陷 |
+| E24-R17 | `never_auto_repair: true` 的新 check（S39 代码不变） | `escalated`，`escalation.reason` 取登记的 `no_auto_reason`，不生成任何动作 |
+| E24-R18 | 同 `defect_type`、不同 `check_id`、不同 `window_scope` 的两条缺陷 | 分别走各自 registry 的起点与升级，互不影响（族相同但细节不同） |
 
 ### 10.2 E25 —— abstain 不当 pass
 
@@ -848,7 +871,8 @@ CREATE TABLE repair_planning.inbox (...);
 | C2 | `automation-policy.v2.schema.json` 的 `repair_limits` 只有 shot 级两项 | 补 `max_business_attempts_per_episode`、`max_business_attempts_per_run`、`max_recheck_rounds`；缺省时用 §5.4 默认值并记 `policy_partial` |
 | C3 | 无 `contracts/quality/repair-plan.v2.schema.json` | 新增；S21 需要机器可读的计划契约 |
 | C4 | `shot_lineage_id` 在任何契约里都没有定义 | **必须新增**——它是跨 Run 累计的锚点。建议由 S06/S08 在 shot 创建时生成并在 manifest 里固定；`contracts` 需给出生成规则与不可变性约束 |
-| C5 | `contracts/quality/check-registry.v2.json` 的 `recheck_scope` 字段 | 见 S35 §12 C5 |
+| C5 | **无 `contracts/quality/check-registry.v2.json`** —— 它是 S39 修复路由的输入，不是可选项 | 必须新增，字段见 [S35 §2.2.2](S35-technical-qc.md)：`layer` / `defect_type` / `default_action` / `window_scope` / `escalation_rule` / `severity_default` / `severity_max` / `allowed_actions` / `recheck_scope` / `never_auto_repair` / `no_auto_reason`。**加载期强制族校验**（S35 §12 C6），越族拒绝加载 |
+| C5b | `action_family[type]` 没有机器可读定义，只有 S35 §2.2.1 的表格 | 加进 `check-registry.v2.json` 的顶层或单独 `quality/action-families.v2.json`。S39 读它，不硬编码——否则闭集改动要改代码 |
 | C6 | S21 无"剩余修复额度"查询接口 | §5.7 Level 4 需要；在补齐前 S39 只能预检 S23 预算，run 级上限靠 S21 在执行时兜底 |
 | C7 | `service.yaml` 的 `depends_on` 只有 S35/S36/S37/S09/S02，但本文实际依赖 S26（`generation.job.state-changed` 计数）、S23（预算预检）、S24/S25（能力查询）、S40（人审交接）、S17（`ContinuityReport`） | 补 catalog 的 `depends_on`。当前缺口意味着契约图里看不出这些依赖，部署顺序与故障域分析会漏 |
 | C8 | S17 的 `ContinuityReport` 没有 schema 定义，S39 也未订阅其事件 | 见 semantic-qc C1；S39 需要它能被 ingest，否则跨集冲突永远到不了修复决策 |

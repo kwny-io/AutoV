@@ -2,7 +2,7 @@
 
 范围：`plans/` 下 17 份服务实现方案，由 5 个并行会话产出后合并到 `main`。
 
-结论：**13 项通过，1 项冲突待裁决，2 项缺口待补。** 没有阻断问题，但下面 C1 是两套方案的设计前提互相矛盾，实现前必须先定。
+结论：**13 项通过，1 项冲突已收敛（见 §2），2 项缺口待补。** 没有阻断问题。
 
 ---
 
@@ -28,32 +28,65 @@
 
 ---
 
-## 2. C1（待裁决）：S39 到底按什么维度做修复路由
+## 2. C1（已按方向 1 收敛，2026-11-01）：S39 到底按什么维度做修复路由
 
-这是两份方案的核心设计前提互相矛盾，不能靠实现时"看着办"。
+### 2.1 冲突原貌
 
-**S35 §2.2 的立场**（`plans/S35-technical-qc.md:97`）：
+**S35 §2.2 原立场**：S39 按 `type` + `recommended_actions` 决策，**永不按 `check_id`** 决策 —— 这样任一质检服务新增检查项不需要 S39 发版。
 
-> **S39 按 `type` + `recommended_actions` 决策，永不按 `check_id` 决策。** 这样任一质检服务新增一个检查项，不需要 S39 发版；同时新增检查项也不能改变修复路由，因为路由维度被锁在闭集里。
+**S39 §3.1 原做法**：主映射表第一列就是 check_id 分组（`TECH.CONTAINER.PARSE` / `VIS.IDENTITY.FACE_DRIFT` / `AUD.LIPSYNC.*` …），§3.3 的"不能自动修"清单逐条按 check_id 列举。没有 `type → action` 兜底表，`recommended_actions` 不参与决策。
 
-**S39 §3.1 的实际做法**（`plans/S39-repair-planning.md:78-106`）：
+**为什么两侧都不完整**：
 
-主映射表第一列就是 check_id 分组（`TECH.CONTAINER.PARSE` / `VIS.IDENTITY.FACE_DRIFT` / `AUD.LIPSYNC.*` …），§3.3 的"不能自动修"清单更是逐条按 check_id 列举。全文**没有** `type → action` 的兜底表，也没有 `recommended_actions` 参与决策的逻辑。
+- 照 S39 写 → 新增 check 必须同步发版 S39，"不需要发版"的承诺是假的。
+- 照 S35 写 → 14 个 type 表达不出 `keyframe_edit`（仅静态单帧）与 `regenerate_video`（连续）的差别，同一个 `identity` type 在两种窗口下动作不同。
 
-**为什么这是实质冲突而不是措辞差异**：
+### 2.2 已选方向 1：`type` 定动作族，`check_id` 定窗口与升级
 
-- 若照 S39 写，S35/S36/S37/S38 任何一个新增 check，S39 必须同步发版，否则新 check 落到默认分支（而默认分支在 S39 里不存在）。S35 那句"不需要 S39 发版"就是假的。
-- 若照 S35 写，S39 §3.1 整张表和 §3.3 的清单都要重构成 type 维度，而 14 个 type 表达不出 `keyframe_edit`（仅静态单帧）与 `regenerate_video`（连续）的差别 —— 同一个 `identity` type 在两种窗口下动作不同。
+三样东西各管一件事，谁都不越界：
 
-**两侧都有道理**，所以按 `AGENTS.md`「契约与文档冲突 → 停下，报告冲突，不要自行选边」，这里不选。
+| 层 | 归属 | 管什么 | 变更成本 |
+|---|---|---|---|
+| `type`（14 值闭集） | `contracts` | 这一族缺陷**可以**用哪几种动作、兜底是什么 | 改闭集 = 全体发版，几乎不做 |
+| `check_id` + 登记项 | 各质检服务 | 这一条检查的**最小动作**、**窗口范围**、**何时升级** | 注册即生效，S39 不发版 |
+| `recommended_actions` | 质检服务运行时 | 该次检测的**建议**（输入，不是指令） | 无 |
 
-可选的收敛方向（供决策，非结论）：
+S39 的解析变成三步交集：
 
-1. **type 定动作族，check_id 定窗口与升级条件。** 保留 S35 的"新增 check 不发版"承诺，同时允许 registry 的 `severity_max` / `recheck_scope` 字段表达差异。
-2. **承认 S39 必须随质检服务发版**，把 S35 那句改成"新增 check 需在 registry 登记，S39 读 registry 而非硬编码"。这条能落地，但要删掉 S35 现在的强承诺。
-3. 引入第三种维度（如 `repair_class`），由 check 登记时声明，路由键固定在 `repair_class × window_scope` 上。
+```text
+candidates = action_family[defect.defect_type]
+           ∩ registry[defect.check_id].allowed_actions
+           ∩ policy.allowed_actions
+起点 = registry.default_action      升级 = registry.escalation_rule
+窗口 = registry.window_scope       空集 → human_review, reason=no_capable_route
+```
 
-无论选哪条，**S35 §2.2 和 S39 §3.1 必须改一处**，不能两边都留着。
+`human_review` 不出现在任何动作族里 —— 它是所有族的公共终点，不是某一族的成员。
+
+**改动落点**：
+
+- [S35 §2.2.1](plans/S35-technical-qc.md) 新增 14 行动作族表（含 `keyframe_edit` 仅在 `window_scope ≤ 6 帧` 可用的约束、音频类缺陷不得走 `reingest` 等硬约束）。
+- [S35 §2.2.2](plans/S35-technical-qc.md) 定义登记项字段与两条硬约束：登记项的动作必须是族的子集；severity 只能往上抬不能往下压。
+- [S35 §10.3.1](plans/S35-technical-qc.md) 新增 ROUTE-T1..T6 路由不变量，核心是「新 check 不需要 S39 改代码」这条被机械验证。
+- [S39 §3.1](plans/S39-repair-planning.md) 整张 27 行 check_id 表删除，替换为上述三步交集。
+- [S39 §3.3](plans/S39-repair-planning.md) "不能自动修"不再逐条列 check_id，改为读登记项 `never_auto_repair` + `no_auto_reason`。
+- [S39 §10.1](plans/S39-repair-planning.md) 补 E24-R13..R18，其中 R13 直接验证「新增 check 不重建 S39」。
+
+### 2.3 收敛带来的连带改动
+
+`recommended_actions` 枚举从 10 值扩到 12 值，新增 `re_synthesize_speech`（S37 重合成语音）和 `re_render_subtitles`（S38 内部重渲染字幕版式，零生成费用）。原表用自然语言写"重排版/重新 TTS"，那些不是合法枚举值，无法实现。
+
+`realign_subtitles` 只改时码，`re_render_subtitles` 才重建版式，两者不可互相替代；重译**不进**任何动作族 —— 翻译内容变更属于 `change_spec` 范畴。
+
+### 2.4 遗留契约缺口
+
+| 编号 | 缺口 | 归属 |
+|---|---|---|
+| C6 | `action_family` 目前是文档表格，无机器可读契约；需落到 `platform/qc-sdk` 并在加载时做族校验 | contracts |
+| C7 | `recommended_actions` 缺 `re_synthesize_speech` / `re_render_subtitles` | contracts |
+| C8 | S35 C5 / S39 C5b：`action_family` 与登记项字段都要有 schema | contracts |
+
+C6 是关键：族校验必须是**加载期自动执行**的，不能靠人工 review 登记项 —— 否则登记项就成了绕过闭集的后门。
 
 ---
 
@@ -114,9 +147,9 @@ S38 的输入链是「S37 字级时间码 + 对白文本」，看起来不需要
 
 ## 7. 下一步
 
-1. 裁决 C1（S39 路由维度），改 S35 或 S39 其中之一。
-2. 补 S25 的 outbox。
-3. 确认 G2（S38 是否真依赖 S28），改 catalog 或补方案。
+1. 补 S25 的 outbox。
+2. 确认 G2（S38 是否真依赖 S28），改 catalog 或补方案。
+3. 落 `action_family` 与登记项的机器可读契约（C6/C7/C8），族校验进 `platform/qc-sdk` 加载期。
 4. 剩余 31 个服务（S01/S03–S07/S09–S15/S19–S21/S28–S34/S41–S48）尚无方案。
 
 方案是设计稿。以上检查证明的是**文档之间自洽**，不是**设计正确**。E01–E40 里真正要证明的东西（跨租户拒绝、重复投递幂等、Saga 补偿、fencing、重启恢复）只能靠实现加测试证明 —— `docs/16` 的原话是「schema 校验通过 ≠ 分布式正确性」。
