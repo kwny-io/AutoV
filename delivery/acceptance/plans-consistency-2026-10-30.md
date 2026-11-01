@@ -2,7 +2,7 @@
 
 范围：`plans/` 下 17 份服务实现方案，由 5 个并行会话产出后合并到 `main`。
 
-结论：**13 项通过，1 项冲突已收敛（见 §2），2 项缺口待补。** 没有阻断问题。
+结论：**13 项通过，1 项冲突已收敛（见 §2），1 项缺口已修（G1，见 §3），1 项待确认（G2，见 §4），3 项契约缺口待落（C6/C7/C8，见 §2.4）。** 没有阻断问题。
 
 ---
 
@@ -21,7 +21,7 @@
 | QCReport 规范唯一性 | 检查是否被复述 | **唯一在 S35 §2**，S36/S37/S38 只引用 |
 | permit 状态机三方一致 | S22 / S26 / `admission-record.v2.schema.json` | **一致**；S22 的 `EXPIRED` 明确不外露（C22-4 已记录） |
 | reservation 状态机 | S23 / 契约枚举 | **一致**；`EXPIRED` 同样不外露（C23-4b 已记录） |
-| outbox 覆盖 | 声明 `publishes` 的方案是否含 outbox | **16/17**（S25 缺，见 G1） |
+| outbox 覆盖 | 声明 `publishes` 的方案是否含 outbox | **17/17**（S25 已补，见 §3） |
 | E01–E40 覆盖 | 全量扫描 | **30/40** 被引用，未覆盖 10 项全部属于尚未写方案的服务 |
 
 未覆盖的 E 编号：E02 三集连续、E06 无人值守失败、E29 恶意媒体/SSRF、E33 Temporal 升级、E35 容量/noisy neighbor、E36 UI 断线、E37 交付、E38 费用重算、E39 审计保留、E40 FDE 移交 —— 对应 S21/S29–S34/S42–S48，属正常待办。
@@ -90,9 +90,9 @@ C6 是关键：族校验必须是**加载期自动执行**的，不能靠人工 
 
 ---
 
-## 3. G1（待补）：S25 声明发布事件但方案里没有 outbox
+## 3. G1（已修，2026-11-01）：S25 声明发布事件但方案里没有 outbox
 
-`services/model-routing/service.yaml` 声明：
+**原问题。** `services/model-routing/service.yaml` 声明：
 
 ```yaml
 publishes:
@@ -101,13 +101,25 @@ publishes:
     retention_days: 14
 ```
 
-`plans/S25-model-routing.md`（563 行）全文**没有** `outbox` 字样，数据模型只有 4 张表（policy_snapshot / route_decision / route_candidate / degradation_option），没有 outbox 表，也没描述何时发 `model.route.selected`。
-
-其余 16 份方案都有 outbox，所以这不是"本服务不需要事件"的有意选择。
+但 `plans/S25-model-routing.md` 全文没有 `outbox` 字样，数据模型只有 4 张表（policy_snapshot / route_decision / route_candidate / degradation_option）。其余 16 份方案都有 outbox，所以这不是"本服务不需要事件"的有意选择。
 
 影响：`RouteDecision` 写入与事件发布之间没有事务保证。下游按事件驱动的路径会漏掉路由决策，只能轮询 `GET /route-decisions/{id}` 兜底 —— 这违反 README 第 4 条硬约束。
 
-补法：加 outbox 表 + 在与 `route_decision` 同一本地事务里写事件行，与 S24 的写法保持一致。
+**修法。** 按原定的补法补齐，并与 S08 §6.4 / S24 §2.7 的既有写法保持一致：
+
+| 补了什么 | 位置 | 内容 |
+|---|---|---|
+| outbox 表 | §7 数据模型 | `id / aggregate_id / aggregate_seq / event_type / payload / created_at / published_at`，`UNIQUE (aggregate_id, aggregate_seq)` + 部分索引 `WHERE published_at IS NULL` |
+| 同事务写入 | §7.1 | 决策头 + 全部候选 + outbox 行三步一个 `COMMIT`；写明为什么必须同事务（两种拆分各留下一种一致性空洞） |
+| 事件体 | §7.1 | `data` 只放指针与派单必需字段，**不放 `score_parts`、不放 `rejected[]` 明细**；`feasible=false` 也发事件 |
+| relay | §7.2 | `FOR UPDATE SKIP LOCKED` 批量取、按 `tenant_id:aggregate_id` 单线程发布、失败重试、`published_at + 7d` 归档 |
+| 幂等语义 | §8 | 幂等回放路径跳过 outbox 插入；至少一次投递，按 `event_id` 去重、按 `(aggregate_id, aggregate_seq)` 判序 |
+| 可观测 | §10 | `route_event_outbox_lag_seconds`（> 60s 告警）、`route_event_outbox_depth` |
+| 测试 | §11 | T25-24 中继恢复补发、T25-25 重投去重、T25-26 `feasible=false` 仍发事件、T25-27 幂等回放不产生第二条事件 |
+
+**G1 关闭后的 outbox 覆盖：17/17。**
+
+一个仍然保留的边界：事件**不是授权书**。S26 收到 `model.route.selected` 后仍必须回查 `route_decision` 校验 `content_hash` / `quote_valid_to` / `rank`（§12）。这与 `docs/04`「事件不能直接推动 accepted pointer」是同一条纪律。
 
 ---
 
@@ -147,9 +159,9 @@ S38 的输入链是「S37 字级时间码 + 对白文本」，看起来不需要
 
 ## 7. 下一步
 
-1. 补 S25 的 outbox。
+1. ~~补 S25 的 outbox。~~ 已于 2026-11-01 完成，见 §3。
 2. 确认 G2（S38 是否真依赖 S28），改 catalog 或补方案。
 3. 落 `action_family` 与登记项的机器可读契约（C6/C7/C8），族校验进 `platform/qc-sdk` 加载期。
-4. 剩余 31 个服务（S01/S03–S07/S09–S15/S19–S21/S28–S34/S41–S48）尚无方案。
+4. 剩余 31 个服务（S01/S03–S07/S09–S15/S19–S21/S28–S34/S41–S48）尚无方案 —— **正在并行编写**。
 
 方案是设计稿。以上检查证明的是**文档之间自洽**，不是**设计正确**。E01–E40 里真正要证明的东西（跨租户拒绝、重复投递幂等、Saga 补偿、fencing、重启恢复）只能靠实现加测试证明 —— `docs/16` 的原话是「schema 校验通过 ≠ 分布式正确性」。

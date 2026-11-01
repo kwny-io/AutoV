@@ -15,6 +15,7 @@
 - `CandidateRejection`：每个被排除候选的**唯一原因码**。
 - `RoutingPolicySnapshot`：评分权重与策略版本（由 S02 授权，S25 只存其生效快照）。
 - 报价有效期（`quote_valid_to`）。
+- Outbox 行：`model.route.selected`，与上一条决策同事务写入（§7.1）。
 
 ### 1.2 本服务不写
 
@@ -465,17 +466,136 @@ CREATE TABLE degradation_option (
   CHECK (kind IN ('pool','model_swap','spec_adjust','split_shot','layered','human_review')),
   CHECK (auto_executable = false OR silent_degradation = false)
 );
+
+-- Outbox：与 route_decision 同一本地事务写入，保证 decision 与 model.route.selected 不脱节
+CREATE TABLE outbox (
+  id            bigserial PRIMARY KEY,
+  aggregate_id  text NOT NULL,          -- route_id
+  aggregate_seq bigint NOT NULL,        -- route_decision.revision
+  event_type    text NOT NULL,          -- model.route.selected
+  payload       jsonb NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  published_at  timestamptz,
+  UNIQUE (aggregate_id, aggregate_seq)
+);
+CREATE INDEX ix_outbox_unpublished ON outbox (id) WHERE published_at IS NULL;
 ```
 
 `CHECK (auto_executable = false OR silent_degradation = false)` 是硬约束：数据库层面禁止"既要求人工确认又能自动执行"的选项存在。
+
+### 7.1 事件 `model.route.selected`
+
+一次路由决策落库 = 一个本地事务，事务内含三步且缺一不可：
+
+```sql
+BEGIN;
+INSERT INTO route_decision (...) VALUES (...);                    -- 1. 决策头
+INSERT INTO route_candidate (...) VALUES (...), (...), ...;       -- 2. 全部候选（含被拒的）
+INSERT INTO outbox (aggregate_id, aggregate_seq, event_type, payload)
+  VALUES ($route_id, $revision, 'model.route.selected', $payload);-- 3. 同一事务的事件行
+COMMIT;
+```
+
+**为什么必须同事务**：`route_decision` 是 S26 用来校验 grant 的权威，而 `model.route.selected` 是 S21/S44 用来观测和计费的入口。两者分开写就有一致性空洞——决策提交了但事件丢了，下游永远不知道这次路由发生过；事件发了但决策回滚了，下游拿到一个不存在的 `route_id`。Outbox 把两者压进同一个 `COMMIT`，只剩"发两次"这一种失败模式，而下流按 `event_id` 去重可以吸收。
+
+`aggregate_id = route_id`，`aggregate_seq = route_decision.revision`。`route_decision` 本身极少改（一次决策一条记录），所以 `(aggregate_id, aggregate_seq)` 实际上就是 `route_id` 的唯一约束，重投不会产生第二条事件。
+
+事件体（`data`）——**只放指针，不放决策全文**：
+
+```jsonc
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01J...",
+  "source": "S25",
+  "type": "model.route.selected",
+  "subject": "route_decision/route_01J...",
+  "time": "2026-10-30T03:12:00Z",
+  "tenant_id": "tnt_...",
+  "home_cell": "cn-east-1",
+  "aggregate_id": "route_01J...",
+  "aggregate_sequence": 1,
+  "correlation_id": "run_...",
+  "causation_id": "cmd-s21-0001",
+  "traceparent": "00-...",
+
+  "data": {
+    "route_id": "route_01J...",
+    "revision": 1,
+    "content_hash": "…",                 // 与 route_decision.content_hash 一致，供下游核对
+    "project_id": "prj_...",
+    "series_id": "ser_...",
+    "episode_id": "ep_...",
+    "branch_id": "br_...",
+    "node_id": "shot_07",
+    "node_epoch": 3,
+    "execution_fence": 11,
+    "attempt_id": "att_...",
+    "command_id": "cmd-s21-0001",
+
+    "feasible": true,
+    "selected": {                        // rank=1；feasible=false 时为 null
+      "candidate_key": "seedance/volcengine/seedance-1-0-pro@250528#cn-beijing#pool_…",
+      "snapshot_id": "9f2c…e1",
+      "combination_key": "6b3d…0f",
+      "normalized_input": { "duration_seconds": 5, "aspect_ratio": "9:16" },
+      "expected_cost_micro": 1180000,
+      "quote_upper_bound_micro": 1080000,
+      "currency": "USD"
+    },
+    "infeasible_reason": null,           // feasible=false 时填原因码，如 DIALOGUE_DURATION_UNKNOWN
+
+    "eligible_count": 3,
+    "rejected_count": 12,
+    "degradation_offered": ["pool","spec_adjust"],
+    "policy_snapshot_id": "pol_snap_...",
+    "capability_bundle_revision": 812,
+    "quote_valid_to": "2026-10-30T03:27:00Z",
+    "projection_lag": false
+  },
+  "data_ref": {
+    "service_id": "S25",
+    "id": "route_01J...",
+    "revision": 1
+  }
+}
+```
+
+三条 payload 约束：
+
+1. **不放 `score_parts`、不放 `rejected[]` 明细。** 完整决策在 `route_decision` / `route_candidate` 里，事件只带 `data_ref`；需要明细的一方回源查。这是 `pii_payload: references_only_by_default` 的落地方式，也避免把几十 KB 的候选集灌进 14 天保留期的 topic。
+2. **`selected` 只放 S26 派单必需的字段。** S26 仍必须回查 `route_decision`（校验 `content_hash`、`quote_valid_to`、`rank`），事件不是授权书，`docs/04` 的"不能把事件当成放行依据"同样适用于这里。
+3. **`feasible=false` 也发事件。** 一次"无可行模型"的决策同样是 S21 需要知道的结论——否则 S21 会一直等一个不会到来的成功。
+
+### 7.2 Outbox relay
+
+独立中继进程（sidecar 或独立 deployment，与业务实例解耦），与 S08 §6.4 同一个模式：
+
+```sql
+SELECT id, aggregate_id, aggregate_seq, event_type, payload
+  FROM outbox
+ WHERE published_at IS NULL
+ ORDER BY id
+ LIMIT 100
+ FOR UPDATE SKIP LOCKED;
+-- 发布成功后
+UPDATE outbox SET published_at = now() WHERE id = ANY($ids);
+```
+
+- **分区键**：`tenant_id:aggregate_id`（见 `contracts/event-topics.v2.json`）。同一 `aggregate_id` 必须单线程发布，否则同一 `route_id` 的事件序会乱；实际实现按 `hash(aggregate_id)` 分 worker。
+- **失败不停摆**：发布失败只回滚 `published_at`，下一轮重试。`ix_outbox_unpublished` 保证扫描不走全表。
+- **积压告警**：`outbox_lag_seconds`（最老未发布行的年龄）是 SLO 指标，见 §10。超过 60s 告警——积压意味着 S21 的编排决策在拿旧信息做判断。
+- **保留**：Kafka 侧 14 天（catalog 定死），`outbox` 表保留至 `published_at + 7d` 后归档，不删。归档是为了"某个下游说没收到"时还能查出当时到底写没写。
+- **重启**：中继重启不需要任何恢复逻辑，`WHERE published_at IS NULL` 本身就是游标。这与 §11 T25-22 的重启断言一致。
 
 ---
 
 ## 8. 幂等与并发
 
-- `tenant_id + command_id + request_hash`：同键同 hash 回放，同键异 hash 409。
+- `tenant_id + command_id + request_hash`：同键同 hash 回放，同键异 hash 409。回放时**不写 outbox**，因为第一次已经写过；重复写会被 `UNIQUE (aggregate_id, aggregate_seq)` 拒掉，但那会掩盖真正的幂等语义，所以回放路径直接跳过插入。
 - 路由是**纯函数**（给定 `RequirementSet` + `capability_bundle_revision` + `policy_snapshot_id` + 候选快照，输出确定），因此同 `request_hash` 天然幂等；`content_hash` 由输出规范化后求 sha256，可被 S26 引用校验。
 - 并发：无共享可变状态，仅在 S24 投影更新时用 `capability_bundle_revision` 单调推进（`WHERE revision < EXCLUDED.revision`）。乱序事件不倒退投影。
+- **事件投递是至少一次**，不是恰好一次。`model.route.selected` 可能重复到达；下游按 `event_id` 去重，按 `(aggregate_id, aggregate_seq)` 判序。S25 不承诺去重，只承诺不丢。
 
 ---
 
@@ -506,6 +626,8 @@ CREATE TABLE degradation_option (
 | `route_silent_degradation_blocked_total` | 被拦下的无声降级尝试数（> 0 是好的） |
 | `route_decision_latency` | SLO |
 | `route_projection_lag_seconds` | S24 事件延迟 |
+| `route_event_outbox_lag_seconds` | 最老未发布事件年龄；> 60s 告警（S21 在拿旧结论编排） |
+| `route_event_outbox_depth` | 未发布行数；突增 = broker 不可达 |
 
 审计：每个 `route_id` 存的拒绝原因、权重、候选集必须能复算。S44/`docs/15` 的经营分析依赖这份可复算性。
 
@@ -538,6 +660,10 @@ CREATE TABLE degradation_option (
 | T25-21 | 决策可复算 | 用 `route_decision.scoring` + `score_parts` 重算，`score` 一致 | 专项验收 |
 | T25-22 | 重启 | 重启前后对同一 `request_hash` 给出一致决策 | 重启恢复 |
 | T25-23 | 报价过期 | `quote_valid_to` 过了之后 S26 拒绝使用该决策 | §12 |
+| T25-24 | 决策提交后 broker 不可达 | `route_decision` 与 `outbox` 都在，中继恢复后事件补发，`aggregate_seq` 不乱序 | 重启恢复 |
+| T25-25 | 中继把同一条事件发了两次 | 下游按 `event_id` 去重；`outbox` 只有一行（`UNIQUE (aggregate_id, aggregate_seq)`） | 重复投递 |
+| T25-26 | `feasible=false` 的决策 | 仍写出 `model.route.selected`，`data.selected=null`、`infeasible_reason` 有值 | §7.1 |
+| T25-27 | 幂等回放（T25-01 场景） | 不产生第二条 outbox 行 | E12 |
 
 ---
 
