@@ -119,7 +119,22 @@ CREATE TABLE subtitles.cue_text (
   text               text NOT NULL,
   PRIMARY KEY (translation_id, revision, cue_id)
 );
+
+-- 渲染产物目录：字节在 S28，这里只有指针（§3.0）
+CREATE TABLE subtitles.rendition (
+  track_id          text NOT NULL,
+  subtitle_revision integer NOT NULL,
+  format            text NOT NULL CHECK (format IN ('srt','vtt','ass')),
+  artifact_id       text NOT NULL,              -- S28 的 artifact_id
+  content_hash      char(64) NOT NULL,          -- 与 S28 manifest 一致
+  byte_size         bigint NOT NULL,
+  rendered_at       timestamptz NOT NULL,
+  PRIMARY KEY (track_id, subtitle_revision, format),
+  UNIQUE (artifact_id)
+);
 ```
+
+`rendition` 是 §3.0 的落库形态：一个 `subtitle_revision` 最多三种格式，每行只指向 S28。S38 的**数据库里不存任何 `.srt` 字节**，也不生成自己的下载 URL。
 
 关键点：
 
@@ -161,9 +176,26 @@ POST /subtitle-jobs
   ├─ 5. 安全区：按目标画幅 + 平台规格算 safe area（纯几何，不看像素）
   ├─ 6. 本地化（可选）：target_locale ≠ source → 翻译作业（走 S26）→ draft
   ├─ 7. 渲染：SRT / VTT / ASS（ASS style 来自项目模板）
+  │      └─ 产物**字节**交 S28 归档，S38 只存 artifact_id + content_hash
   ├─ 8. 自校验（SUB.* checks）→ QCReport(qc_layer=subtitle)
   └─ 9. 落库 + Outbox + post.subtitle.ready
 ```
+
+### 3.0 为什么 depends_on 里有 S28
+
+`service.yaml` 的 `depends_on` 是 `S37, S41, S28`。前两个来自输入链（时码、EDL），**S28 来自输出侧**：
+
+`docs/01` 的唯一权威表：「制品bytes、hash、存储位置 → S28；业务域只保存 artifact_id 和内容 hash」。渲染出的 SRT/VTT/ASS 就是制品字节，与视频帧、音轨、探针截图同一类东西。S38 若把字幕文件写进自己的库或自己的对象存储路径，就成了第二个字节权威 —— 这正是 `AGENTS.md` 第一条禁止的事。
+
+| 东西 | 谁存 | S38 存什么 |
+|---|---|---|
+| cue 文本、时码、三者版本引用 | S38 | 全部（§2.2 `subtitles.cue`） |
+| 渲染后的 `.srt` / `.vtt` / `.ass` 字节 | **S28** | `artifact_id` + `content_hash` |
+| QC 证据（diff 快照、字符级对比） | **S28** | `evidence_artifact_ids` |
+
+`GET /subtitle-tracks/{id}/revisions/{rev}?format=…` 返回的签名 URL 指向 S28，不是 S38 自己发的 URL。取法同 S35：S28 manifest + 短签名 URL + 禁内网/SSRF。
+
+**S28 不可达时。** 渲染可以完成，但**不发布 `post.subtitle.ready`** —— 事件要带 `artifact_ref`，没有 `artifact_id` 就发不出去。作业停在 `RENDERED_PENDING_ARCHIVE`，按 S28 的导入重试策略退避重试，**不重新渲染**（`docs/09`「下载失败不重生成」同理）。
 
 ### 3.1 EDL 变化只重算相关时码
 
@@ -332,6 +364,11 @@ S38 的 QCReport 与 S35/S36/S37 **同一 schema**。特殊之处：
     "target_locale": "zh-CN",
     "cue_count": 142,
     "formats": ["srt", "vtt", "ass"],
+    "artifacts": [                                   // 字节在 S28，这里只有指针
+      { "format": "srt", "artifact_id": "art_…", "content_hash": "…" },
+      { "format": "vtt", "artifact_id": "art_…", "content_hash": "…" },
+      { "format": "ass", "artifact_id": "art_…", "content_hash": "…" }
+    ],
     "qc_report_ref": { "service_id": "S38", "id": "qc_…", "revision": 1, "content_hash": "…" },
     "qc_decision": "repair",
     "defect_count": 2,
@@ -359,7 +396,11 @@ S38 需要从 S15 读发音词典，但 `contracts` 里没有词典的查询契�
 
 ```text
 track.state:
-  draft ──(自校验 pass)──▶ qc_passed
+  draft ──(渲染完成)──▶ rendered ──(S28 归档成功)──▶ archived
+    │                      │
+    │                      └──(S28 不可达)──▶ rendered_pending_archive ──(重试成功)──▶ archived
+    │
+  archived ──(自校验 pass)──▶ qc_passed
     │                          │
     │                          ├──(S02 门通过)──▶ accepted
     │                          └──(S39 修复)────▶ repair_pending ──▶ draft
@@ -400,6 +441,7 @@ translation.status:
 | E25-U2 | 翻译作业超时 | `SUB.TEXT.TRANSLATION_MISSING`（不是"空译文但 pass"） |
 | E25-U3 | 词典服务不可达 | `SUB.TEXT.LEXICON_UNUSED` = `dependency_unavailable` |
 | E25-U4 | 校验只覆盖 70% cue | `coverage_ratio=0.70` → `decision=abstain` |
+| E25-U5 | S28 归档超时 | track 停在 `rendered_pending_archive`；**不发** `post.subtitle.ready`；S28 恢复后补发，**不重新渲染** |
 
 ### 10.3 版本独立性（硬约束专项）
 
@@ -410,6 +452,7 @@ translation.status:
 | V3 | 只改译文 revision | 前两者不变；`translation.status` → `reviewed` |
 | V4 | 数据库层断言 | `cue` 三列均为独立列，无合并的 `text` 字段（schema 测试） |
 | V5 | 审计 | 给定 cue 能取出三组 `(id, revision, hash)` 并分别定位来源 |
+| V6 | 字节权威 | 扫 S38 库与对象存储，**无任何 `.srt`/`.vtt`/`.ass` 正文**；只有 `rendition.artifact_id` 指向 S28 |
 
 ### 10.4 E26 —— 跨 Run
 
@@ -427,5 +470,8 @@ translation.status:
 | C1 | 无 `contracts/quality/subtitle-track.v2.schema.json` | 新增；`cue` 的三版本列必须进 schema，否则只是实现约定 |
 | C2 | S15 无发音词典查询契约 | 见 §8；补 `GET /voices/{id}/lexicons?revision=N` |
 | C3 | S41 timeline 事件的 payload 未定义差分语义 | 补 `post.timeline.revision.created` 的 payload schema，含 affected clip 列表 |
+| C4 | `post.subtitle.ready` 无 payload schema，`artifacts[]` 的 `artifact_id` 归属未写明 | 随 C1 一起补；`artifact_id` 必须是 S28 的 ID 空间，不能是 S38 自定义 ID |
+
+> **G2 已关闭（2026-11-01）**：`depends_on` 里的 S28 不是声明过宽，而是方案漏写了输出侧这一环。S38 渲染出的字幕文件是制品字节，按 `docs/01` 只能由 S28 存。catalog 不改，方案补 §3.0 / `subtitles.rendition` / `artifacts[]` / `V6` / `E25-U5`。
 | C4 | `contracts/event-topics.v2.json` 的 `post.subtitle.ready` 无 payload schema | 按 §7 补 |
 | C5 | 无 locale profile 契约（CPS/行数/安全区） | 新增 `contracts/quality/locale-profile.v2.json`，按 locale 定义，随 policy 版本化 |
