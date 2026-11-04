@@ -102,9 +102,21 @@ candidates = action_family[defect.defect_type]
 `chain` 里。校验器已用一条违规登记项实测：把 `SUB.TIMING.OVERLAP` 的 `default_action` 写成
 `regenerate_video`，被拒并退出 1，两条错误分别指出「起点不在族链内」和「登记项不得拓宽族」。
 
-**仍留一个人工把关点**：`check-registry.v2.json` 数据文件本身还没落 —— schema 与校验器有，
-99 条 check 仍只在四份 QC 方案的表里。落地前方案与 registry 之间靠人工对照。已记入
-[contracts/README](../contracts/README.md) 的设计缺口第 4 条。
+**仍留一个人工把关点，而且比预想的大。** 原来记的是「`check-registry.v2.json` 数据文件没落」，
+像是抄一遍就行。实际清点四份 QC 方案的表之后，**表里根本没有 schema 要求的字段**：
+
+| 缺什么 | 范围 | 后果 |
+|---|---|---|
+| `window_scope` | 99/99 | 决定 `keyframe_edit` 能否使用，猜错会把长窗口交给逐帧修补 |
+| `escalation_rule` | 99/99 | 只有散文，没有可执行的阈值 |
+| `default_action` / `allowed_actions` | 76 条（S36/S37/S38） | 这三份表只有 4–5 列，完全没有路由字段 |
+| `recheck_scope` | 76 条 | 复检成本无法计算 |
+| 枚举外的自由文本 | S35 中 3 处动作、11 处复检范围 | `> 1 帧`、`—`、`remux→transcode`、`全片抽检`、`窗口±0.5s` 等 |
+
+**这不能靠推断补。** 给 76 条 check 凭空填 `window_scope`，是把设计决策伪装成数据提取。
+正确做法是四个 QC 服务各自按 S35 §2.2.2 的字段表补登记项，再用 `validate_registry.py` 把关。
+在那之前，**族级约束有代码守着，check 级的窗口与起点动作仍靠人工** —— 这句话必须留着，
+因为它正是 C1 当初想消灭的那类风险。已记入 [contracts/README](../contracts/README.md) 缺口第 4 条。
 
 ---
 

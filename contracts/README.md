@@ -69,9 +69,25 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
 1. **OpenAPI 21 个操作没有 `x-owner` 扩展字段** —— 所有权映射只存在于散文里，工具无法自动归属到服务。
 2. **MCP 工具 JSON 里没有 scope 字段** —— 只有 annotations 和 input schema，而 docs/13 描述了 read/plan/execute/review/admin 五档 scope。契约与文档不一致。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-4. **`quality/check-registry.v2.json` 数据文件还没有** —— schema 与校验器已在，但 99 条 check
-   （TECH 23 / VIS 32 / AUD 20 / SUB 24）仍只存在于四份 QC 方案的表里，尚未落成数据文件。
-   落地前四份方案与 registry 之间靠人工对照，属于已知的人工把关点，不是自动保证。
+4. **`quality/check-registry.v2.json` 数据文件还没有，且方案里的表不足以生成它。**
+   schema 与校验器已在，但 99 条 check（TECH 23 / VIS 32 / AUD 20 / SUB 24）只存在于四份
+   QC 方案的表里，缺的不是"抄一遍"，是 schema 的必填字段本来就没写：
+
+   | 缺什么 | 范围 | 说明 |
+   |---|---|---|
+   | `window_scope` | **99/99 条** | 四份表都没有这一列。它决定 `keyframe_edit` 是否可用，是路由的必要输入 |
+   | `escalation_rule` | **99/99 条** | 只有散文描述，没有 `metric` / `comparator` / `threshold` / `escalate_to` |
+   | `default_action`、`allowed_actions` | **76 条**（S36/S37/S38） | 这三份表只有 4–5 列：`check_id` / `type` / 严重度 / 判定 / 依据 |
+   | `recheck_scope` | **76 条** | 同上 |
+   | 枚举外的自由文本 | S35 中 3 处动作、11 处复检范围 | 动作列出现 `> 1 帧`、`—`、`remux→transcode`；复检列出现 `全片抽检`、`窗口±0.5s`、`audio+前后0.5s` 等 |
+
+   **不做的事**：不从散文推断这些值。给 76 条 check 凭空补 `window_scope` 和
+   `default_action`，等于把设计决策伪装成数据提取 —— 尤其 `window_scope` 直接决定
+   `keyframe_edit` 能不能用，猜错会让 S39 把一个 20 帧的连续窗口交给逐帧修补。
+
+   正确的下一步是四个 QC 服务的负责人按 §2.2.2 的字段表把登记项补全，再用
+   `validate_registry.py` 把关。在那之前，S39 的族约束有代码守住，**check 级的窗口与
+   起点动作仍只靠人工对照**。
 
 ## schema 管不到什么
 
