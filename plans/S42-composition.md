@@ -4,7 +4,7 @@
 
 上游依据：[docs/07 §1/§2/§5](../docs/07-production-workflows.md)、[docs/11 §2](../docs/11-quality-repair.md)、[docs/12 §2/§3](../docs/12-budget-scheduling.md)、[S42 规格](../docs/design-package/services/S42-composition.md)、[S35 §2.2.1](../plans/S35-technical-qc.md)。
 
-配套：[S41 剪辑](S41-editorial.md)（提供 `OutputPlan` / `MixPlan` / EDL）、[S28 媒体](S28-media-artifacts.md)（bytes 唯一权威）、[S08 快照](S08-revision-snapshot.md)（接受指针）、[S43 交付](S43-delivery.md)、[S39 返工](S39-repair-planning.md)。
+配套：[S41 剪辑](S41-editorial.md)（提供 `OutputPlan` / `MixPlan` / EDL）、[S28 媒体](S28-artifact-ingest.md)（bytes 唯一权威）、[S08 快照](S08-revision-snapshot.md)（接受指针）、[S43 交付](S43-delivery.md)、[S39 返工](S39-repair-planning.md)。
 
 ---
 

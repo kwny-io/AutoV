@@ -4,7 +4,7 @@
 
 上游依据：[docs/10](../docs/10-assets.md)（音色行 + 授权撤销）、[docs/01 §3](../docs/01-enterprise-architecture.md)、[docs/04](../docs/04-data-consistency.md)、[docs/06 §2–§4](../docs/06-automation-governance.md)、[docs/14 §2](../docs/14-enterprise-operations.md)、[S15 规格](../docs/design-package/services/S15-voice-assets.md)、[generation-command.v2](../contracts/generation-command.v2.schema.json)。
 
-配套：[S10](S10-asset-catalog.md)（只读引用）、[S11](S11-character-assets.md) / [S12](S12-costume-assets.md) / [S13](S13-scene-assets.md) / [S14](S14-prop-assets.md)（**同级，不互相 import、不互相写库**）、[S28](S28-media-artifacts.md)、[S02](S02-governance-policy.md)、[S16](S16-story-memory.md)、[S17](S17-continuity.md)、[S26](S26-generation-orchestrator.md)、[S48](S48-adaptation-training.md)。
+配套：[S10](S10-asset-catalog.md)（只读引用）、[S11](S11-character-assets.md) / [S12](S12-costume-assets.md) / [S13](S13-scene-assets.md) / [S14](S14-prop-assets.md)（**同级，不互相 import、不互相写库**）、[S28](S28-artifact-ingest.md)、[S02](S02-governance-policy.md)、[S16](S16-story-memory.md)、[S17](S17-continuity.md)、[S26](S26-generation-jobs.md)、[S48](S48-adaptation-training.md)。
 
 ---
 

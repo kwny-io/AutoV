@@ -4,7 +4,7 @@
 
 上游依据：[docs/04 §5](../docs/04-data-consistency.md)、[docs/07 §1 step 9](../docs/07-production-workflows.md)、[docs/14 §3](../docs/14-enterprise-operations.md)、[S43 规格](../docs/design-package/services/S43-delivery.md)、[docs/16 E37](../docs/16-migration-acceptance.md)。
 
-配套：[S42 合成渲染](S42-composition.md)（master 候选与证据）、[S28 媒体](S28-media-artifacts.md)（bytes）、[S08 快照](S08-revision-snapshot.md)（accepted master）、[S02 策略](S02-governance-policy.md)（`external_publish` gate）、[S45 审计](S45-audit.md)。
+配套：[S42 合成渲染](S42-composition.md)（master 候选与证据）、[S28 媒体](S28-artifact-ingest.md)（bytes）、[S08 快照](S08-revision-snapshot.md)（accepted master）、[S02 策略](S02-governance-policy.md)（`external_publish` gate）、[S45 审计](S45-audit.md)。
 
 ---
 

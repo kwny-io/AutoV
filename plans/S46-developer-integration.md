@@ -4,7 +4,7 @@
 
 上游依据：[docs/13 §1–§2](../docs/13-api-product.md)、[docs/01 §3](../docs/01-enterprise-architecture.md)、[AGENTS.md](../AGENTS.md) 第 24 行（"把 LLM 提供的 `tenant_id` 当可信输入"禁令）、[S46 规格](../docs/design-package/services/S46-developer-integration.md)。
 
-配套：[S01](S01-identity-tenancy.md)、[S02](S02-governance-policy.md)、[S07](S07-change-management.md)、[S21](S21-orchestration.md)、[S26](S26-model-gateway.md)（准入）、[S45](S45-audit.md)（外部调用的审计）。
+配套：[S01](S01-tenant-access.md)、[S02](S02-governance-policy.md)、[S07](S07-change-management.md)、[S21](S21-orchestration.md)、[S26](S26-generation-jobs.md)（准入）、[S45](S45-audit.md)（外部调用的审计）。
 
 ---
 
