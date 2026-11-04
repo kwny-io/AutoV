@@ -893,6 +893,7 @@ CREATE TABLE lipsync.outbox (
   event_type         text NOT NULL,
   partition_key      text NOT NULL,         -- tenant_id || ':' || aggregate_id
   payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
   published_at       timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   UNIQUE (aggregate_id, aggregate_sequence, event_type)
@@ -1487,12 +1488,12 @@ S32 的粒度是 `(shot_lineage_id, speaker_character_id)`。一个镜头里两�
 | [S31](S31-speech-production.md) | `audio_ref` 的来源与**唯一**音频权威；音频文本缺陷是 S32 的拒绝依据（§4.3）；**S32 绝不重合成语音** |
 | [S37](S37-audio-alignment.md) | `AUD.TEXT.*` 决定音频能不能做口型；`AUD.LIPSYNC.*` 复检结果；`alignment_unit` 是 `audio_window.trim_*` 的来源 |
 | [S35](S35-technical-qc.md) | `lipsync` 动作族只有 `redo_lipsync`，禁止跨族；S32 的拒绝路径是这条禁令的镜像 |
-| [S36](S36-visual-qc.md) | 视觉复检：身份一致性、遮挡、边缘融合。S32 只验"没动别人脸"，不验"改得好不好" |
+| [S36](S36-semantic-qc.md) | 视觉复检：身份一致性、遮挡、边缘融合。S32 只验"没动别人脸"，不验"改得好不好" |
 | [S39](S39-repair-planning.md) | 下发 `RepairAction`；跨 Run 累计与 `strategy_class`（**归一参数不足**，C5） |
 | [S25](S25-model-routing.md) | `route_decision_id` 必需；**缺 `face_region_localized_edit` 能力位**（C7） |
 | [S26](S26-generation-jobs.md) | 唯一付费入口；`attempt_no` 与节点费用上限；`SUBMISSION_UNKNOWN` 冻结 |
 | [S28](S28-artifact-ingest.md) | 视频/音频/人脸轨/blob 的唯一权威；**缺 `face_track` 类别**（C1）；**缺 payload schema**（C4） |
-| [S10](plans/S10-asset-ingest.md) / [S13](plans/S13-characters.md) | 人脸身份与授权；S32 只读，不改脸 |
+| [S10](S10-asset-catalog.md) / [S11](S11-character-assets.md) | 人脸身份与授权；S32 只读，不改脸 |
 | [S41](S41-editorial.md) | 时间线所有者；镜头删除时 take 变 `SUPERSEDED` |
 | [S42](S42-composition.md) | 合成唯一执行者；S32 不碰音频、不混音 |
 | [S08](S08-revision-snapshot.md) | 接受权威；检查点推进 ≠ 接受 |

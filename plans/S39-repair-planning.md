@@ -678,8 +678,7 @@ CREATE TABLE repair_planning.action (
   PRIMARY KEY (plan_id, action_id)
 );
 
-CREATE TABLE repair_planning.attempt_ledger (...);        -- §5.6
-CREATE TABLE repair_planning.attempt_reservation (...);   -- §5.6
+-- attempt_ledger / attempt_reservation 的完整 DDL 见 §5.6（此处不重复定义）
 
 CREATE TABLE repair_planning.recheck_job (
   recheck_id      uuid PRIMARY KEY,
@@ -693,11 +692,56 @@ CREATE TABLE repair_planning.recheck_job (
   created_at      timestamptz NOT NULL
 );
 
-CREATE TABLE repair_planning.outbox (...);
-CREATE TABLE repair_planning.inbox (...);
+-- 与 S08 §1.6 同构
+CREATE TABLE repair_planning.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE repair_planning.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON repair_planning.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE repair_planning.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
 
 报告本体不落 S39：`snapshot` 只存引用 + 摘要。**S39 不是报告的第二个家。**
+
+### 7.1 幂等
+
+`POST /repair-plans` 用 `tenant_id + command_id + request_hash`。S39 是**纯计算**服务
+（读 QC 报告 + registry + policy，产出计划），所以幂等的价值不是省钱而是**计划稳定**：
+同一份缺陷在同一份 registry 版本和同一份 policy 下必须产出同一个 `repair_plan_id`，
+否则 S21 会因为重试拿到两张不同的计划，去重逻辑就失效了。
+
+因此除了命令幂等，还要求计划本身是**确定性**的：
+
+```text
+plan_fingerprint = sha256(
+    artifact_sha256
+  + sorted(defect (check_id, window_start, window_end, severity))
+  + registry_version
+  + policy_snapshot_id + policy_version
+  + routing_algorithm_version
+)
+```
+
+`plan_fingerprint` 相同 → 返回已有计划（幂等）；不同 → 新计划。`routing_algorithm_version`
+进指纹是必须的：算法改了，同一缺陷可能得到不同计划，那是合理的**新**计划，不是冲突。
+
+`repair.plan.created` 与计划落库同事务，`aggregate_id = repair_plan_id`。
 
 ---
 
@@ -708,6 +752,7 @@ CREATE TABLE repair_planning.inbox (...);
 ```json
 {
   "command_id": "cmd_…",
+  "request_hash": "sha256(canonical(body 去掉 command_id 与 request_hash))",
   "execution_context": { "...": "execution-context v2" },
   "qc_snapshot": {
     "artifact_sha256": "…",

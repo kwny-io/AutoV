@@ -785,6 +785,7 @@ CREATE TABLE video_production.outbox (
   event_type   text NOT NULL,
   partition_key text NOT NULL,              -- tenant_id || ':' || aggregate_id
   payload      jsonb NOT NULL,
+  headers      jsonb NOT NULL,
   published_at timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now(),
   UNIQUE (aggregate_id, aggregate_sequence, event_type)

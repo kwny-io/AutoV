@@ -846,6 +846,7 @@ CREATE TABLE speech_production.outbox (
   event_type         text NOT NULL,
   partition_key      text NOT NULL,        -- tenant_id || ':' || aggregate_id
   payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
   published_at       timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   UNIQUE (aggregate_id, aggregate_sequence, event_type)
@@ -1420,7 +1421,7 @@ S30 §6.2 的查询响应里有 `duration_mapping.dialogue_duration_ms`，S30 §
 | 方案 | 关系 |
 |---|---|
 | [S15](S15-voice-assets.md) | 音色定义、授权状态、发音词典。**授权必须强一致复查**（§4.2）；`revoked` 不可逆；绝不换相似声线 |
-| [S06](plans/S06-shot-spec.md) / [S04](plans/S04-narrative.md) | 台词文本与情绪标签的权威；S31 只接受 `text_revision`，不改剧本 |
+| [S06](S06-storyboard.md) / [S04](S04-narrative.md) | 台词文本与情绪标签的权威；S31 只接受 `text_revision`，不改剧本 |
 | [S25](S25-model-routing.md) | `route_decision_id` 是 `POST /generation-jobs` 的必需项；`word_timestamps` 能力必须进路由 |
 | [S26](S26-generation-jobs.md) | 唯一付费入口；`attempt_no` 与节点费用上限的最后一道闸；`SUBMISSION_UNKNOWN` 的冻结语义 |
 | [S28](S28-artifact-ingest.md) | 音频 bytes（`content_class='generated_audio'`）；**需要它报 `observed_duration_ms`**（C2）；tombstone 语义 |

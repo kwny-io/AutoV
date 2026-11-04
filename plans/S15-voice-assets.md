@@ -403,10 +403,42 @@ CREATE UNIQUE INDEX voice_canonical_one
 ### 2.8 基础设施
 
 ```sql
-CREATE TABLE voice_assets.idempotency_record (...);  -- 同 S11–S14
-CREATE TABLE voice_assets.outbox (...);
-CREATE TABLE voice_assets.inbox (...);
+CREATE TABLE voice_assets.idempotency_record (
+  tenant_id   text NOT NULL,
+  command_id  text NOT NULL,
+  request_hash char(64) NOT NULL,
+  command_type text NOT NULL,
+  state       text NOT NULL CHECK (state IN ('IN_PROGRESS', 'DONE')),
+  response_code integer,
+  response_body jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE voice_assets.outbox (
+  id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id         text NOT NULL,             -- 事件信封 required
+  aggregate_id      text NOT NULL,
+  aggregate_sequence bigint NOT NULL,
+  event_type        text NOT NULL,
+  partition_key     text NOT NULL,             -- tenant_id || ':' || aggregate_id
+  payload           jsonb NOT NULL,
+  headers           jsonb NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  published_at      timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON voice_assets.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE voice_assets.inbox (
+  consumer    text NOT NULL,
+  event_id    text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
+
+`aggregate_id = voice_id`，`aggregate_sequence = revision`。
 
 ### 2.9 不建的表
 
@@ -772,7 +804,14 @@ POST /voices/{id}/lexicon-binding
 ### 6.1 幂等
 
 - 键 `(tenant_id, command_id)` + JCS hash。
-- `POST /voices` 自然幂等。
+- `POST /voices`：「自然幂等」在这里必须说清按什么判等，否则并发两次建出两条记录。
+  取 `UNIQUE (tenant_id, lower(display_name))` 是**错的** —— 两个不同演员可以同名，而
+  §1.4 已经说清平台的 `voice_id` 与供应商的 `provider_voice_id` 是两层。建 `voice` 时
+  `provider_mapping` 还不存在（映射是后续登记的 1:N），所以没有天然的判等键。
+  **结论：`POST /voices` 不是自然幂等，必须走 `command_id + request_hash`。**
+  客户端重试靠幂等记录，不靠名字；想避免"同名两个音色"是产品问题，用
+  `UNIQUE (tenant_id, project_id, series_scope, lower(display_name))` 做**软性**约束时
+  要允许 `409 NAME_CONFLICT` 并可显式 override，不能偷偷合并。
 - `check-eligibility` 是只读语义的 POST（带复杂 body），**完全幂等**，不需要 idempotency_record（但要注意它不走缓存）。
 
 ### 6.2 并发

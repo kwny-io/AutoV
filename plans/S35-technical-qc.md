@@ -837,9 +837,19 @@ CREATE UNIQUE INDEX ON technical_qc.report
    COALESCE(attempt_slot_id,'-'), report_generation);
 
 CREATE TABLE technical_qc.outbox (
-  id uuid PRIMARY KEY, aggregate_id text NOT NULL, sequence bigint NOT NULL,
-  event_type text NOT NULL, payload jsonb NOT NULL, published_at timestamptz
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id          text NOT NULL,        -- 事件信封 required
+  aggregate_id       text NOT NULL,        -- report_id
+  aggregate_sequence bigint NOT NULL,      -- report_generation
+  event_type         text NOT NULL,
+  partition_key      text NOT NULL,        -- tenant_id || ':' || aggregate_id
+  payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  published_at       timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
 );
+CREATE INDEX outbox_unpublished_idx ON technical_qc.outbox (id) WHERE published_at IS NULL;
 CREATE TABLE technical_qc.inbox (
   consumer text NOT NULL, event_id text NOT NULL, received_at timestamptz NOT NULL,
   PRIMARY KEY (consumer, event_id)

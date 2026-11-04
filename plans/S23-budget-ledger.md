@@ -483,6 +483,21 @@ UNIQUE (aggregate_id, aggregate_sequence, event_type)
 -- aggregate_id = budget_id，aggregate_sequence = ledger_entry.entry_seq（budget 内）
 ```
 
+**两层幂等，不要混为一谈：**
+
+| 层 | 键 | 防的是什么 | 位置 |
+|---|---|---|---|
+| API 命令 | `tenant_id + command_id + request_hash` | 客户端重试把同一笔 RESERVE 提交两次 | `idempotency_record` |
+| 账本事件 | `tenant_id + business_key`（§1.9） | **内部路径**重复落账 —— 重放的事件、补偿重试、跨服务重投 | `ledger_entry` 唯一约束 |
+
+第二层不能代替第一层：`business_key` 由服务端按 `reserve:{reservation_id}` 这类规则生成，
+两个**不同**的 `command_id` 如果指向同一 `reservation_id`，第二层会正确拒绝第二笔，
+但那已经是业务冲突，应该返回 `409 RESERVATION_ALREADY_LEDGERED` 而不是假装成功。
+第一层则要求"同 command 同 hash → 回放原响应"，语义是**重试**，不是冲突。
+
+`SettleSaga` 里的每一步都同时受两层保护。docs/04 §3 第 7 步要求的"每一步有唯一业务事件键，
+重复投递无重复扣减"是第二层；AGENTS.md 要求的幂等键是第一层。两者都要有。
+
 ### 1.11 其余表
 
 ```sql

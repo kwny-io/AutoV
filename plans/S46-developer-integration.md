@@ -675,8 +675,12 @@ request_hash = sha256(JCS(body 去掉 command_id、request_hash、client_trace_i
 ```sql
 BEGIN;
   -- 幂等预检已在此事务内重做一次（防止并发窗口）
-  INSERT INTO integration_command_receipt(...) VALUES (...);
-  INSERT INTO outbox(... event_type='integration.command.accepted' ...);
+  INSERT INTO integration_command_receipt (command_id, tenant_id, request_hash, ...) VALUES (...);
+  INSERT INTO outbox (
+    tenant_id, aggregate_id, aggregate_sequence, event_type, partition_key, payload, headers
+  ) VALUES (
+    $tenant_id, $operation_id, $seq, 'integration.command.accepted', $tenant_id || ':' || $operation_id, $payload, $headers
+  );
 COMMIT;
 ```
 

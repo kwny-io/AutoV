@@ -329,7 +329,10 @@ CREATE TABLE outbox (
   aggregate_id       text NOT NULL,       -- plan_id
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
+  partition_key      text NOT NULL,       -- tenant_id || ':' || aggregate_id
   payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
   published_at       timestamptz,
   PRIMARY KEY (tenant_id, event_id)
 );

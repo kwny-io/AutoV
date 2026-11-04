@@ -376,14 +376,19 @@ CREATE TABLE command_receipt (
 -- 同键同 hash → 回放既有响应；同键不同 hash → 409 IDEMPOTENCY_KEY_REUSED
 
 CREATE TABLE outbox (
-  id             bigserial PRIMARY KEY,
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id      text NOT NULL,        -- 事件信封 required；共享目录事件填 '*'
   aggregate_id   text NOT NULL,
   aggregate_seq  bigint NOT NULL,
   event_type     text NOT NULL,
+  partition_key  text NOT NULL,        -- tenant_id || ':' || aggregate_id
   payload        jsonb NOT NULL,
+  headers        jsonb NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
   published_at   timestamptz,
-  UNIQUE (aggregate_id, aggregate_seq)
+  UNIQUE (aggregate_id, aggregate_seq, event_type)
 );
+CREATE INDEX outbox_unpublished_idx ON outbox (id) WHERE published_at IS NULL;
 ```
 
 ---
