@@ -685,10 +685,33 @@ safety_tightening(                        -- 紧急收紧，绕过常规 checkpo
   reason, created_by, effective_from, expires_at
 )
 
-idempotency_key(tenant_id, command_id, request_hash, response_ref, created_at,
-                PRIMARY KEY (tenant_id, command_id))
-outbox(…), inbox(consumer, event_id, …)
+CREATE TABLE governance_policy.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+-- 与 S08 §1.6 同构
+CREATE TABLE governance_policy.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON governance_policy.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE governance_policy.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
+
+`aggregate_id = policy_revision_id`，`aggregate_sequence = revision`。
+中继与 S08 §6.4 同一形状：`FOR UPDATE SKIP LOCKED` 批量取，同一 `partition_key` 单线程发布。
 
 ### 10.2 事件与一致性
 

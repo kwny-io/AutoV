@@ -167,9 +167,30 @@ CREATE TABLE context_retrieval.role_profile (
 ### 1.6 基础设施表
 
 ```sql
-context_retrieval.idempotency_key (...);
-context_retrieval.outbox_event (...);
-context_retrieval.inbox_consume (...);
+-- 与 S08 §6.4 同构，列名一字不差（不同 schema）
+CREATE TABLE context_retrieval.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE context_retrieval.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON context_retrieval.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE context_retrieval.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
+
 context_retrieval.watermark (
   tenant_id, series_id, branch_id,
   applied_commit_sequence bigint NOT NULL,

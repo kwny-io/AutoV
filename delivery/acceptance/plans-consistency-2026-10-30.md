@@ -137,6 +137,39 @@ publishes:
 
 **G1 关闭后的 outbox 覆盖：17/17。**
 
+### 3.1 同样的缺口在 18 份新方案里又出现了（已修，2026-11-02）
+
+18 份新方案落盘后重扫同一项，发现 G1 不是孤立事件 —— 它是**同一个模式**重复了七次：
+
+| 方案 | 原问题 | 补法 |
+|---|---|---|
+| S12 / S13 / S14 | 只写「与 S11 同构」，无 DDL | 内联三张基础设施表 |
+| S18 | `outbox_event (...)` 省略号是空的 | 补全 DDL |
+| S27 | `connector_observation_outbox` 无 `tenant_id` | 补 `tenant_id` + `partition_key` + 索引 |
+| S29 | `outbox` 无 `tenant_id` / `partition_key` | 同上 |
+| S30 | 全文只提 outbox，无任何 DDL | 补 `command_receipt` / `outbox` / `inbox` 三张表 |
+| S38 | 流程写「落库 + Outbox」，数据模型里没有 | 补三张基础设施表 + 同事务理由 |
+| S40 | `outbox(…)` 省略号，且「重试 S08」与「重发事件」未区分 | 补全 DDL + 区分两类写入 |
+| S02 | `outbox(…), inbox(…)` 省略号 | 补全 DDL |
+
+**为什么 `tenant_id` 必须有（而不是可省）：** `event-envelope.v2.schema.json` 的 `required`
+里有 `tenant_id`。outbox 行没有它，中继就无法填出合法信封 —— 这不是风格问题，是**发不出去**。
+
+**为什么 `partition_key` 必须有：** [S08 §6.4](plans/S08-revision-snapshot.md) 的中继按
+`partition_key` 保证同一聚合的顺序。缺了它，`aggregate_sequence` 会乱，下游要么缓冲要么丢弃。
+
+**S22 / S23 属于合法引用**：两者明确写「与 S08 完全同构 … 见 S08 §1.6」，而该节确有完整
+DDL。这与 S12 的空引用不同 —— 前者能落到确定内容，后者不能。
+
+### 3.2 全量复核结果
+
+| 检查 | 结果 |
+|---|---|
+| 声明 `publishes` 的方案是否都有 outbox | **33/33**（S02/S22/S23 为合法引用；其余内联） |
+| 内联 outbox 是否含 `tenant_id` / `partition_key` / `published_at` | **10/10 三列齐全** |
+| 跨库写入 / 跨库 JOIN | **0 处** |
+| `docs/design-package/` 改动 | **0** |
+
 一个仍然保留的边界：事件**不是授权书**。S26 收到 `model.route.selected` 后仍必须回查 `route_decision` 校验 `content_hash` / `quote_valid_to` / `rank`（§12）。这与 `docs/04`「事件不能直接推动 accepted pointer」是同一条纪律。
 
 ---

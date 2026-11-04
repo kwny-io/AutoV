@@ -782,13 +782,18 @@ CREATE TABLE channel_health ( ... );              -- §8.1
 
 CREATE TABLE connector_observation_outbox (
   id            bigserial PRIMARY KEY,
+  tenant_id     text NOT NULL,          -- 事件信封 required
   channel_route text NOT NULL,
   aggregate_id  text,
+  aggregate_sequence bigint,
   event_type    text NOT NULL,
+  partition_key text NOT NULL,          -- tenant_id || ':' || aggregate_id
   payload       jsonb NOT NULL,
+  headers       jsonb NOT NULL DEFAULT '{}'::jsonb,
   published_at  timestamptz,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX coo_unpublished_idx ON connector_observation_outbox (id) WHERE published_at IS NULL;
 ```
 
 ---

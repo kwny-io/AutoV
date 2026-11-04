@@ -598,9 +598,51 @@ review_quorum_state(
 
 review_assignment_event(tenant_id, review_task_id, seq, kind, from_principal, to_principal,
                         reason, at)   -- 分派/认领/委派/收回，只 INSERT
-
-outbox(...), inbox(consumer, event_id, ...), idempotency_key(...)
 ```
+
+**基础设施表**（与 [S08 §6.4](S08-revision-snapshot.md) 同构）：
+
+```sql
+CREATE TABLE human_review.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE human_review.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON human_review.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE human_review.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
+```
+
+**`review.decision.recorded` 与 `review_decision` 行必须同一本地事务。** 这是 §5「决定生效」
+的前提：若事件先于落库发出，S08 会收到一个查不到的决定；若落库先于事件，决定永久停在
+`RECORDED` 而无人推动下游。
+
+`aggregate_id = review_task_id`，`aggregate_sequence = review_task.revision`。
+
+**注意 S40 的 outbox 承担两类写入，不要混：**
+
+| 用途 | 语义 | 对应 §5.1 |
+|---|---|---|
+| 发布 `review.decision.recorded` | 与决定落库同事务的正常 outbox | 主路径 |
+| S08 不可达时的重试 | `status` 停在 `RECORDED`，**按同一 `command_id` 重试 S08** | 失败路径 |
+
+第二类**不是** outbox 重发：那是本地持久重试队列，重试的是对 S08 的 CAS 调用，不是重发事件。
+两者共用 `outbox` 表容易在实现时混淆，所以 §5.1 的重试表单独记录 `attempt_count` 与
+`next_attempt_at`，且**绝不**因为 S08 不可达而把决定降级为本地接受。
 
 ### 10.2 事件
 

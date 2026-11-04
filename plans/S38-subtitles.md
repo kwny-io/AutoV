@@ -132,7 +132,35 @@ CREATE TABLE subtitles.rendition (
   PRIMARY KEY (track_id, subtitle_revision, format),
   UNIQUE (artifact_id)
 );
+
+-- 基础设施：与 S08 §6.4 同构
+CREATE TABLE subtitles.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE subtitles.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON subtitles.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE subtitles.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
+
+`post.subtitle.ready` 与 `rendition` 行必须同一本地事务提交：拆开就会留下「字幕渲染好了、没人知道」
+或「事件说好了、rendition 回滚了」两种空洞，而下游按事件驱动。`aggregate_id = track_id`，
+`aggregate_sequence = subtitle_revision`。中继做法与 [S08 §6.4](S08-revision-snapshot.md) 一致。
 
 `rendition` 是 §3.0 的落库形态：一个 `subtitle_revision` 最多三种格式，每行只指向 S28。S38 的**数据库里不存任何 `.srt` 字节**，也不生成自己的下载 URL。
 
