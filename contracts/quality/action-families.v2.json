@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality/action-families.v2.json",
+  "title": "QC defect type -> action family (v2)",
+  "description": "S39 repair routing input. The closed `type` set decides which actions a defect family MAY use; the check registry decides which action a specific check starts at, over what window, and when it escalates. Changing a family is a contracts change (everything redeploys). Adding a check is a registry change (S39 does not redeploy).",
+
+  "schema_version": "2.0",
+
+  "closed_type_set": [
+    "identity",
+    "anatomy",
+    "hands",
+    "costume",
+    "prop",
+    "continuity",
+    "camera_adherence",
+    "action_adherence",
+    "temporal",
+    "subtitle",
+    "lipsync",
+    "voice",
+    "technical",
+    "audio_mix"
+  ],
+
+  "action_enum": [
+    "reingest",
+    "transcode",
+    "keyframe_edit",
+    "regenerate_video",
+    "temporal_edit",
+    "redo_lipsync",
+    "realign_subtitles",
+    "re_render_subtitles",
+    "remix",
+    "re_synthesize_speech",
+    "human_review",
+    "change_spec"
+  ],
+
+  "fatal_fallback": "human_review",
+
+  "families": {
+    "technical": {
+      "chain": ["reingest", "transcode", "remix", "temporal_edit", "regenerate_video"],
+      "fallback": "regenerate_video",
+      "forbidden": [
+        {
+          "action": "reingest",
+          "when": "defect is audio-only",
+          "why": "the container is fine; re-ingesting cannot fix a mix or loudness problem"
+        }
+      ]
+    },
+    "identity": {
+      "chain": ["keyframe_edit", "temporal_edit", "regenerate_video"],
+      "fallback": "regenerate_video",
+      "action_preconditions": [
+        {
+          "action": "keyframe_edit",
+          "requires": "window_scope in [frame, window] and window frame count <= 6",
+          "why": "a continuous window cannot be repaired by editing isolated frames"
+        }
+      ],
+      "forbidden": [
+        {
+          "action": "keyframe_edit",
+          "when": "window is continuous over more than 6 frames",
+          "why": "per-frame edits leave the motion path inconsistent"
+        }
+      ]
+    },
+    "anatomy": {
+      "chain": ["temporal_edit", "regenerate_video"],
+      "fallback": "regenerate_video",
+      "forbidden": [
+        {
+          "action": "keyframe_edit",
+          "when": "always",
+          "why": "anatomy defects span many frames; per-frame repaint produces visible seams"
+        }
+      ]
+    },
+    "hands": {
+      "chain": ["temporal_edit", "regenerate_video"],
+      "fallback": "regenerate_video",
+      "forbidden": [
+        {
+          "action": "keyframe_edit",
+          "when": "always",
+          "why": "same as anatomy"
+        }
+      ]
+    },
+    "costume": {
+      "chain": ["regenerate_video", "change_spec"],
+      "fallback": "human_review",
+      "forbidden": [
+        {
+          "action": "change_spec",
+          "when": "the proposed spec change alters character design",
+          "why": "character design is a human decision; a repair action may not silently rewrite canon"
+        }
+      ]
+    },
+    "prop": {
+      "chain": ["regenerate_video", "change_spec"],
+      "fallback": "human_review",
+      "forbidden": [
+        {
+          "action": "change_spec",
+          "when": "the proposed spec change alters character design",
+          "why": "same as costume"
+        }
+      ]
+    },
+    "continuity": {
+      "chain": ["regenerate_video", "change_spec"],
+      "fallback": "human_review",
+      "forbidden": [
+        {
+          "action": "change_spec",
+          "when": "the conflict is a cross-episode canon fact",
+          "why": "cross-episode facts belong to S16 canon; a repair action cannot redefine them"
+        }
+      ]
+    },
+    "camera_adherence": {
+      "chain": ["regenerate_video", "change_spec"],
+      "fallback": "human_review",
+      "forbidden": []
+    },
+    "action_adherence": {
+      "chain": ["regenerate_video", "change_spec"],
+      "fallback": "human_review",
+      "forbidden": []
+    },
+    "temporal": {
+      "chain": ["temporal_edit", "regenerate_video"],
+      "fallback": "regenerate_video",
+      "forbidden": []
+    },
+    "subtitle": {
+      "chain": ["realign_subtitles", "re_render_subtitles"],
+      "fallback": "human_review",
+      "forbidden": [
+        {
+          "action": "regenerate_video",
+          "when": "always",
+          "why": "a subtitle defect never requires re-generating the video; the pixels are correct"
+        },
+        {
+          "action": "change_spec",
+          "when": "the fix would require re-translation",
+          "why": "re-translation is a paid S26 job whose output needs human acceptance; it is not an automatic repair"
+        }
+      ]
+    },
+    "lipsync": {
+      "chain": ["redo_lipsync"],
+      "fallback": "human_review",
+      "forbidden": [
+        {
+          "action": "re_synthesize_speech",
+          "when": "always",
+          "why": "if the audio itself is wrong it is a `voice` defect and must be reported as one; inferring TTS redo from a lipsync defect is a cross-family reach"
+        }
+      ]
+    },
+    "voice": {
+      "chain": ["re_synthesize_speech", "regenerate_video"],
+      "fallback": "human_review",
+      "forbidden": [
+        {
+          "action": "re_synthesize_speech",
+          "when": "the voice licence is expired or revoked",
+          "why": "licence state is not repairable by re-synthesis; it escalates to human review"
+        }
+      ]
+    },
+    "audio_mix": {
+      "chain": ["remix", "regenerate_video"],
+      "fallback": "remix",
+      "forbidden": [
+        {
+          "action": "reingest",
+          "when": "always",
+          "why": "a mix problem is not a container problem"
+        }
+      ]
+    }
+  },
+
+  "routing": {
+    "formula": "candidates = families[defect.type].chain ∩ registry[defect.check_id].allowed_actions ∩ policy.allowed_actions",
+    "start_point": "registry[defect.check_id].default_action",
+    "escalation": "walk the family chain outward from start_point while escalation_rule is satisfied and capability is reachable",
+    "empty_intersection": {
+      "decision": "human_review",
+      "reason": "no_capable_route"
+    },
+    "human_review_not_in_chains": "human_review is the shared terminal state of every family, never a chain member. Putting it in a chain would conflate 'no automatic action is reachable' with 'a human was deliberately chosen'."
+  },
+
+  "invariants": [
+    "Every action named in any chain, fallback, or forbidden entry MUST exist in action_enum.",
+    "Every key of families MUST exist in closed_type_set, and every member of closed_type_set MUST have a family.",
+    "fallback MUST be human_review or a chain member.",
+    "human_review MUST NOT appear in any chain.",
+    "registry entries MUST NOT name an action outside families[defect_type].chain ∪ {fallback}. The qc-sdk validator enforces this at load time; a violating registry is rejected, not logged."
+  ],
+
+  "why_load_time": "The registry is data and will drift. A rule that only exists in prose gets violated the first time someone adds a check under deadline. Load-time rejection is the only version of this constraint that survives contact with a real team.",
+
+  "ownership": {
+    "this_file": "S35 (technical QC) authors it; contracts owns it",
+    "changed_by": "adding or reordering an action in a family = contracts change = every QC service and S39 redeploy",
+    "not_changed_by": "adding a check_id, changing a check's default action, changing its window or escalation = registry change = S39 untouched"
+  }
+}

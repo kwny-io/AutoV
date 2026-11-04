@@ -1,0 +1,987 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality/qc-report.v2.schema.json",
+  "title": "QCReport v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_id",
+    "report_generation",
+    "qc_layer",
+    "context",
+    "subject",
+    "shot_ref",
+    "evaluator",
+    "policy_version",
+    "sampling_policy_version",
+    "check_manifest",
+    "defects",
+    "dimensions",
+    "coverage",
+    "decision",
+    "decision_reason",
+    "abstain",
+    "confidence",
+    "supersedes",
+    "repair_context",
+    "evidence_bundle_refs",
+    "created_at",
+    "report_content_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "report_id": {
+      "type": "string",
+      "pattern": "^qc_[a-z0-9]{26}$",
+      "description": "ULID 风格；由 §2.6 的派生键确定性生成"
+    },
+    "report_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "同一派生键的第几次评估；超时后重评会 +1，旧代数被 supersedes 引用"
+    },
+    "qc_layer": {
+      "type": "string",
+      "enum": [
+        "technical",
+        "semantic",
+        "alignment",
+        "subtitle"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "project_id",
+        "series_id",
+        "branch_id",
+        "episode_id",
+        "home_cell",
+        "manifest_ref",
+        "run_id",
+        "execution_fence",
+        "shot_lineage_id",
+        "policy_ref",
+        "trace_id"
+      ],
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "home_cell": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "revision",
+            "content_hash"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_fence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shot_lineage_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "计数与去重用的稳定镜头血缘根；见 S39 §5.2"
+        },
+        "policy_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "service_id",
+            "id",
+            "revision",
+            "content_hash"
+          ],
+          "properties": {
+            "service_id": {
+              "const": "S02"
+            },
+            "id": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "memory_checkpoint": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "branch_id",
+                "commit_sequence",
+                "content_hash"
+              ],
+              "properties": {
+                "branch_id": {
+                  "type": "string"
+                },
+                "commit_sequence": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "content_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "artifact_sha256",
+        "artifact_kind",
+        "media"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio",
+            "image",
+            "subtitle_track",
+            "master"
+          ]
+        },
+        "media": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "duration_seconds",
+            "video",
+            "audio"
+          ],
+          "properties": {
+            "duration_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "video": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "width",
+                    "height",
+                    "fps_num",
+                    "fps_den",
+                    "codec",
+                    "pix_fmt",
+                    "color_range",
+                    "is_vfr",
+                    "frame_count"
+                  ],
+                  "properties": {
+                    "width": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "height": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "fps_num": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "fps_den": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "codec": {
+                      "type": "string"
+                    },
+                    "pix_fmt": {
+                      "type": "string"
+                    },
+                    "color_range": {
+                      "type": "string",
+                      "enum": [
+                        "tv",
+                        "pc",
+                        "unknown"
+                      ]
+                    },
+                    "is_vfr": {
+                      "type": "boolean"
+                    },
+                    "frame_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "audio": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "codec",
+                    "sample_rate_hz",
+                    "channels",
+                    "stream_index",
+                    "start_offset_seconds"
+                  ],
+                  "properties": {
+                    "codec": {
+                      "type": "string"
+                    },
+                    "sample_rate_hz": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "channels": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "stream_index": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "start_offset_seconds": {
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "shot_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shot_id",
+        "shot_revision",
+        "logical_node_id",
+        "node_epoch"
+      ],
+      "properties": {
+        "shot_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "shot_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "logical_node_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "node_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "image_digest",
+        "model_snapshot"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_snapshot": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "provider",
+                "model_id",
+                "snapshot"
+              ],
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model_id": {
+                  "type": "string"
+                },
+                "snapshot": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sampling_policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "check_manifest": {
+      "type": "array",
+      "minItems": 1,
+      "description": "本层要求的每个 check 恰好出现一次；这是'该查的都查了'的唯一证明",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "check_id",
+          "status",
+          "reason_code"
+        ],
+        "properties": {
+          "check_id": {
+            "type": "string",
+            "pattern": "^(TECH|VIS|AUD|SUB)\\.[A-Z0-9_]+\\.[A-Z0-9_]+$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "evaluated",
+              "not_applicable",
+              "not_evaluated",
+              "failed"
+            ]
+          },
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "no_such_content",
+              "no_dialogue",
+              "no_face",
+              "asset_unavailable",
+              "evaluator_timeout",
+              "evaluator_error",
+              "dependency_unavailable",
+              "sampling_not_selected",
+              "policy_disabled"
+            ]
+          },
+          "severity_ceiling": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "major",
+              "minor",
+              "info"
+            ]
+          }
+        }
+      }
+    },
+    "defects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/defect"
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "score",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media_duration_seconds",
+        "frames_sampled",
+        "temporal_windows_evaluated",
+        "planned_windows",
+        "coverage_ratio",
+        "required_coverage_min",
+        "audio_analyzed",
+        "audio_analyzed_seconds",
+        "sampling_policy_version"
+      ],
+      "properties": {
+        "media_duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "frames_sampled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "temporal_windows_evaluated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "planned_windows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "temporal_windows_evaluated / planned_windows；planned=0 时强制为 0"
+        },
+        "required_coverage_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "audio_analyzed": {
+          "type": "boolean"
+        },
+        "audio_analyzed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sampling_policy_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "repair",
+        "human_review",
+        "abstain"
+      ]
+    },
+    "decision_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "abstain": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason_code",
+            "failed_check_ids",
+            "detail"
+          ],
+          "properties": {
+            "reason_code": {
+              "type": "string",
+              "enum": [
+                "incomplete_coverage",
+                "evaluator_timeout",
+                "evaluator_error",
+                "model_disagreement",
+                "low_confidence",
+                "dependency_stale",
+                "asset_unavailable"
+              ]
+            },
+            "failed_check_ids": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "supersedes": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "report_id",
+            "report_generation"
+          ],
+          "properties": {
+            "report_id": {
+              "type": "string",
+              "pattern": "^qc_[a-z0-9]{26}$"
+            },
+            "report_generation": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repair_context": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repair_plan_id",
+            "attempt_slot_id",
+            "attempt_seq",
+            "defect_fingerprints"
+          ],
+          "properties": {
+            "repair_plan_id": {
+              "type": "string"
+            },
+            "attempt_slot_id": {
+              "type": "string"
+            },
+            "attempt_seq": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "defect_fingerprints": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_bundle_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "service_id",
+          "id",
+          "revision",
+          "content_hash"
+        ],
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^S[0-9]{2}$"
+          },
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report_content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "canonical JSON（本节除该字段外）的 sha256"
+    }
+  },
+  "$defs": {
+    "defect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "defect_id",
+        "defect_fingerprint",
+        "check_id",
+        "type",
+        "severity",
+        "scope",
+        "time_range",
+        "region_bbox",
+        "character_id",
+        "expected",
+        "expected_source",
+        "observed",
+        "measured",
+        "confidence",
+        "detector",
+        "evidence_artifact_ids",
+        "recommended_actions"
+      ],
+      "properties": {
+        "defect_id": {
+          "type": "string",
+          "pattern": "^df_[a-z0-9]{26}$"
+        },
+        "defect_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "跨复检的稳定身份；算法见 §2.4，与 artifact hash 无关"
+        },
+        "check_id": {
+          "type": "string",
+          "pattern": "^(TECH|VIS|AUD|SUB)\\.[A-Z0-9_]+\\.[A-Z0-9_]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "identity",
+            "anatomy",
+            "hands",
+            "costume",
+            "prop",
+            "continuity",
+            "camera_adherence",
+            "action_adherence",
+            "temporal",
+            "subtitle",
+            "lipsync",
+            "voice",
+            "technical",
+            "audio_mix"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "blocker",
+            "major",
+            "minor",
+            "info"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "frame",
+            "window",
+            "segment",
+            "whole_artifact"
+          ]
+        },
+        "time_range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "start_seconds",
+            "end_seconds"
+          ],
+          "properties": {
+            "start_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "end_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "region_bbox": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "x",
+                "y",
+                "width",
+                "height"
+              ],
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "y": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "width": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                },
+                "height": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "character_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "service_id",
+            "ref_id",
+            "ref_revision"
+          ],
+          "properties": {
+            "service_id": {
+              "type": "string",
+              "pattern": "^S[0-9]{2}$"
+            },
+            "ref_id": {
+              "type": "string"
+            },
+            "ref_revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "observed": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "unit",
+                "threshold",
+                "comparator"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "threshold": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "comparator": {
+                  "type": "string",
+                  "enum": [
+                    "lt",
+                    "lte",
+                    "gt",
+                    "gte",
+                    "eq",
+                    "ne",
+                    "na"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "detector": {
+          "type": "string",
+          "enum": [
+            "deterministic",
+            "model"
+          ]
+        },
+        "evidence_artifact_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+          }
+        },
+        "recommended_actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "reingest",
+              "transcode",
+              "keyframe_edit",
+              "regenerate_video",
+              "temporal_edit",
+              "redo_lipsync",
+              "realign_subtitles",
+              "re_render_subtitles",
+              "remix",
+              "re_synthesize_speech",
+              "human_review",
+              "change_spec"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

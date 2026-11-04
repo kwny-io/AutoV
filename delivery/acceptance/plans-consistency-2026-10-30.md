@@ -2,7 +2,7 @@
 
 范围：`plans/` 下 17 份服务实现方案，由 5 个并行会话产出后合并到 `main`。
 
-结论：**13 项通过，1 项冲突已收敛（C1，见 §2），2 项缺口已关闭（G1/G2，见 §3/§4），3 项契约缺口待落（C6/C7/C8，见 §2.4）。** 没有阻断问题。
+结论：**13 项通过，1 项冲突已收敛（C1，见 §2），2 项缺口已关闭（G1/G2，见 §3/§4），3 项契约缺口已落（C6/C7/C8，见 §2.4）。** 没有阻断问题。
 
 ---
 
@@ -78,15 +78,33 @@ candidates = action_family[defect.defect_type]
 
 `realign_subtitles` 只改时码，`re_render_subtitles` 才重建版式，两者不可互相替代；重译**不进**任何动作族 —— 翻译内容变更属于 `change_spec` 范畴。
 
-### 2.4 遗留契约缺口
+### 2.4 契约缺口（C6 / C7 / C8 —— 已落）
 
-| 编号 | 缺口 | 归属 |
+三条缺口指向同一个东西：`action_family` 原来只是 S35 里的一张文档表格，没有任何机器可读形式，
+所以「登记项不得越出动作族」这条约束只能靠人守。
+
+| 编号 | 缺口 | 落点 |
 |---|---|---|
-| C6 | `action_family` 目前是文档表格，无机器可读契约；需落到 `platform/qc-sdk` 并在加载时做族校验 | contracts |
-| C7 | `recommended_actions` 缺 `re_synthesize_speech` / `re_render_subtitles` | contracts |
-| C8 | S35 C5 / S39 C5b：`action_family` 与登记项字段都要有 schema | contracts |
+| C6 | `action_family` 无机器可读契约，族校验无加载期执行点 | `contracts/quality/action-families.v2.json` + `validate_registry.py` |
+| C7 | `recommended_actions` 缺 `re_synthesize_speech` / `re_render_subtitles` | `contracts/quality/qc-report.v2.schema.json`（12 值） |
+| C8 | S35 C5 / S39 C5b：动作族与登记项字段都要有 schema | `check-registry.v2.schema.json` + `qc-report.v2.schema.json` |
 
-C6 是关键：族校验必须是**加载期自动执行**的，不能靠人工 review 登记项 —— 否则登记项就成了绕过闭集的后门。
+**落地的四个文件：**
+
+| 文件 | 大小 | 内容 |
+|---|---|---|
+| `contracts/quality/action-families.v2.json` | 7.6 KB | 14 值闭集 → 动作族；每族 `chain` / `fallback` / `forbidden[]`（含理由）；`keyframe_edit` 的 ≤6 帧前置条件；三步交集公式；5 条不变量 |
+| `contracts/quality/qc-report.v2.schema.json` | 24 KB | QCReport v2 完整 payload，**从 `plans/S35` §2.3 程序化提取**而非手抄，避免转录漂移 |
+| `contracts/quality/check-registry.v2.schema.json` | 8.3 KB | 登记项形状；`check_id` 命名模式；两条 `allOf` 条件（`never_auto_repair` → 必须有理由；窗口类 → 必须有 `window_max_frames`）；`x-cross-checks` 列出 schema 表达不了的 7 条规则 |
+| `contracts/quality/validate_registry.py` | 5.3 KB | 跨文件约束的参考实现。退出码 0=可加载 / 1=拒绝 / 2=环境问题 |
+
+**三份枚举已交叉验证一致**（14 个 `defect_type`、12 个动作），且 `human_review` 不出现在任何
+`chain` 里。校验器已用一条违规登记项实测：把 `SUB.TIMING.OVERLAP` 的 `default_action` 写成
+`regenerate_video`，被拒并退出 1，两条错误分别指出「起点不在族链内」和「登记项不得拓宽族」。
+
+**仍留一个人工把关点**：`check-registry.v2.json` 数据文件本身还没落 —— schema 与校验器有，
+99 条 check 仍只在四份 QC 方案的表里。落地前方案与 registry 之间靠人工对照。已记入
+[contracts/README](../contracts/README.md) 的设计缺口第 4 条。
 
 ---
 
@@ -172,7 +190,10 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 
 1. ~~补 S25 的 outbox。~~ 已于 2026-11-01 完成，见 §3。
 2. ~~确认 G2（S38 是否真依赖 S28）。~~ 已于 2026-11-01 关闭：catalog 正确，方案补了输出侧，见 §4。
-3. 落 `action_family` 与登记项的机器可读契约（C6/C7/C8），族校验进 `platform/qc-sdk` 加载期。
-4. 剩余 31 个服务（S01/S03–S07/S09–S15/S19–S21/S28–S34/S41–S48）尚无方案 —— **正在并行编写**。
+3. ~~落 `action_family` 与登记项的机器可读契约（C6/C7/C8），族校验进加载期。~~
+   已于 2026-11-02 完成，见 §2.4。族校验的**参考实现**在 `contracts/quality/validate_registry.py`；
+   实现期需要把它移植进 `platform/qc-sdk`，并补 `check-registry.v2.json` 数据文件。
+4. 剩余 31 个服务（S01/S03–S07/S09–S15/S19–S21/S28–S34/S41–S48）尚无方案 —— **正在并行编写**，
+   已落 18 份，剩余 13 个在 3 个会话窗口中。
 
 方案是设计稿。以上检查证明的是**文档之间自洽**，不是**设计正确**。E01–E40 里真正要证明的东西（跨租户拒绝、重复投递幂等、Saga 补偿、fencing、重启恢复）只能靠实现加测试证明 —— `docs/16` 的原话是「schema 校验通过 ≠ 分布式正确性」。
