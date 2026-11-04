@@ -354,7 +354,7 @@ CREATE TABLE narrative.idempotency_record (
 CREATE TABLE narrative.outbox (
   tenant_id     text NOT NULL,
   id            text NOT NULL,
-  aggregate_id  text NOT NULL,                -- script_id
+  aggregate_id  text NOT NULL,                  -- script_id
   aggregate_seq bigint NOT NULL,
   event_type    text NOT NULL,
   partition_key text NOT NULL,                -- tenant_id || ':' || aggregate_id

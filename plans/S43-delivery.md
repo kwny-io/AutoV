@@ -540,7 +540,7 @@ CREATE TABLE delivery.command_receipt (
 CREATE TABLE delivery.outbox (
   event_id             uuid PRIMARY KEY,
   tenant_id            text NOT NULL,
-  aggregate_id         text NOT NULL,
+  aggregate_id         text NOT NULL,           -- package_id
   aggregate_sequence   bigint NOT NULL,
   event_type           text NOT NULL,
   partition_key        text NOT NULL,     -- tenant_id || ':' || aggregate_id
@@ -655,6 +655,11 @@ CREATE TABLE delivery.inbox (
 | 发布 | `delivery.package.created`、`delivery.package.sealed`、`delivery.package.published`、`delivery.publish.failed` |
 | 消费 | `post.master.rendered`（S42）、`snapshot.manifest.committed`（S08）、`governance.asset.rights.changed`（S15）、`production.subtitle.revision.created`（S38） |
 | 调用 | S08 查询 accepted pointer、S28 校验 artifact、S02 `policy-decisions:evaluate`、S16/S09/S23 取固定内容、连接器外发、S45 审计 |
+
+四条发布事件的 `aggregate_id` 都是 `package_id`：`DeliveryPackage` 不可变，
+一次修正就是新 `package_id`，所以同一个包的事件天然有序、不会被另一个包打断。
+`aggregate_sequence` 是本包的事件序号（`created`=1，此后每发布一条事件 +1）——
+包本身没有 `revision` 列，序号只服务于事件顺序，**不代表包的版本**。
 
 `delivery.package.published` 的 `data`：
 

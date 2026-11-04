@@ -140,7 +140,7 @@ S34 组 GenerationCommand(modality=music)
 | BGM 盖住对白 | `audio_mix` | `remix → regenerate_video` | **不参与**（S42 的 ducking/remix） |
 | BGM 音量不稳 / 忽大忽小 | `audio_mix` | `remix → regenerate_video` | 不参与 |
 | 曲子本身坏了 / 容器异常 | `technical` | `reingest → transcode → remix → temporal_edit → regenerate_video` | 不参与 |
-| 音乐与画面切换错位 | `temporal` | `reingest → transcode → remix → temporal_edit → regenerate_video` | 不参与（S41 的 EDL / S42 的 remix） |
+| 音乐与画面切换错位 | `temporal` | `temporal_edit → regenerate_video` | 不参与（S41 的 EDL / S42 的 remix） |
 | 音乐情绪不对（听着不该是这个调） | **无对应 defect_type** | — | **不是自动可修的问题**（§1.4 末） |
 
 **结论与 S33 相同：S34 不是任何动作族的执行者。**
@@ -1030,7 +1030,7 @@ CREATE UNIQUE INDEX mcr_hash_uniq
 CREATE TABLE music.outbox (
   outbox_id          uuid PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- 见 §6.4 事件表
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,

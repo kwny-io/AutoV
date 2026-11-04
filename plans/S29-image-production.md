@@ -653,7 +653,7 @@ CREATE TABLE image_production.job_transition (
 CREATE TABLE image_production.outbox (
   outbox_id    uuid PRIMARY KEY,
   tenant_id    text NOT NULL,            -- 事件信封 required；也用于中继分区
-  aggregate_id text NOT NULL,
+  aggregate_id text NOT NULL,                   -- 见 §6.4 事件表（随事件为 image_job_id / shot_lineage_id / candidate_id）
   aggregate_sequence bigint NOT NULL,
   event_type   text NOT NULL,
   partition_key text NOT NULL,           -- tenant_id || ':' || aggregate_id

@@ -235,7 +235,7 @@ CREATE TABLE audio_alignment.idempotency_record (
 CREATE TABLE audio_alignment.outbox (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- report_id
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,          -- tenant_id || ':' || aggregate_id

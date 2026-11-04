@@ -378,7 +378,7 @@ CREATE TABLE command_receipt (
 CREATE TABLE outbox (
   id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id      text NOT NULL,        -- 事件信封 required；共享目录事件填 '*'
-  aggregate_id   text NOT NULL,
+  aggregate_id   text NOT NULL,                 -- {provider}/{channel}/{model_id}/{model_snapshot}
   aggregate_seq  bigint NOT NULL,
   event_type     text NOT NULL,
   partition_key  text NOT NULL,        -- tenant_id || ':' || aggregate_id

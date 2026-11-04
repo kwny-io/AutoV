@@ -560,7 +560,7 @@ CREATE TABLE analytics.customer_roi (
 CREATE TABLE analytics.outbox (
   event_id             uuid PRIMARY KEY,
   tenant_id            text NOT NULL,
-  aggregate_id         text NOT NULL,
+  aggregate_id         text NOT NULL,           -- 见 §6.3 事件表
   aggregate_sequence   bigint NOT NULL,
   event_type           text NOT NULL,
   partition_key        text NOT NULL,     -- tenant_id || ':' || aggregate_id
@@ -658,6 +658,14 @@ CREATE TABLE analytics.inbox (
 | 发布 | `analytics.metric.snapshot.created`、`analytics.evaluation.completed`、`analytics.cost.projection.updated` |
 | 消费 | `billing.cost.recorded`（S23）、`generation.attempt.completed`（S26）、`quality.qc.completed`（S35–S38）、`review.decision.recorded`（S40）、`snapshot.manifest.committed`（S08）、`delivery.package.published`（S43） |
 | 调用 | S23 `GET /episodes/{id}/cost-breakdown?cohort=`、S26 查询、S35–S38 查询、S40 查询、S08 查询 |
+
+发布事件的聚合键：
+
+| event_type | aggregate_id |
+|---|---|
+| `analytics.metric.snapshot.created` | `snapshot_id` |
+| `analytics.evaluation.completed` | `evaluation_run_id` |
+| `analytics.cost.projection.updated` | `projection_id` |
 
 ### 6.4 S44 的反向使用者：S25
 

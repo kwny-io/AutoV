@@ -789,7 +789,7 @@ CREATE TABLE storyboard.idempotency_record (
 CREATE TABLE storyboard.outbox (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- storyboard_id（单镜重写为 shot_id）
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,

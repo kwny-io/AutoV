@@ -312,7 +312,7 @@ CREATE TABLE idempotency_record (
 CREATE TABLE outbox (
   tenant_id          text NOT NULL,
   event_id           text NOT NULL,
-  aggregate_id       text NOT NULL,       -- run_id
+  aggregate_id       text NOT NULL,             -- run_id
   aggregate_sequence bigint NOT NULL,     -- = projection_watermark 快照
   event_type         text NOT NULL,
   partition_key      text NOT NULL,       -- tenant_id || ':' || aggregate_id

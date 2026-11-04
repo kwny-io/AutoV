@@ -763,7 +763,7 @@ CREATE TABLE breakdown.idempotency_record (
 CREATE TABLE breakdown.outbox (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,        -- breakdown_id
+  aggregate_id       text NOT NULL,             -- breakdown_id
   aggregate_sequence bigint NOT NULL,      -- revision
   event_type         text NOT NULL,
   partition_key      text NOT NULL,        -- tenant_id || ':' || aggregate_id

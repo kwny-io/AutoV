@@ -597,7 +597,7 @@ CREATE TABLE composition.command_receipt (
 CREATE TABLE composition.outbox (
   event_id             uuid PRIMARY KEY,
   tenant_id            text NOT NULL,
-  aggregate_id         text NOT NULL,
+  aggregate_id         text NOT NULL,           -- 见 §6.3 事件表
   aggregate_sequence   bigint NOT NULL,
   event_type           text NOT NULL,
   partition_key        text NOT NULL,     -- tenant_id || ':' || aggregate_id
@@ -701,6 +701,14 @@ CREATE TABLE composition.inbox (
 | 发布 | `post.master.rendered`（topic `drama.composition.v2`）、`post.mix.completed`、`post.render.failed` |
 | 消费 | `post.timeline.revision.created`（S41）、`quality.repair.planned`（S39，`remix` 动作）、`snapshot.manifest.committed`（S08，投影候选状态）、`artifact.ingested`（S28） |
 | 调用 | S22 许可、S23 用量上报、S28 读写 artifact、S15 授权复查、S41 读 timeline、S38 读字幕 |
+
+发布事件的聚合键：
+
+| event_type | aggregate_id | aggregate_sequence |
+|---|---|---|
+| `post.master.rendered` | `candidate_id` | 该候选的事件序号（候选不可变，重渲产生新 `candidate_id`） |
+| `post.mix.completed` | `mix_job_id` | 该混音作业的事件序号 |
+| `post.render.failed` | `render_job_id` | 该渲染作业的事件序号 |
 
 `post.master.rendered` 的 `data`：
 

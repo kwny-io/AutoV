@@ -696,7 +696,7 @@ CREATE TABLE governance_policy.idempotency_record (
 -- 与 S08 §1.6 同构
 CREATE TABLE governance_policy.outbox (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id text NOT NULL, aggregate_id text NOT NULL, aggregate_sequence bigint NOT NULL,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL  /* policy_revision_id */, aggregate_sequence bigint NOT NULL,
   event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
   headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
   UNIQUE (aggregate_id, aggregate_sequence, event_type)

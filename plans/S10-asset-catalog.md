@@ -345,7 +345,7 @@ CREATE TABLE asset_catalog.idempotency_record (
 CREATE TABLE asset_catalog.outbox (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- binding_set_id
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,

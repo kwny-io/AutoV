@@ -839,7 +839,7 @@ CREATE UNIQUE INDEX ON technical_qc.report
 CREATE TABLE technical_qc.outbox (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id          text NOT NULL,        -- 事件信封 required
-  aggregate_id       text NOT NULL,        -- report_id
+  aggregate_id       text NOT NULL,             -- report_id
   aggregate_sequence bigint NOT NULL,      -- report_generation
   event_type         text NOT NULL,
   partition_key      text NOT NULL,        -- tenant_id || ':' || aggregate_id

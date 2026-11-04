@@ -471,7 +471,7 @@ CREATE TABLE degradation_option (
 CREATE TABLE outbox (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id     text NOT NULL,          -- 事件信封 required
-  aggregate_id  text NOT NULL,          -- route_id
+  aggregate_id  text NOT NULL,                  -- route_id
   aggregate_seq bigint NOT NULL,        -- route_decision.revision
   event_type    text NOT NULL,          -- model.route.selected
   partition_key text NOT NULL,          -- tenant_id || ':' || aggregate_id

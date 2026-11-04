@@ -107,7 +107,7 @@ S33 组 GenerationCommand(modality=sound_effect)
 |---|---|---|---|
 | 音效缺失 / 错了 / 太响盖对白 | `audio_mix` | `remix → regenerate_video` | **不参与**（S42 的 `remix`；`regenerate_video` 是 S30） |
 | 音效文件本身坏了 / 容器异常 | `technical` | `reingest → transcode → remix → temporal_edit → regenerate_video` | 不参与（S28 / S42） |
-| 音效位置整体偏（跟剪辑不同步） | `temporal` | `reingest → transcode → remix → temporal_edit → regenerate_video` | **不参与**——由 S41 的 EDL 修正或 S42 的 remix |
+| 音效位置整体偏（跟剪辑不同步） | `temporal` | `temporal_edit → regenerate_video` | **不参与**——由 S41 的 EDL 修正或 S42 的 remix |
 
 **这是一条必须写明的结论：S33 不是任何动作族的执行者。**
 
@@ -903,7 +903,7 @@ CREATE UNIQUE INDEX srec_hash_uniq
 CREATE TABLE sound_effects.outbox (
   outbox_id          uuid PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- 见 §6.4 事件表
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,        -- tenant_id || ':' || aggregate_id

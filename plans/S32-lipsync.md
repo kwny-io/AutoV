@@ -888,7 +888,7 @@ CREATE UNIQUE INDEX lcr_hash_uniq
 CREATE TABLE lipsync.outbox (
   outbox_id          uuid PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- 见 §6.4 事件表
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,         -- tenant_id || ':' || aggregate_id

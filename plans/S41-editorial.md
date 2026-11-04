@@ -512,7 +512,7 @@ CREATE UNIQUE INDEX command_receipt_hash_uniq
 CREATE TABLE editorial.outbox (
   event_id           uuid PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,
+  aggregate_id       text NOT NULL,             -- timeline_id
   aggregate_sequence bigint NOT NULL,
   event_type         text NOT NULL,
   partition_key      text NOT NULL,      -- tenant_id || ':' || aggregate_id
@@ -609,7 +609,7 @@ CREATE TABLE editorial.inbox (
 
 | 方向 | 事件 / 调用 |
 |---|---|
-| 发布 | `post.timeline.revision.created`（topic `drama.editorial.v2`，key `tenant_id:timeline_id`） |
+| 发布 | `post.timeline.revision.created`（topic `drama.editorial.v2`，key `tenant_id:timeline_id`，`aggregate_id = timeline_id`） |
 | 建议补充（缺口 C3） | `post.timeline.stale`（上游变化导致当前 timeline 需要重剪）、`post.timeline.completeness.changed` |
 | 消费 | `snapshot.manifest.committed`（S08，epoch/fence 与镜头变化）、`artifact.ingested`（S28，素材可用性）、`quality.repair.planned`（S39，`temporal_edit`）、`production.sfx.ready`/`production.music.ready`（S33/S34） |
 | 调用 | S28 `GET /artifacts/{id}`（只读校验）；S01 `get_authorization_context` |

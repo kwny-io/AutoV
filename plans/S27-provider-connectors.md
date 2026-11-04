@@ -784,7 +784,7 @@ CREATE TABLE connector_observation_outbox (
   id            bigserial PRIMARY KEY,
   tenant_id     text NOT NULL,          -- 事件信封 required
   channel_route text NOT NULL,
-  aggregate_id  text,
+  aggregate_id  text,     -- 可关联时填上游 id，否则 NULL（UNMAPPED）
   aggregate_sequence bigint,
   event_type    text NOT NULL,
   partition_key text NOT NULL,          -- tenant_id || ':' || aggregate_id

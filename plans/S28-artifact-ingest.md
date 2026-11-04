@@ -484,7 +484,7 @@ CREATE TABLE idempotency_record (
 CREATE TABLE outbox (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id          text NOT NULL,
-  aggregate_id       text NOT NULL,       -- artifact_id
+  aggregate_id       text NOT NULL,             -- artifact_id
   aggregate_sequence bigint NOT NULL,     -- = revision（删除事件用 tombstone 序号）
   event_type         text NOT NULL,       -- 目录里目前只有 artifact.ingested
   partition_key      text NOT NULL,       -- tenant_id || ':' || aggregate_id
