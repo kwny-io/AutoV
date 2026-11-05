@@ -5,7 +5,8 @@
 结论：**48 份全部与契约自洽。** 最后一处冲突 C9（事件命名，S42 / S43 / S44）已于 2026-11-05 裁决并落地
 （§2.5，commit `4f1bdcb`）：发布侧补充登记 10 个 `event_type`、删除 2 个零消费方的旧名，
 消费侧改正 6 处指向错误产出方的事件名。事件目录由 48 条增至 55 条。
-C1 冲突已收敛（§2），G1 / G2 缺口已关闭（§3 / §4），C6 / C7 / C8 契约缺口已落（§2.4）。
+C1 冲突已收敛（§2），G1 / G2 缺口已关闭（§3 / §4），C6 / C7 / C8 契约缺口已落（§2.4），
+C45-7 的脱敏规则表也已落（§2.6，`status: proposal`）。
 **仍未落的是 payload schema** —— 55 个 `event_type` 里没有一条有独立的 `data` schema，
 结构只写在各方案的事件定义里。这不阻断实现，但阻断跨服务的自动校验，见 §7 第 5 条。
 另有两处**新查实的文档缺陷**（不影响 C9 结论）：本报告此前写的「74 条 check」应为 99，
@@ -33,6 +34,7 @@ C1 冲突已收敛（§2），G1 / G2 缺口已关闭（§3 / §4），C6 / C7 /
 | outbox DDL 完整性 | 44 个内联 `CREATE TABLE ... outbox` 逐个解析列名 | **44/44 六列齐全**（`tenant_id` / `partition_key` / `aggregate_id` / `aggregate_seq` / `headers` / `published_at`） |
 | 跨库写入 / 跨库 JOIN | 正负向扫描 | **0 处**（命中 2 处均为"禁止跨库 JOIN"的表述） |
 | 发布事件名 ↔ `event-topics.v2.json` | 48 份的"发布"行逐个比对目录的 55 个 `event_type` | **48/48 一致**（2026-11-05 补登后重跑）；反向检查也通过：catalog 声明的 55 条与目录 55 条双向无差 |
+| 脱敏契约 ↔ 消费点 | 三份方案引用的 `redaction-policy.v2` 字段路径逐个解析 | **全部存在**；`applies_to[].rule_ref` 引的 9 个章节号（S45 ×4 / S46 ×5 / S47 ×2）逐条对到原文 |
 | E01–E40 覆盖 | 全量扫描 | **40/40** 被引用 |
 
 ---
@@ -98,6 +100,8 @@ candidates = action_family[defect.defect_type]
 | C7 | `recommended_actions` 缺 `re_synthesize_speech` / `re_render_subtitles` | `contracts/quality/qc-report.v2.schema.json`（12 值） |
 | C8 | S35 C5 / S39 C5b：动作族与登记项字段都要有 schema | `check-registry.v2.schema.json` + `qc-report.v2.schema.json` |
 
+同一轮还落了 C45-7（脱敏规则表），但不属于质量域，单列在 §2.6。
+
 **落地的四个文件：**
 
 | 文件 | 大小 | 内容 |
@@ -120,7 +124,7 @@ candidates = action_family[defect.defect_type]
 | `escalation_rule` | 99/99 | 只有散文，没有可执行的阈值 |
 | `default_action` / `allowed_actions` | 76 条（S36/S37/S38） | 这三份表只有 4–5 列，完全没有路由字段 |
 | `recheck_scope` | 76 条 | 复检成本无法计算 |
-| 枚举外的自由文本 | S35 中 3 处动作、11 处复检范围 | `> 1 帧`、`—`、`remux→transcode`、`全片抽检`、`窗口±0.5s` 等 |
+| 枚举外 / 不可直接提取的取值 | S35 中 1 处动作（`TECH.AUDIO.OFFSET` 的 `remux→transcode`）、10 处复检范围；四表合计 8 处带条件严重度（S35 4 / S36 1 / S37 1 / S38 2），另 1 处二值（S37 `AUD.LIPSYNC.OFFSET`）、3 处为空（S36 / S37×2） | `remux→transcode`、`全片抽检`、`连续窗口 ±0.5s`、`major（master 时 blocker）` 等 |
 
 **这不能靠推断补。** 给 76 条 check 凭空填 `window_scope`，是把设计决策伪装成数据提取。
 正确做法是四个 QC 服务各自按 S35 §2.2.2 的字段表补登记项，再用 `validate_registry.py` 把关。
@@ -179,6 +183,42 @@ candidates = action_family[defect.defect_type]
 各方案的事件定义里（[S42](../../plans/S42-composition.md) §6.3、[S43](../../plans/S43-delivery.md) §6.3、
 [S44](../../plans/S44-evaluation-analytics.md) §6.3）。这三份方案的 §11 C8 都留了这句话，
 不要因为"已登记"就当 payload 也齐了。
+
+### 2.6 C45-7（已落，2026-11-05）：密钥脱敏此前只有散文
+
+S45 §11 记的 C45-7 是「无载密钥扫描的共享规则」。它此前散在 S45 §10.6、S46 §8.3、S47 §5.2
+三句话里，而且**三处口径不同**：S45 说"拒绝"，S46 说"负责脱敏"，S47 的 DDL 注释直接写
+"已脱敏，可直接下发"。三句话各自都像对的，合起来没有一处能回答"什么算密钥"。
+
+落成 **`contracts/redaction-policy.v2.json`**（手写，`status: "proposal"`，`generated_from: null`）：
+6 类 secret 闭集 + `not_secrets` 白名单、两种替换形态、一个兜底。四个执行点
+（S45 `PAYLOAD_SECRET_SCAN` / S46 `INGRESS_SECRET_SCAN` / S47 `PROJECTION_SECRET_SCAN` /
+任意生产方 `OUTBOUND_SECRET_SCAN`）读同一份，不各自定义。
+
+**三处口径统一到一个答案（`redact_and_store`），因为另外两条候选都错：**
+
+| 候选口径 | 为什么不行 |
+|---|---|
+| 命中就拒绝（S45 原写法） | 拒收 = 让任何生产方用一串密钥形状的字符串把自己的审计行抹掉。E39 从"记录事实"变成"谁能控制自己被记录" |
+| 命中就放行（原状，靠上游自觉） | S47 的 DDL 注释写"已脱敏，可直接下发"——那是**结论**不是**机制**，上游没脱敏时它没有任何执行点 |
+| 整条记录作废、只留"我被脱敏了" | 通不过 E39。所以只换命中的叶子，`action`/`actor`/`targets`/`outcome` /`occurred_at` 一律不动 |
+
+**顺序是硬约束，不是实现建议：** 脱敏在哈希之前。S45 若先算 `record_hash` 再替换，链复算不出来，
+该 stream 之后每条都校验失败；S46 若先算 `params_sha256` 再替换，合法重试变成
+`REQUEST_HASH_MISMATCH`。契约的写法是 `scan_execution.timing = "synchronous, in the write path,
+before hashing or persisting"`，理由写在 `invariants[2]`。
+
+**未落的是四问，不是文件。** `open_questions` 的 R-1…R-4（KMS 密钥归属、S46 是否该把
+`provider_credential` 当错误而非替换、标记里要不要带检测器版本、侧车 vs 每服务自实现）
+在方案层给不出答案。其中 **R-2 是真实张力**：S46 §5.6 说供应商凭据出现在 S46 表里是设计错误，
+本契约说不拒收只替换 —— 两句都成立，因为一个是"数据不该存在"、一个是"客户端塞进来的怎么处理"。
+按 AGENTS.md 记为冲突待裁决，没有自行选边。
+
+**子会话交回来时带了范围外的东西。** 派的是"三份方案补脱敏"，回来的 S45 diff 里却夹着
+§3.3 状态表、§3.5 完整性校验的代码块、§3.6 导出的状态图三处**与脱敏无关的散文压缩**。
+已整份 `git checkout --` 回滚，再只补脱敏那六处。这类"顺带优化"是最难发现的一种：
+diff 总量看起来合理，被删掉的结构却分散在几个不相邻的章节里，逐行读才发现。
+**所以子会话的"完成了"只能当线索，不能当结论。**
 
 ---
 
@@ -301,6 +341,7 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 | 文档自洽性检查 | 见 §1，全部通过（C9 已裁决，2026-11-05） |
 | 全仓方案内部链接 | **0 损坏** |
 | 事件目录 | 48 → **55** 条 `event_type`，48 个 topic 不变 |
+| 密钥脱敏契约 | 已落 `contracts/redaction-policy.v2.json`（`status: proposal`），四个执行点读同一份；四个 `open_questions` 待安全侧裁决（§2.6） |
 | 与设计包的**有意**偏差 | 事件粒度更细（设计包每服务一条，方案按状态机状态发）。设计包文件本身**零改动** —— 差异记在本报告与三份方案的 §11 C8 |
 
 ### 6.2 本轮修过但没单列的
@@ -310,6 +351,7 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 - **S38 §11 的契约缺口表被一条 blockquote 劈成两半**：`> **G2 已关闭（2026-11-01）**…` 夹在 C4 与 C5 之间，导致 C4 出现两次、C5 脱表。已把 G2 说明移到表后，C4 两条合并为一条。这类缺陷不会出现在链接检查里 —— 表格仍然"像是完整的"，只是少渲染两行。
 - **S35 §12 / S39 §11 的 C5–C8 仍标为未落**：`991ccee` 已落 `action-families.v2.json` / `qc-report.v2.schema.json` / `check-registry.v2.schema.json` / `validate_registry.py`，但两份方案的缺口表还写着"没有"。已补「已落项」小节并保留原缺口描述 —— **C5 只落了一半**（`check-registry.v2.json` 数据文件仍未落），不能整条划掉。
 - **本报告「74 条 check」是错的**（`4f1bdcb` 之后重数）：实际 **99 条**，`contracts/README.md:73` 一直是对的。74 漏算了一整份 QC 方案的表。已改 §7 第 6 条并附分层计数。
+- **本报告「3 处动作在枚举外、11 处复检范围」也是错的**（2026-11-05 复核）：实际是 **1 处**（`TECH.AUDIO.OFFSET` 的 `remux→transcode`）和 **10 处**。原因是 `plans/S35:765` 的判定列写的是 `|actual − ShotSpec.duration| > 1 帧` —— 绝对值符号是**裸管道符**，朴素 `split('|')` 把这一行切成 9 列，把动作列和复检列整体右移一格，于是相邻行被误判成"枚举外"。必须用 `(?<!\\|)\\|` 切分（[缺字段清单](check-registry-missing-fields-2026-11-05.md) §8 记了这条）。**这个错和上面那条 74 是同一类**：不是没数，是数错了没复核，而两次都是子会话的独立复算把它抓出来的。
 - **3 条 `check_id` 违反自己文件里定的命名规约**：`plans/S35-technical-qc.md:773-775` 的 `TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME` 只有两段，而同文件 157 行的规约是 `<LAYER>.<GROUP>.<NAME>`。这类缺陷不会出现在链接检查里，也不会出现在"check 总数"里 —— **它恰恰是让计数变成 20 而不是 23 的原因**，因为按三段式正则数就漏掉这 3 行。已记入 §7 第 7 条，待 owner 确认改名。
 - **派活时我自己差点犯 AGENTS.md 禁的那类错**：第一版任务单让子会话「没有出处就按语义给保守值」补 `window_scope`，直接撞上 `contracts/README.md:84` 的「不从散文推断这些值」。已撤回并改成产出「缺字段清单 + `NEEDS_OWNER` 标注」。**这条值得记下来**：`check-registry.v2.json` 的诱惑就是"看起来很接近完成"，补上就绿色了。但 `window_scope` 猜错会让 S39 把 20 帧的连续窗口交给逐帧修补 —— 一个绿色比一片诚实更贵。
 
@@ -336,6 +378,13 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
    `window_scope` 决定 `keyframe_edit` 能不能用，猜错会让 S39 把 20 帧的连续窗口交给逐帧修补。
    **已派给 S35–S39 会话产出「缺字段清单」**（不是 registry 数据文件），把人工对照变成有 owner 的待办。
 
+   **清单已交**：`delivery/acceptance/check-registry-missing-fields-2026-11-05.md`（commit `717e7c1`，
+   分支 `claude/magical-mendeleev-14bc20`，**未合入 main、未推送**）。结论比预想的更差 ——
+   99 条里没有一条能从表格机械提出全部字段；`window_scope` 与 `escalation_rule` 是 **0/99**，
+   S36/S37/S38 的 76 条连动作列都不存在。它把缺口变成了 99 行带行号的对照表，
+   每行写清"缺哪个字段 / 方案里有没有出处 / 没有就 `NEEDS_OWNER`"，**但没有填任何值**。
+   要看这份清单，得 checkout 那个分支。
+
    本节此前写「74 条」，是**错的**。重数结果（按表格首格计，含不合规命名）：
 
    | 层 | 条数 | 其中 `check_id` 不合规 |
@@ -355,5 +404,11 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
    `check-registry.v2.json` 若按规约分组，这三条无处归组。
    按文件语义应是 `TECH.FRAME.BLACK` / `TECH.FRAME.FREEZE` / `TECH.FRAME.FLASH` —— **但这要 owner 确认**，
    改名是契约变更，不能由验收报告单方面决定。
+
+8. **`redaction-policy.v2` 的四个 `open_questions` 待裁决**（§2.6）：R-1 KMS 密钥归属与轮换、
+   R-2 S46 的 `provider_credential` 该替换还是该 422、R-3 标记里要不要带检测器版本、
+   R-4 侧车 vs 每服务自实现。**R-2 与 S46 §5.6 是真实张力**，按 AGENTS.md 两条都留在原地，
+   等 S46 owner + 安全侧选边。契约现在是 `status: proposal`，实现期可以照它写，
+   但**不能当最终答案** —— 尤其 R-1 没定，`class_a` 的 HMAC 密钥就没处放。
 
 方案是设计稿。以上检查证明的是**文档之间自洽**，不是**设计正确**。E01–E40 里真正要证明的东西（跨租户拒绝、重复投递幂等、Saga 补偿、fencing、重启恢复）只能靠实现加测试证明 —— `docs/16` 的原话是「schema 校验通过 ≠ 分布式正确性」。

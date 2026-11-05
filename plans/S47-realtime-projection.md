@@ -527,7 +527,7 @@ CREATE TABLE projection_change_log (
   run_id         text NOT NULL,
   watermark      bigint NOT NULL,
   event_class    text NOT NULL,          -- 'run.state'|'node.state'|'artifact'|...
-  payload        jsonb NOT NULL,         -- 已脱敏，可直接下发给 UI
+  payload        jsonb NOT NULL,         -- 已过 PROJECTION_SECRET_SCAN（§5.2 下文）
   created_at     timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, run_id, watermark)
 );
@@ -537,6 +537,10 @@ CREATE INDEX pcl_ttl_idx ON projection_change_log (created_at);
 ```
 
 **为什么存 payload 而不只是 watermark**：游标续连时需要回放"游标之后发生了什么"，如果只存 watermark，就得回源重建——那会丢掉中间态。存一份已脱敏的小 payload（几百字节）成本可控。
+
+**`payload` 的"已脱敏"是有出处的，不是上游自觉。** 事件进 S47 后、写进这张表之前、开 SSE 推送之前，跑一次 `PROJECTION_SECRET_SCAN`，命中按 [redaction-policy.v2](../contracts/redaction-policy.v2.json) 就地替换（`class_a` → `REDACTED:hmac_<scope>:<first16hex>`，`class_b` → `REDACTED:<class>`）。**命中只换叶子，不拒、不丢、不改 `event_class` 或 `watermark`**：契约兜底是 `redact_and_store`；这里若丢事件，就是 §3.3 明令禁止的"silently introduced gap"，且下游 SSE 客户端无从知道漏了一条。
+
+这一条对 S47 比别的服务更要紧：`projection_change_log` 虽然只留 15 分钟，但 `run_dashboard_projection` 的字段是**长期**的，SSE 又是"一次推给所有订阅者"的广播——在这里漏出去的密钥，比在别处更难追回。所以 §3.5 的字段合并规则里，凡是直接透传上游 raw payload 的字段，都要在这里过一遍。
 
 **保留期短（15 分钟）是关键**：它让这张表永远很小，不需要分区归档，`DELETE WHERE created_at < now() - interval '15 minutes'` 就够了。
 
@@ -849,6 +853,8 @@ UPDATE ... SET artifacts = (
 | `s47_projection_row_count` | gauge | `state` | 容量 |
 | `s47_change_log_age_seconds` | gauge | — | 最老记录年龄，应 ≈ 15 分钟 |
 | `s47_writeback_attempts_total` | counter | — | **必须恒为 0**（§1.4） |
+| `s47_secret_redactions_total` | counter | `class`（契约闭集） | 事件里带密钥的事故量（§5.2） |
+| `s47_scan_unavailable_total` | counter | — | 扫描器不可用，走了粗粒度兜底 |
 
 `event_class` 是有限的枚举（`run.state`/`node.state`/`artifact`/`review`/`delivery`/`integration`），不是 Kafka 的完整 type 列表——后者会爆炸。
 
@@ -883,6 +889,7 @@ SSE 连接是长生命周期的，**不要**为整个连接建一个 span。用 
 | P2 | `s47_projection_gapped_runs` 占活跃 run > 5% |
 | P2 | `s47_sse_cursor_expired_total` 突增（客户端网络问题或服务端卡顿） |
 | P2 | `s47_projection_row_count` 增长异常（可能在内爆缓存） |
+| P2 | `s47_secret_redactions_total` 突增（某上游在事件里带密钥） |
 | P3 | `s47_notification_delivery_total{state="FAILED"}` > 10%（1h） |
 
 ---
@@ -1045,6 +1052,8 @@ S47 只写少量审计意图：
 | `notification.preference.change` | 通知偏好变更 |
 
 **不写**"推送了一条 SSE"。那是海量、低价值的。S47 的 `projection.cursor.advanced` 事件已足以证明游标可达性。
+
+`payload` 里的密钥命中由 S47 自己就地替换（§5.2），写 `audit` 时用的是替换后的形态，**不因命中而放弃写这条审计**——讳疾忌医。S45 的 `PAYLOAD_SECRET_SCAN` 是第二道，不是唯一一道；两边都以 [redaction-policy.v2](../contracts/redaction-policy.v2.json) 为准，不各自定义"什么算密钥"。
 
 ---
 

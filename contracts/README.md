@@ -12,13 +12,31 @@
 contracts/
   openapi.v2.yaml              OpenAPI 3.1，21 个核心操作
   service-catalog.v2.json      48 服务元数据（services/*/service.yaml 的源）
-  event-topics.v2.json         48 个事件主题
+  event-topics.v2.json         48 个 topic，注册 55 个 event_type
   mcp-tools.v2.design.json     12 个 MCP 工具（streamable-http）
+  redaction-policy.v2.json     密钥脱敏规则表：secret 闭集、替换形态、兜底（见下）
   *.v2.schema.json             9 个企业 schema（JSON Schema 2020-12）
   domain-v1/                   v1 领域 payload 基线，保留作字段参考
   examples/                    结构与示例（占位 hash / ID，不能当 fixture）
   quality/                     质检缺陷族与 check 登记项（见下）
 ```
+
+## redaction-policy.v2.json：规则表，不是数据权威
+
+S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_SCAN` 和任意生产方的
+`OUTBOUND_SECRET_SCAN` 都执行这一份。它定三件此前只有散文的事：
+
+| 定什么 | 答案 |
+|---|---|
+| 什么算 secret | 6 类闭集（`api_key` / `bearer_token` / `signature_secret` / `provider_credential` / `private_key_material` / `connection_string`），外加 `not_secrets` 白名单（hash、opaque id、`kid_prefix`、`principal_id` 等，防止"越加固越没用"） |
+| 替换成什么 | `class_a` → `REDACTED:hmac_<scope>:<first16hex>`（kms 密钥控的截断 HMAC，**可关联**）；`class_b` → `REDACTED:<class>`（**不可关联**） |
+| 兜底 | `redact_and_store`，**唯一答案**。不拒收、不丢弃、不放行 |
+
+**兜底只能是一个答案**，因为另外两个都是错的：拒收等于让生产方用一串密钥形状的字符串把自己的审计行抹掉（审计从"记录事实"变成"谁能控制自己被记录"）；放行等于把凭据存进保留期最长、导出路径最广的地方。
+
+**顺序是硬约束**：脱敏在哈希之前。S45 若用明文算 `record_hash` 再存替换后的形态，链就复算不出来，该 stream 之后每条都校验失败；S46 若先算 `params_sha256` 再替换，合法重试会变成 `REQUEST_HASH_MISMATCH`。所以**存下来的就是 `canonical` 的原样**——验链器不需要知道这份契约，检测规则以后怎么改也只影响新记录。
+
+这份文件是 `status: "proposal"`。四个 `open_questions`（R-1 KMS 密钥归属、R-2 S46 是否该把 `provider_credential` 当错误而非替换、R-3 标记里要不要带检测器版本、R-4 侧车 vs 每服务自实现）没有在方案层能给出的答案，需要平台/安全裁决。
 
 ## quality/：修复路由的两份数据 + 一个加载期校验器
 
@@ -79,7 +97,7 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
    | `escalation_rule` | **99/99 条** | 只有散文描述，没有 `metric` / `comparator` / `threshold` / `escalate_to` |
    | `default_action`、`allowed_actions` | **76 条**（S36/S37/S38） | 这三份表只有 4–5 列：`check_id` / `type` / 严重度 / 判定 / 依据 |
    | `recheck_scope` | **76 条** | 同上 |
-   | 枚举外的自由文本 | S35 中 3 处动作、11 处复检范围 | 动作列出现 `> 1 帧`、`—`、`remux→transcode`；复检列出现 `全片抽检`、`窗口±0.5s`、`audio+前后0.5s` 等 |
+   | 枚举外 / 不可直接提取 | S35 中 1 处动作、10 处复检范围；四表合计 8 处带条件严重度（S35 4 / S36 1 / S37 1 / S38 2）、1 处二值、3 处为空 | 动作列 `remux→transcode`（`TECH.AUDIO.OFFSET`）；复检列 `全片抽检`、`连续窗口 ±0.5s`、`全轨`；严重度 `major（master 时 blocker）` |
 
    **不做的事**：不从散文推断这些值。给 76 条 check 凭空补 `window_scope` 和
    `default_action`，等于把设计决策伪装成数据提取 —— 尤其 `window_scope` 直接决定
@@ -88,6 +106,15 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
    正确的下一步是四个 QC 服务的负责人按 §2.2.2 的字段表把登记项补全，再用
    `validate_registry.py` 把关。在那之前，S39 的族约束有代码守住，**check 级的窗口与
    起点动作仍只靠人工对照**。
+
+   逐条清单见 `delivery/acceptance/check-registry-missing-fields-2026-11-05.md`：
+   99 行带行号，写明每条缺哪个字段、方案里有没有出处、没出处就标 `NEEDS_OWNER`。
+   **它不给值**，只把"人工对照"变成有 owner 的待办。
+
+   **数这四张表要注意转义管道符。** `plans/S35:765` 的判定列写
+   `|actual − ShotSpec.duration| > 1 帧`，绝对值符号是裸 `|`；朴素 `split('|')`
+   会把这行切成 9 列，动作列与复检列整体右移。须用 `(?<!\\)\|` 切分。
+   本表此前的"3 处动作 / 11 处复检"就是切错列数出来的，实为 **1 处 / 10 处**。
 
 ## schema 管不到什么
 

@@ -97,6 +97,7 @@ AuthContext = verify(credential)
 - `params` 的 schema 由 `command` 决定，S46 **只做结构校验**，语义校验由下游做。S46 拒绝了不该拒绝的，比放过一个好查；但也不要在此重复下游的规则，否则两边会漂移。
 - `command_id` 必须由客户端生成。S46 不为客户端生成——那会让客户端无法安全重试。
 - `request_hash` 客户端可不填；服务端总能算。客户端若填了，服务端**校验它**（防客户端用自己的哈希算法导致幂等失效），不一致 400 `REQUEST_HASH_MISMATCH`。
+- **`params` 过 `INGRESS_SECRET_SCAN`，命中按 [redaction-policy.v2](../contracts/redaction-policy.v2.json) 就地替换，然后才参与哈希与转发。** 顺序不能倒：`params_sha256` 是幂等比较的依据（§5.2），先哈希后替换会让合法重试变成 `REQUEST_HASH_MISMATCH`。扫到密钥**不 4xx**——那等于让客户端用一串密钥形状的字符串把自己的调用记录抹掉（契约 §fallback.why_not_reject）。
 
 ### 2.3 命令目录（外部可见）
 
@@ -392,6 +393,8 @@ POST 时若 body 带 external_id（可选），S46 记 (tenant, external_system,
 ```
 
 **不含**：params 全文（可能含剧情细节）、外部 URL 签名、任何凭据。消费方（S45 审计、S44 统计）需要细节时用 `data_ref` 回查。
+
+**"不含"由两道交叉保证，不是靠上游自觉。** 字段形状上：事件只带 `params_sha256` / `params_bytes`，正文根本没有可落的位置。内容上：即便上游往 `params` 里塞了密钥，S46 在受理时已按 [redaction-policy.v2](../contracts/redaction-policy.v2.json) 就地替换（`INGRESS_SECRET_SCAN`），事件里带的是替换后的形态。`class_a` 类的替换保留可关联 token（`REDACTED:hmac_<scope>:<first16hex>`），所以"这次调用与那个泄露的 key 有关"仍可查；`class_b` 类（签名值、私钥、带凭据的 URL）只留 `REDACTED:<class>`，不可关联——这一限制要写进 runbook，不要等出事才发现。
 
 **只发 `accepted`，不发状态变更。** 上游状态变更由各上游自己的事件表达（S21 的 `orchestration.run.state-changed`）。S46 若再发一份 `command.completed`，就变成第二个状态源（§1.2）。
 
@@ -851,6 +854,8 @@ INCR + EXPIRE（滑动窗口近似）
 | `s46_webhook_latency_seconds` | histogram | — | 从事件到投递完成 |
 | `s46_api_keys_by_state` | gauge | `state` | 凭据健康 |
 | `s46_idempotent_replays_total` | counter | `command` | 客户端重试行为 |
+| `s46_redactions_total` | counter | `class`（契约闭集） | 客户集成把密钥塞进了 `params`；P2 告警 |
+| `s46_scan_unavailable_total` | counter | — | 扫描器不可用，走了 `REDACTED:scanner_unavailable` 兜底 |
 | `s46_tenant_isolation_violations_total` | counter | — | **必须恒为 0** |
 
 **不进 label**：`tenant_id`、`api_client_id`、`url`（含客户域名）。这些进 trace 与日志。
@@ -885,6 +890,10 @@ S46 必须写 S45 审计的动作（§10.5）：
 
 `integration.command.accept` 的量可能很大。`details` 里只放 `command` / `params_sha256` / `params_bytes` / `target` 的引用，不含 params 正文。
 
+**S46 自己不做脱敏的兜底判断，只执行契约。** 写审计意图前过 `OUTBOUND_SECRET_SCAN`，命中按 [redaction-policy.v2](../contracts/redaction-policy.v2.json) 替换后照常写入——**不因命中而放弃写这条审计**。S45 侧还有一道 `PAYLOAD_SECRET_SCAN`，两道都指向同一份契约，所以它们对"什么算 secret""换成什么形态"不会各自演化。
+
+**S46 是唯一该在源头拦住密钥的服务**（契约 §fallback.per_surface.any_producer）：到 S45/S47 手上时，字节已经在 S46 自己的 outbox 里落过一次盘了。所以 `s46_redactions_total{class}` 的 P2 告警是**客户集成度的真实信号**，不是可以长期容忍的噪声。
+
 ### 8.4 告警
 
 | 级别 | 条件 |
@@ -892,6 +901,7 @@ S46 必须写 S45 审计的动作（§10.5）：
 | P1 | `s46_tenant_isolation_violations_total > 0`（租户隔离被突破） |
 | P1 | `s46_forward_unknown_total` 5 分钟 > 10 |
 | P2 | `s46_auth_failures_total` 突增 3× 基线（疑似撞库/泄露） |
+| P2 | `s46_redactions_total` > 0 持续 1h（客户在往 `params` 里塞密钥） |
 | P2 | Webhook `FAILED` 比例 > 20%（1h） |
 | P2 | `s46_rate_limit_degraded_total > 0` 持续 5min |
 | P3 | 单租户 429 比例 > 50%（1h）→ 通知客户经理 |
@@ -1034,6 +1044,8 @@ S46 **不自建用户表、不自建角色表**。`api_client` 是 S46 的，`pr
 | 未知转发 | `integration.forward.unknown` |
 
 审计意图通过 S46 自己的 outbox 发送（与 §3.1 步骤 8 的 outbox 是同一张表，不同 `event_type`）。
+
+S46 发审计动作时，`details` 已按 [redaction-policy.v2](../contracts/redaction-policy.v2.json) 处理过（§8.3）。S45 的 `PAYLOAD_SECRET_SCAN` 是第二道，不是唯一一道——S46 不该指望它兜住。
 
 ### 10.6 对 S47（实时投影）
 

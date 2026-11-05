@@ -124,7 +124,7 @@ S45 是**审计事实**的唯一写者。它持有的四类事实：
 
 四条硬规则：
 
-- `details` 是**引用与计数**，不是内容。剧本正文、Prompt 全文、密钥、媒体 URL 签名一律不进（docs/14 §2、docs/04 §4）。需要正文时给 `data_ref`，指向 S28/S04 的权限化接口。
+- `details` 是**引用与计数**，不是内容。剧本正文、Prompt 全文、密钥、媒体 URL 签名一律不进（docs/14 §2、docs/04 §4）。需要正文时给 `data_ref`，指向 S28/S04 的权限化接口。生产方若还是写进来了，由 §2.5 处理。
 - `outcome=DENIED` 与 `ERROR` 必须写。**被拒绝的操作是最需要审计的**，绝不能因为"没成功所以不用记"而丢。
 - `occurred_at` 是调用方时钟；S45 另记 `recorded_at`（自己的时钟）。两者差值入指标，**不因时钟偏移拒收**（§7.6）。
 - `schema_version` 必须存在。S45 拒绝未知 major 版本，不猜。
@@ -158,6 +158,24 @@ S45 是**审计事实**的唯一写者。它持有的四类事实：
 | S48 | 训练启动、数据授权复核、artifact 注册 | 本组 S48 §11 |
 
 **S45 不反向依赖这些服务。** `depends_on: [S01]` 只用于两件事：读写审计记录的授权判定，以及租户驻留/状态。审计的**写入**不需要回源任何业务服务——这正是"只记录、不判定"的工程含义。
+
+### 2.5 `PAYLOAD_SECRET_SCAN`：兜底，不是闸门
+
+规则内容不在本文，在 [redaction-policy.v2](../contracts/redaction-policy.v2.json)（C45-7 的落地）。S45 只负责**执行**，且执行方式已经定死为一个答案：
+
+| 项 | 定死的做法 |
+|---|---|
+| 扫描时机 | 追加事务**之前**，在计算 `canonical` 之前 |
+| 命中后 | **就地替换，照常入库**（`redact_and_store`）；**任何情况下都不因脱敏拒收** |
+| 替换形态 | `class_a`→`REDACTED:hmac_<scope>:<first16hex>`（可关联）；`class_b`→`REDACTED:<class>`（不可关联） |
+| 扫描器不可用 | 每串截断到 8 字符 + `REDACTED:scanner_unavailable`；不落明文，也不拒收 |
+| 记录 | `audit.payload.redacted` 自审记录 + `audit_secret_redactions_total{class}` |
+
+**为什么不能拒收。** 拒收等于让任何生产方用一串密钥形状的字符串把自己的审计行抹掉，S45 就从"记录这件事发生过"（E39）变成"谁能控制自己是否被记录"。而且到 S45 手上时字节已在生产方 outbox 里落过盘——拒收不能让泄露没发生，只会让证据消失。
+
+**为什么必须在哈希之前。** 存下来的就是 `canonical` 的原样：若先用明文哈希再存替换后的形态，这条记录无法复算 `record_hash`，该 stream 之后每条都会校验失败。由此得到——`verify-audit-chain` 不需要知道这份契约；检测规则以后怎么改只影响新记录，永远不改历史。
+
+**不能只剩"我被脱敏了"。** 只替换命中的叶子，`action`/`actor`/`targets`/`outcome` 一律不动。一条"发生过一次脱敏，但不告诉你是什么操作"的记录通不过 E39。`class_b` 不可关联的代价（"这两条记录是否来自同一个泄露 password"答不出来）要写进 runbook，不是实现缺陷。
 
 ---
 
@@ -216,6 +234,7 @@ tenant:<t>:meta                    ← 租户级事件（成员、策略、保�
 ### 3.3 链的算法
 
 ```text
+redact(payload, redaction-policy.v2)                            -- §2.5，必须在哈希前
 canonical = JCS({ tenant_id, stream_key, stream_seq, recorded_at, occurred_at,
                   source_service, source_event_id, action, actor, targets,
                   policy_ref, evidence_refs, outcome, outcome_detail, details,
@@ -1145,7 +1164,7 @@ S46 的外部命令必须写审计，且 `actor.principal_type='api_client'`，`
 
 - `api_client` 的 `principal_id` 是 S46 的 `APIClient` id，不是外部系统自报的名字；
 - `delegation_id` 非空，指向 S46 授予的 scoped grant；
-- 记录里**不含** API key、bearer token、签名（S46 负责脱敏，S45 做最后一道 `PAYLOAD_SECRET_SCAN` 拒绝，见 C45-7）。
+- 记录里**不含** API key、bearer token、签名。S46 在出口就该拦（§8.3 `OUTBOUND_SECRET_SCAN`）；万一漏到 S45，`PAYLOAD_SECRET_SCAN` **替换后照常入库**，不拒收（§2.5，C45-7）。拒收会让 S46 用一串密钥形状的字符串把自己的审计行抹掉。
 
 ---
 
@@ -1161,7 +1180,7 @@ S46 的外部命令必须写审计，且 `actor.principal_type='api_client'`，`
 | **C45-4** | `event-topics.v2.json` 里 S45 只有 `audit.export.ready`；**没有审计意图的入站 topic**（本文提案 `drama.audit.ingress.v2`） | 生产方无法知道往哪发 | `contracts/event-topics.v2.json` |
 | **C45-5** | `automation-policy.v2.schema.json` 无 `audit.blocking` 字段 | docs/14 §3 的"严格客户停止关键写"没有策略载体，只能散落在各服务硬编码 | `contracts/automation-policy.v2.schema.json` |
 | **C45-6** | 保留期档位（hot/warm/total）在契约里没有承载位置；`service.yaml` 只说"可配置WORM" | E39 的"保留"无法配置化；每个客户合同的差异只能靠工单 | catalog / 新增 `retention-policy.v1` |
-| **C45-7** | 无"载密钥/PII 扫描"的共享规则 | 生产方可能把 token 写进 `details`；S45 侧需要一道规则，但规则内容属于安全标准 | `docs/14` 或 `platform/` 规范 |
+| **C45-7** | 无"载密钥/PII 扫描"的共享规则 | 生产方可能把 token 写进 `details`；S45 侧需要一道规则，但规则内容属于安全标准 | **已落地**：规则表在 [redaction-policy.v2](../contracts/redaction-policy.v2.json)（`status: proposal`），执行点在 §2.5。该契约仍有 4 个 open question 待安全侧裁决，其中 R-2 与 S46 §5.6 存在张力 |
 | **C45-8** | `GET /audit-exports/{id}` 在 `service.yaml` 声明但 openapi 无路径；且未定义下载票（短签名）机制 | 导出物如何安全交付未定 | `contracts/openapi.v2.yaml` |
 | **C45-9** | 审计记录与 S28 删除的先后语义：docs/04 §6 说"审计保留最小证明"，但没定义 S45 是否要把 `artifact_id` 当作保留引用参与删除阻塞 | S28 与 S45 可能各自理解不同 | `docs/04` 补一句 + 本文 §10.3 的建议 |
 | **C45-10** | 外部时间戳锚定（TSA）是否需要、锚到哪，全无定义 | "不可篡改"在单库层面成立，在被有超级用户权限的内部人篡改层面只靠链自证 | 安全/合规裁决 |
@@ -1180,7 +1199,7 @@ S46 的外部命令必须写审计，且 `actor.principal_type='api_client'`，`
 
 4. **全量链校验多久跑一次。** 每日全量在 1000 租户下可能不可行（O(总记录数)）。本文的默认是"封印时 + 日抽检 1% + 导出时必做 + 按需全量"。这个组合是否满足 E39 的"可证明"，取决于客户合同怎么写。
 
-5. **审计记录的 PII 边界。** `actor.principal_id` 是员工标识，属个人信息（尤其在欧洲）。保留期与删除权（GDPR 第 17 条）与审计保留义务（通常 7 年）冲突。本文按"审计义务优先"处理，但需要法务明确哪些字段属于"最小证明"。这是 C45-7 的上位问题。
+5. **审计记录的 PII 边界（与密钥脱敏是两件事）。** `actor.principal_id` 是员工标识，属个人信息（尤其在欧洲）。保留期与删除权（GDPR 第 17 条）与审计保留义务（通常 7 年）冲突。本文按"审计义务优先"处理，但需要法务明确哪些字段属于"最小证明"。要区分清楚：§2.5 的 `PAYLOAD_SECRET_SCAN` 处理的是**密钥**（替换，规则表已落地在 redaction-policy.v2），**不处理 PII**；PII 不做替换而是靠"只记最小证明"从源头减少，两者不要混在一个规则里。这条仍是 C45-7 的上位问题，未裁决。
 
 6. **`audit_access_log` 的保留期是否与 `audit_record` 一致。** 本文按一致处理（它也是审计事实）。但它的量级可能更大（每次查询一条），成本需实测。
 
