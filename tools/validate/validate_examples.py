@@ -43,6 +43,12 @@ SCHEMA_OF = {
     "memory-claim": "memory-claim.v2.schema.json",
     "memory-committed-event": "event-envelope.v2.schema.json",
     "post-subtitle-ready": "event-envelope.v2.schema.json",
+    "production-image-ready": "event-envelope.v2.schema.json",
+    "production-lipsync-ready": "event-envelope.v2.schema.json",
+    "production-music-ready": "event-envelope.v2.schema.json",
+    "production-sfx-ready": "event-envelope.v2.schema.json",
+    "production-speech-ready": "event-envelope.v2.schema.json",
+    "production-video-ready": "event-envelope.v2.schema.json",
     "quality-alignment-completed": "event-envelope.v2.schema.json",
     "quality-semantic-completed": "event-envelope.v2.schema.json",
     "quality-technical-completed": "event-envelope.v2.schema.json",
@@ -69,9 +75,8 @@ def payload_schemas():
 
     `schema_ref` names the envelope, so it types the whole event but leaves
     `data` an unconstrained object. A topic that wants its payload typed adds
-    `data_schema_ref` in contracts/event-topics.v2.json. Today only
-    artifact.ingested does; every other topic is envelope-only, which is the
-    normal state and not a gap.
+    `data_schema_ref` in contracts/event-topics.v2.json. Topics without one are
+    envelope-only, which is the normal state and not a gap.
     """
     with open(os.path.join(CONTRACTS, "event-topics.v2.json"), encoding="utf-8") as f:
         topics = json.load(f)["topics"]

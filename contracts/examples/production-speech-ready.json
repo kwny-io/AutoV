@@ -1,0 +1,57 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+  "source": "S31",
+  "type": "production.speech.ready",
+  "subject": "take_01J9ZB9U4V6W1X8Y5Z0A3B7C2",
+  "time": "2026-11-06T09:14:22Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "shot_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+  "aggregate_sequence": 9,
+  "correlation_id": "run_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "causation_id": "cmd_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "speech_job_id": "job_01J9ZB8V5W7X2Y9Z6A1B4C8D3",
+    "voice_take_id": "take_01J9ZB9U4V6W1X8Y5Z0A3B7C2",
+    "utterance_id": "utt_01J9ZB4M5N6P7Q8R9S0T1U2V3",
+    "utterance_index": 0,
+    "shot_lineage_id": "shot_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+    "locale": "zh-CN",
+    "text_hash": "c4e8a1d3f5b7092aec63b8d4f1e07492b5a3c6d18e0f2a4b7c9d1e3f50627489",
+    "artifact_ref": {
+      "service_id": "S28",
+      "id": "art_01J9ZBAV6W8X3Y0Z7A2B5C9D4",
+      "revision": 1,
+      "content_hash": "7e2a5c9b1d4f6083ac21b7e93d0f8452c6a1b3d5e7f9021a4c8b6d3e5f7091ab"
+    },
+    "audio_duration_ms": 4310,
+    "dialogue_span_ms": null,
+    "dialogue_span_source": "pending_s37",
+    "voice_binding": {
+      "id": "vb_01J9Z9W3M4N5P6Q7R8S9T0U1V",
+      "revision": 3
+    },
+    "lexicon_ref": {
+      "id": "lex_01J9Z8V2L3M4N5P6Q7R8S9T0U",
+      "revision": 5,
+      "source_kind": "tenant"
+    },
+    "checkpoint": {
+      "from": null,
+      "to": "take_01J9ZB9U4V6W1X8Y5Z0A3B7C2",
+      "checkpoint_seq": 1
+    },
+    "require_alignment": true,
+    "rights_state": "usable"
+  },
+  "data_ref": {
+    "service_id": "S31",
+    "id": "take_01J9ZB9U4V6W1X8Y5Z0A3B7C2",
+    "revision": 1,
+    "content_hash": "1b5d8f2a4c6e90731bd57a9c2e4f8063a5c7b9d1f3e5028a6c4b2d0e8f1a3c9d"
+  }
+}

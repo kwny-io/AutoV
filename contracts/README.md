@@ -15,8 +15,7 @@ contracts/
   event-topics.v2.json         48 个 topic，注册 55 个 event_type
   mcp-tools.v2.design.json     12 个 MCP 工具（streamable-http）
   redaction-policy.v2.json     密钥脱敏规则表：secret 闭集、替换形态、兜底（见下）
-  *.v2.schema.json             10 个 schema（JSON Schema 2020-12）：9 个企业，
-                               + artifact-ingested（单 topic 的 payload，见下）
+  *.v2.schema.json             企业 schema + 单 topic 的 payload schema（见下）
   domain-v1/                   v1 领域 payload 基线，保留作字段参考
   examples/                    结构与示例（占位 hash / ID，不能当 fixture）
   quality/                     质检缺陷族与 check 登记项（见下）
@@ -57,16 +56,36 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 
 **为什么是新增一个键，而不是塞进注册项现有字段：** `schema_ref` 的语义已经被 55 个 topic
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
-是纯增量，缺省 = 没有 payload 契约（envelope-only），也就是今天 54/55 个 topic 的状态。
+是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键目前只有 `artifact.ingested` 一个 topic 带**，这是有意的，不是遗漏。其余 topic
-要么 payload 已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
-经 REST 传递），要么本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
+**这个键今天有 11 个 topic 带**（44 个仍是 envelope-only）。没带的不全是遗漏：payload
+可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
+经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
 
+| topic | payload schema | 出处 |
+|---|---|---|
+| `artifact.ingested` | `artifact-ingested.v2.schema.json` | S28 §6.3 |
+| `quality.technical.completed` | `quality.technical-completed.v2.schema.json` | S35 §2.3 |
+| `quality.semantic.completed` | `quality.semantic-completed.v2.schema.json` | S36 §2.3 |
+| `quality.alignment.completed` | `quality.alignment-completed.v2.schema.json` | S37 §2.3 |
+| `post.subtitle.ready` | `post.subtitle-ready.v2.schema.json` | S38 §6.4 |
+| `production.image.ready` | `production.image-ready.v2.schema.json` | S29 §6.4 |
+| `production.video.ready` | `production.video-ready.v2.schema.json` | S30 §6.4 |
+| `production.speech.ready` | `production.speech-ready.v2.schema.json` | S31 §6.4 |
+| `production.lipsync.ready` | `production.lipsync-ready.v2.schema.json` | S32 §6.4 |
+| `production.sfx.ready` | `production.sfx-ready.v2.schema.json` | S33 §6.4 |
+| `production.music.ready` | `production.music-ready.v2.schema.json` | S34 §6.4 |
+
+六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
+形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
+依据的闭集一律留成非空字符串 + `x-needs-owner`——把计划里「建议的闭集」写成 `enum`
+等于替契约做决定（见下面 `sfx_family` / `mood` 两条）。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
-envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。`contracts/examples/artifact-ingested.json`
-是这条路径的现有用例。
+envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
+`contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
+`SCHEMA_OF` 把它们的 stem 映射到 envelope，payload 子树由这个键自动接上。
 
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
@@ -164,8 +183,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ artifact-ingested.v2.schema.json
-                                                              （仅 artifact.ingested，见上）
+                                        └──data_schema_ref──▶ 11 个 payload schema
+                                                              （见上表；其余 44 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -178,16 +197,20 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-八项检查：`json`（41 个 JSON 解析）、`checkids`（四份 QC 方案里 99 个 `check_id`
-是否符合 schema 的三段命名）、`links`（1317 条相对链接全部可达）、
-`catalog`（服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`
-（动作族文件自己声明的 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、
-`examples`（17 个示例对 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
+九项检查：`json`（61 个 JSON 解析）、`payloads`（66 条 `schema_ref` / `data_schema_ref`
+都指向真实文件）、`checkids`（四份 QC 方案里 99 个 `check_id` 是否符合 schema 的三段命名）、
+`links`（1321 条相对链接全部可达）、`catalog`（服务 id / topic 生产消费方 / `docs/02`
+三方一致）、`families`（动作族文件自己声明的 5 条 invariant）、`scaffold`（120 个生成物
+与 catalog 一致）、`examples`（28 个示例对 schema 校验）、`registry`
+（`check-registry.v2.json` 存在时才跑）。
+
+`payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
+文件时，消费方看到的是「有类型契约」，而校验器在读取时才会炸——失败落在别人服务里。
 
 退出码 0 = 全过，1 = 有真问题，2 = 某项没跑成。**后两者要分开**：一个没跑成的检查
 不能读成绿灯，这和上面 `jsonschema` 缺失返回 2 是同一条原则。
 
-写这个入口之前，这些检查是五条各自为政的命令，没人一起跑，也就等于「族校验必须在加载期
+写这个入口之前，这些检查是几条各自为政的命令，没人一起跑，也就等于「族校验必须在加载期
 自动执行」这句话没有执行入口——校验器只有在被调用时才约束任何东西。
 `registry` 这一项现在报「还没有文件」而不是失败，因为 99 条 check 的字段确实还没补齐
 （缺口 4）；文件一落地，加载期校验立刻生效，不需要再接线。

@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/production.image-ready.v2.schema.json",
+  "title": "production.image.ready payload v2",
+  "description": "event `production.image.ready` 的 data 部分。权威定义在 plans/S29-image-production.md §4.4（事件体形状，行 375–386）；各字段的存储来源在 §2.4 的 image_job / shot_image_checkpoint DDL（行 462–609）。S29 发这个事件的用意不是宣布「这张图好」，而是「这个 (shot_lineage_id, node_kind) 的生产检查点前进到了哪个候选」——判定作废是 S30/S09/S08 的事（§4.4 行 386–400）。因此本 payload 只带定位与溯源信息，不带任何「哪些下游受影响」的结论。**不含**供应商 URL、参考图二进制、prompt 原文（§6.4 行 805：prompt 通过 data_ref 指向 reference_combination + job 按权限读）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有 payload 约定；S29 §4.4 的示例没有画它。"
+    },
+    "image_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S29 §4.4 行 377 + §2.4 DDL 行 463（`image_job_id text PRIMARY KEY`）。检查点推进由哪个 job 完成——F15（§4.6 行 428）的 CAS 冲突排查靠它。"
+    },
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S29 §4.4 行 377（`candidate_id`）+ §2.4 DDL 的 keyframe_candidate 主键。注意它与下面 `checkpoint.to_candidate_id` 是同一个值——§4.4 的示例把它们平铺了两次。本 schema 两个都收（照抄示例），但 schema 表达不了相等约束，见 x-conflicts PIR-2。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S29 §4.4 行 378 + §2.4 DDL 行 473（`shot_lineage_id text NOT NULL`）。**必须由上游传入，S29 不生成**（§8.2 行 877–884）：跨 Run 的尝试计数键 `AttemptCounterKey` 含它，换 Run 换 id 会把已消耗的费用清零。S09 的影响闭包与 S39 的归因都以此为键。"
+    },
+    "node_kind": {
+      "type": "string",
+      "enum": [
+        "first_frame",
+        "last_frame",
+        "keyframe_mid",
+        "reference_still"
+      ],
+      "description": "来源：S29 §2.6 行 214（`node_kind ∈ {first_frame, last_frame, keyframe_mid, reference_still}`）+ §2.4 DDL 行 476–477 的 CHECK。检查点的键是 `(shot_lineage_id, node_kind)`（行 41、212），所以这个字段决定「前进的是哪个检查点」——同一镜的首帧与尾帧是两个独立指针。"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "来源：S29 §4.4 行 379（`artifact_ref (S28)`）。形状取 plans/S28-artifact-ingest.md 行 94 的规范定义：「下游引用统一是 `{service_id:\"S28\", id, revision, content_hash}`，与 episode-manifest.v2.schema.json 的 accepted_artifact_ref 完全同构」。逐字照搬，不收窄也不放宽。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 —— 归档产物的引用恒指向 S28。S29 §2.4 DDL 的 kc_artifact_uniq（行 595）也以 `(artifact_ref->>'id', artifact_ref->>'content_hash')` 为键。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.revision。S28 行 94 特别声明「`revision` 只在 `artifact_id` 内有意义」（docs/04 §1）——它不是一个全局版本号。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.content_hash。S29 用它在 kc_artifact_uniq 上去重（§7.2 行 848「同一 artifact 被两个 job 登记」）。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "reference_combination_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S29 §4.4 行 379。指向本次生成所用的参考组合（reference_combination，§2.4 表）。S29 不发参考图本体也不发它们的地址（§6.4 行 805），只发这个哈希让消费方能判断「两张候选是不是用了同一组参考」。S29 没有声明它是不是 64 位 hex，故不收窄为 pattern——收窄会拒掉 S29 自己没禁止的形式。"
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "来源：S29 §4.4 行 380 + §2.4 DDL 行 601–610。检查点推进的三元组：从哪个候选、到哪个候选、序号。S30 §6.5（行 982）拿 `checkpoint_seq` 与自己的 `video_job.keyframe_checkpoint_seq` 比较，决定视频是否还对应检查点（§4.4 行 390）——**这个字段是 S29→S30 失效传播的唯一依据**。",
+      "properties": {
+        "from_candidate_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "来源：S29 §4.4 行 380（`from_candidate_id`）。首轮生成时该 (shot_lineage_id, node_kind) 的检查点为空，没有「从」，故**必须可 null**。S29 §4.4 的示例没有画 null 的情况，但 §2.4 的 DDL 是 `candidate_id NOT NULL` 只在当前值上，历史上没有前一个候选是正常状态。"
+        },
+        "to_candidate_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S29 §4.4 行 380 + §2.4 DDL 行 604（`candidate_id text NOT NULL`）。检查点现在指向的候选。与顶层 `candidate_id` 同值，见 PIR-2。"
+        },
+        "checkpoint_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S29 §4.4 行 380 + §2.4 DDL 行 605（`checkpoint_seq bigint NOT NULL`）。单调递增。S30 用它判 stale（S30 §6.5 行 982 / §4.4）。T29-25（S29 §11 行 972）测「事件乱序到达下游」时靠它拒绝旧事件。"
+        }
+      },
+      "required": [
+        "from_candidate_id",
+        "to_candidate_id",
+        "checkpoint_seq"
+      ],
+      "additionalProperties": false
+    },
+    "built_for": {
+      "type": "object",
+      "description": "来源：S29 §4.4 行 381（`built_for: {manifest_ref, node_epoch_input, execution_fence}`）。这三个值回答「这张图是照着哪一版输入造的」，供 S08 决定要不要把它纳入 manifest（§4.4 行 177：「S08 可以选择把候选纳入 manifest 并 CAS accepted pointer——决定权在 S08」）。**三个字段名与 §2.4 DDL 的列名都对不上**，见 x-conflicts PIR-3。",
+      "properties": {
+        "manifest_ref": {
+          "type": "object",
+          "description": "来源：S29 §4.4 行 381。形状取 plans/S35-technical-qc.md §2.3 行 233–241 的 manifest_ref（全仓唯一的 manifest_ref 定义：`{id, revision, content_hash}`）。**但 S29 的存储层只有 `manifest_id`**（§2.4 DDL 行 511，`image_intent_ledger.manifest_id text NOT NULL`），没有 revision 也没有 content_hash——见 PIR-3。",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "来源：S35 §2.3 manifest_ref.properties.id；S29 侧对应 image_intent_ledger.manifest_id。"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "来源：S35 §2.3 manifest_ref.properties.revision。**S29 没有这一列**——见 PIR-3。"
+            },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "来源：S35 §2.3 manifest_ref.properties.content_hash。**S29 没有这一列**——见 PIR-3。"
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "content_hash"
+          ],
+          "additionalProperties": false
+        },
+        "node_epoch_input": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S29 §4.4 行 381。**DDL 里这一列叫 `node_epoch_at_create`**（§2.4 DDL 行 474，`node_epoch_at_create integer NOT NULL`）——事件名与列名不一致，见 PIR-3。作用域是单个 logical_node 的局部重生成计数（AGENTS.md 版本速查），与 execution_fence 是两个不同作用域，不能混用。"
+        },
+        "execution_fence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S29 §4.4 行 381 + §2.4 DDL 行 475（`execution_fence integer NOT NULL`）。作用域是 run / branch，用于取消与故障切换。"
+        }
+      },
+      "required": [
+        "manifest_ref",
+        "node_epoch_input",
+        "execution_fence"
+      ],
+      "additionalProperties": false
+    },
+    "repaired_from": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：S29 §4.4 行 382（`repaired_from: {repair_action_id, source_candidate_id} | null`）。非 null 表示这张候选是 `keyframe_edit` 的产物（§2.4 DDL 行 490–491 的 `repair_action_id` / `source_candidate_id`，均「仅 edit」）。**这个字段的语义是跨服务的关键**：§4.4 行 403 要求「`repaired_from != null` 时必须带 `requires_recheck: true`」，因为修复后产生的新候选**没有**经过 S35/S36 复检，下游直接当已接受会跳过复检。但 §4.4 的形状里没有 `requires_recheck` 字段——见 x-conflicts PIR-1。",
+      "properties": {
+        "repair_action_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S29 §4.4 行 382 + §2.4 DDL 行 491（`repair_action_id text -- 仅 edit，来自 S39`）。S39 下发的修复动作 ID；S29 侧的修复幂等键是 `(tenant, repair_action_id)`（§7.1 行 836）。"
+        },
+        "source_candidate_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S29 §4.4 行 382 + §2.4 DDL 行 490（`source_candidate_id text -- 仅 edit`）。被编辑的原候选。它**不一定**等于 `checkpoint.from_candidate_id`：§7.2 行 845 说「两个 keyframe_edit 对同一候选各自产出新候选，检查点串行推进，两次都保留」——所以编辑源与检查点前值可以不同。"
+        }
+      },
+      "required": [
+        "repair_action_id",
+        "source_candidate_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "image_job_id",
+    "candidate_id",
+    "shot_lineage_id",
+    "node_kind",
+    "artifact_ref",
+    "reference_combination_hash",
+    "checkpoint",
+    "built_for",
+    "repaired_from"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "requires_recheck",
+      "demanded_by": "plans/S29-image-production.md §4.4 正文行 403 ——「`production.image.ready` 的事件里 `repaired_from != null` 时必须带 `requires_recheck: true`，S39 的 recheck 计划负责触发」",
+      "s29_status": "**正文要求它，形状里没有它**。§4.4 行 375–386 画的 data 只有 10 个顶层字段，`requires_recheck` 不在其中；但同一节的 403 行明确说事件「必须带」。S30 §6.4 的同类事件（`production.video.ready`，S30 行 952–971）**有**这个字段，所以这更像是 S29 §4.4 的示例漏画，而不是设计上不要。本 schema 没有收它——因为 §4.4 的形状是权威定义，凭正文加字段会凭空造出一个位置未定的键（顶层？放进 repaired_from？）。需要 S29 明确它的位置。见 x-conflicts PIR-1。"
+    },
+    {
+      "field": "manifest_ref.revision / manifest_ref.content_hash",
+      "demanded_by": "plans/S29-image-production.md §4.4 行 381（`built_for: {manifest_ref, …}`）+ 全仓 manifest_ref 的唯一定义 S35 §2.3 行 233–241（三字段必填）",
+      "s29_status": "S29 的存储层没有这两个值。§2.4 的 image_job 表（行 462–500）里只有一个 `manifest_id` 相关的列出现在 image_intent_ledger（行 511，`manifest_id text NOT NULL`），而 image_job 表本身根本没有 manifest 列。若 S29 真按 manifest_ref 三字段发，它必须先从 S08 读到 revision 与 content_hash 并落库；若它只发 id，事件形状就要改。见 PIR-3。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PIR-1",
+      "summary": "§4.4 正文要求 repaired_from != null 时带 requires_recheck，但同节画的事件形状里没有这个字段",
+      "s29_text": "§4.4 行 403：`production.image.ready` 的事件里 `repaired_from != null` 时必须带 `requires_recheck: true`",
+      "s29_shape": "§4.4 行 375–386 的 data 示例：image_job_id / candidate_id / shot_lineage_id / node_kind / artifact_ref / reference_combination_hash / checkpoint / built_for / repaired_from —— 无 requires_recheck",
+      "s30_precedent": "S30 §6.4 行 952–971 的 `production.video.ready` 有 `requires_recheck: false` 作为顶层字段",
+      "why_it_matters": "这是一条**有实际后果**的遗漏。§4.4 行 403 的原话把风险说得很清楚：keyframe_edit 后的新候选没经过 S35/S36 复检，下游若当已接受就会跳过复检。而 S39 的 recheck 计划靠这个标志决定要不要排复检。若事件里没有这个字段，S39 只能从 `repaired_from != null` 自己推断——那实际上是可行的，但意味着「有没有复检」变成消费方的推断而不是生产方的声明，两个消费方（S39 与 S47 投影）可能推得不一样。本文件不选边：不添加该字段（位置未定），记在这里等 S29 补示例。"
+    },
+    {
+      "id": "PIR-2",
+      "summary": "candidate_id 在顶层与 checkpoint.to_candidate_id 重复，schema 无法强制两者相等",
+      "s29": "§4.4 行 377 `\"candidate_id\": ...` 与行 380 `checkpoint: {..., to_candidate_id: ...}` —— 两处应是同一个值，但示例画了两次",
+      "why_it_matters": "与 QTC-1（S35 的 subject 与 data.shot_id 重复）同一类问题。消费方若只读其中一个，而生产方某次只更新了另一个，事件就会自相矛盾。S30 拿到错误值会把视频标成对应错误的候选。要么删掉其中一个，要么由 S29 的 outbox 写入代码在构造时断言相等。本 schema 收下两者（照抄示例），不选边。"
+    },
+    {
+      "id": "PIR-3",
+      "summary": "built_for 的三个字段名与 §2.4 DDL 的列名对不上，且 manifest_ref 需要的两个值无处可取",
+      "s29_event": "§4.4 行 381：`built_for: {manifest_ref, node_epoch_input, execution_fence}`",
+      "s29_ddl": "§2.4 行 474 `node_epoch_at_create integer NOT NULL`；行 475 `execution_fence integer NOT NULL`；image_intent_ledger 行 511 `manifest_id text NOT NULL`。image_job 表（行 462–500）没有任何 manifest 列",
+      "mismatches": "node_epoch_input（事件）vs node_epoch_at_create（列）—— 同一量两个名。manifest_ref（事件，按 S35 是三字段对象）vs manifest_id（列，单值）—— 不但缺 revision 与 content_hash，连形状都不同",
+      "why_it_matters": "实现时最容易的做法是「按事件名写 DTO、按列名写 DAO」，然后中间漏一次映射，把 node_epoch 传成别的 epoch。manifest_ref 的问题更硬：S08 要判断「这个候选是不是为当前 manifest 造的」，只有 id 没有 revision 就无法回答——而 image_job 表里根本不存在这个值，不是形状问题而是取值问题。需要 S29 决定：要么加列（manifest_id + manifest_revision + manifest_content_hash 或至少 revision），要么事件改成只发 manifest_id 并由 S08 回查。本文件按 S35 的 manifest_ref 三字段形状收，因为那是全仓唯一定义；但这个形状目前 S29 发不出来。"
+    }
+  ]
+}

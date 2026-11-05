@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/production.speech-ready.v2.schema.json",
+  "title": "production.speech.ready payload v2",
+  "description": "event `production.speech.ready` 的 data 部分。权威定义在 plans/S31-speech-production.md §6.4（事件体形状，行 1044–1063）+ §4.5（时长三字段的语义，行 458–490）。**本事件最要紧的一点是时长语义**：S31 只能给出「归档音频容器的实测总时长」（`audio_duration_ms`），那是台词跨度的**上界**，不是台词跨度本身；台词跨度要等 S37 的 ASR 对齐（`dialogue_span_ms`，S31 不猜，先填 null）。§12（行 1494）明确要求本 payload 补 schema 就是为了把这个区分固定下来。**不含**音频 URL、音频 bytes、供应商信息、声纹样本引用、授权 evidence_ref（§6.4 行 1065）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有 payload 约定；S31 §6.4 的示例没有画它。"
+    },
+    "speech_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1046。发布此事件的配音作业。"
+    },
+    "voice_take_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1047 + §4.4（VoiceTake 是可变状态，检查点指向它）。**复用不会产生新 take**：§4.4 行 452 说「复用不推进任何东西——它返回一个已有 take，不写 VoiceTake、不推进检查点、不发 ready 事件」。所以一个 take 只对应一次 ready 事件。"
+    },
+    "utterance_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1048 + §6.4 行 1039（旁白场景下 aggregate 用 `utterance_id` 而非 `shot_lineage_id`）。句子级的口语单位 ID。"
+    },
+    "utterance_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S31 §6.4 行 1049（示例 `2`）。该台词在所属镜头内的序号。**minimum 0**：示例是 2（1-based 看起来），但 S31 没有声明从 0 还是从 1 开始——本 schema 不强行设为 1，见 x-needs-owner。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1050 + 行 1039。跨 Run 计数的锚点（S29 §8.2 的 `AttemptCounterKey` 含它）。注意 aggregate 对白场景用 shot_lineage_id、旁白场景用 utterance_id（行 1039）——**同一个事件类型的 aggregate 有两种取值**，见 x-conflicts PSR-1。"
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1051（示例 `zh-CN`）。S31 没有声明取值规范（BCP 47 与否），与 S37 的 `language` 同一处境（见 quality.alignment-completed 的 x-needs-owner）。S38 的字幕排版按语言选规则，写法不一致会让「中文」匹配不上。不收窄为 enum。"
+    },
+    "text_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1052。本次合成所用文本的哈希。配合 `speech_job_id` 与 §4.4 的「复用判断是结构性的：只要输入指纹相同就复用」——消费方可用它判断同一个 take 是否还对应当前文本。S31 未声明是否为 64 位 hex，故不收窄为 pattern。"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "来源：S31 §6.4 行 1053（示例已给完整四字段）。形状与 plans/S28-artifact-ingest.md 行 94 的规范定义一致（与 episode-manifest.v2 的 accepted_artifact_ref 同构）。§4.4 行 449 的复用条件之一是「`artifact_ref` 仍 REFERENCEABLE——S28 可能已 tombstone」，所以这个引用必须能被消费方拿去查 S28。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 —— 归档产物引用恒指向 S28。S31 §6.4 的示例也写 `\"service_id\": \"S28\"`。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S28 行 94。S28 行 94 声明「`revision` 只在 `artifact_id` 内有意义」。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.content_hash。S37 的 ASR 缓存复用「按 audio_track_hash」（S37 §8），而消费方要靠这个 hash 确认拿到的是哪一份音频。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "audio_duration_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S31 §6.4 行 1055（`\"audio_duration_ms\": 3280  // 容器实测，是台词跨度的上界`）+ §4.5 行 478–490。**语义是上界，不是台词跨度**：归档音频里除了台词只可能有静音或轻噪声，所以容器总时长一定 ≥ 真实台词跨度。§4.5 行 486 解释了为什么用上界是安全的：「拿上界去判断放不放得下，最坏结果是多报一点时长，可能让人以为放不下而多要 200ms 镜头；若反过来拿一个估算值，最坏结果是以为放得下而实际截断了台词——那是 E04（不能删台词）的方向」。S30 的 `dialogue_duration_ms` 应消费本字段并理解其上界语义（S31 §4.5 行 1492 已确认这一点）。"
+    },
+    "dialogue_span_ms": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "来源：S31 §6.4 行 1056（`\"dialogue_span_ms\": null`）+ §4.5 行 480。**必须可 null，而且当前恒为 null**：它需要 ASR + 对齐才能算，S31 明确不做（§4.5 行 472–476 的表格逐条说明「为什么 S31 不能给」）。S31 也不缓存它——§4.5 行 488 说「若将来 S37 的报告可以通过引用挂到 take 上（alignment_report_ref），S31 也只存引用，不复制数值。复制就是第二个权威，而且会在 S37 重跑后静默过期」。本字段出现在事件里是为了让形状现在就固定，值留给 S37 后填。"
+    },
+    "dialogue_span_source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1057（`\"dialogue_span_source\": \"pending_s37\"`）+ §12 行 1494（「明确 audio_duration_ms（容器实测，上界）与 dialogue_span_ms（S37 后才能填，前期为 null + dialogue_span_source）」）。**不收窄为 enum**：S31 只给了 `pending_s37` 这一个取值，没有声明它是闭集。它存在的意义是标记 `dialogue_span_ms` 为 null 的原因——null 有三种可能（还没算 / 算过了但没有 / 算错了），S31 用这个字段把「还没算」与其它两种区分开。若收窄成单值 const，将来 S37 填完值后这个字段该写什么就没有定义了。"
+    },
+    "voice_binding": {
+      "type": "object",
+      "description": "来源：S31 §6.4 行 1058（`voice_binding: { \"id\": \"vox_linlan\", \"revision\": 2 }`）。用的是哪个音色绑定的哪一版。**必须是 revision 而不是只有 id**：音色绑定会被修订（S15 的权威），同一 id 不同 revision 是两次不同的合成。S37 的 QAC-3（见 quality.alignment-completed.v2.schema.json）指出 S37 的 ASR 缓存键漏了音色绑定——那是 S37 的问题，S31 在这里至少把值发对了。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S31 §6.4 行 1058。S15 的音色绑定 ID。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S31 §6.4 行 1058（`2`）。绑定版本。"
+        }
+      },
+      "required": [
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "lexicon_ref": {
+      "type": "object",
+      "description": "来源：S31 §6.4 行 1059（`lexicon_ref: { \"id\": \"lex_proj_ep\", \"revision\": 4, \"source_kind\": \"voice_default\" }`）。**发音词典决定了同一段文本怎么念**，所以它必须进事件——否则「为什么这次念对了上次念错了」无法解释。S37 的 QAC-3 正是抱怨它的缓存键没有这个字段。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S31 §6.4 行 1059。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S31 §6.4 行 1059（`4`）。S37 §5 的同名列是 `lexicon_revision integer`（null = 未使用），可为空——但本事件示例里必填。两边的可空性不同，见 PSR-2。"
+        },
+        "source_kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S31 §6.4 行 1059（`\"voice_default\"`）。词典来源类别（项目级 / 音色默认 / 其它）。**不收窄为 enum**：S31 只给了这一个值，没有声明闭集。S31 §4.7 F9 有 `LEXICON_SCOPE_MISMATCH`（「词典 scope 与项目不符」），说明来源类别是有语义的，但取值集合未定。"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "source_kind"
+      ],
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "来源：S31 §6.4 行 1060（`checkpoint: { \"from\": \"vt_00X…\", \"to\": \"vt_01J…\", \"checkpoint_seq\": 3 }`）。与 S30 的 checkpoint 同名同形（`from`/`to`/`checkpoint_seq`），与 S29 的 `from_candidate_id`/`to_candidate_id` 不同——见 PSR-3。",
+      "properties": {
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "来源：S31 §6.4 行 1060。首轮这条台词的检查点为空时必为 null。"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S31 §6.4 行 1060。检查点现在指向的 take，与顶层 `voice_take_id` 同值。"
+        },
+        "checkpoint_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S31 §6.4 行 1060（`3`）。单调递增。S32 在 `production.speech.ready` 到达时作废相关 take（S32 §6.4 行 1120），靠它判新旧。"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "checkpoint_seq"
+      ],
+      "additionalProperties": false
+    },
+    "require_alignment": {
+      "type": "boolean",
+      "description": "来源：S31 §6.4 行 1061 + §4.7 F10（行 496 一带）：「`require_alignment=true` 但路由无词级时间戳能力 → `REJECTED_LOCAL(CAPABILITY_MISSING)`，**不降级为 false**」。这个标志是请求参数的回显，让下游（尤其 S37）知道这条音轨是不是承诺过带词级时间戳。"
+    },
+    "rights_state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S31 §6.4 行 1062（`\"rights_state\": \"usable\"`）+ §4.4 行 449（复用条件之一是 `rights_state == 'usable'`）。**这是发布时刻的权利状态快照，不是永久保证**：S15 的 `asset.voice.authorization.changed` 之后可能撤销，此时 take 变 void（§6.4 行 1068「只用于收紧」）。消费方拿它判断「此刻能不能用」，不能把它当长期凭证。S31 未给闭集（S33/S34 的 rights_state 在各自 DDL 里有 CHECK，S31 没有对应 DDL 列），故不收窄为 enum，见 PSR-4。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "speech_job_id",
+    "voice_take_id",
+    "utterance_id",
+    "utterance_index",
+    "shot_lineage_id",
+    "locale",
+    "text_hash",
+    "artifact_ref",
+    "audio_duration_ms",
+    "dialogue_span_ms",
+    "dialogue_span_source",
+    "voice_binding",
+    "lexicon_ref",
+    "checkpoint",
+    "require_alignment",
+    "rights_state"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "utterance_index",
+      "demanded_by": "plans/S31-speech-production.md §6.4 行 1049（示例 `\"utterance_index\": 2`）",
+      "s31_status": "只有示例里出现过一次，没有一句话说明它是 0-based 还是 1-based、是否在镜头内连续、台词删除后是否重排。本 schema 只约束 `>= 0` 以同时容纳两种可能。它进事件是为了让消费方能按顺序拼台词，若基准不统一，「第 2 句」在两侧会指向不同的句子。"
+    },
+    {
+      "field": "dialogue_span_ms / dialogue_span_source",
+      "demanded_by": "plans/S31-speech-production.md §12 行 1494（建议补 payload schema 明确这两个字段）",
+      "s31_status": "S31 有意让它们在当前恒为 `null` / `\"pending_s37\"`（§4.5 行 480、488）。**这不是缺口，是设计**：S31 拒绝估算台词跨度，因为估错的方向是截断台词（E04）。列在这里是为了提醒实现方——不要因为字段恒为 null 就把它当废弃字段删掉；形状固定下来，值等 S37。同时提醒：S37 填完之后 S31 也不应复制数值（§4.5 行 488），只挂引用。"
+    },
+    {
+      "field": "rights_state 的闭集",
+      "demanded_by": "plans/S31-speech-production.md §6.4 行 1062 + §4.4 行 449",
+      "s31_status": "S31 的事件示例只出现 `\"usable\"`，全文没有列取值集合；S31 也没有对应的 DDL 列（S33 §4 DDL 行 777 与 S34 行 834 都有 `CHECK (rights_state IN ('usable','void','unknown'))`，S31 没有）。两份兄弟计划都已经有闭集，S31 缺。本 schema 不替它定，只收非空字符串。"
+    },
+    {
+      "field": "lexicon_ref.source_kind 的闭集",
+      "demanded_by": "plans/S31-speech-production.md §6.4 行 1059（示例 `\"voice_default\"`）+ §4.7 F9 的 LEXICON_SCOPE_MISMATCH",
+      "s31_status": "示例只给一个值。F9 的存在说明「词典 scope」是有类型的判断依据，但取值集合没有列出。不收窄为 enum。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PSR-1",
+      "summary": "同一事件的 aggregate 在两种场景下取不同字段",
+      "s31": "§6.4 行 1039：`production.speech.ready` 的 aggregate 是 `shot_lineage_id`（旁白为 `utterance_id`）",
+      "why_it_matters": "envelope 的 `aggregate_id` 决定 Kafka 分区键（registry 里 partition_key = `tenant_id:aggregate_id`），所以同一镜头下的不同台词若一条走 shot_lineage_id、一条走 utterance_id，它们会落到**不同分区**——顺序保证只在同一聚合内成立。S31 的选择（对白按镜头、旁白按台词）是有道理的（旁白不属于某个镜头），但消费者必须知道这个划分，否则会假设「同一镜头的所有台词事件有序」。这是 envelope 层的设计，本 payload schema 管不到，记在这里因为它源于这个事件。"
+    },
+    {
+      "id": "PSR-2",
+      "summary": "lexicon_revision 在 S31 事件里必填，在 S37 的 DDL 里可空",
+      "s31": "§6.4 行 1059：`lexicon_ref: {id, revision, source_kind}` 三个都画了；本 schema 按必填收",
+      "s37": "plans/S37-audio-alignment.md §5 DDL 行 165：`lexicon_revision integer`（注释「null = 未使用」）",
+      "why_it_matters": "两边说的是同一件事（合成这段音频用了哪版词典）。S37 允许「没有用词典」，S31 的事件不允许。可能性有两个：S31 的事件示例只画了有词典的情况（则 revision 应可空），或者 S31 的合成路径必然带词典（则 S37 的 null 只是为兼容其它来源）。本 schema 按 S31 自己的示例收（必填），不改。"
+    },
+    {
+      "id": "PSR-3",
+      "summary": "checkpoint 的键名：S29 是 from_candidate_id/to_candidate_id，S30 与 S31 是 from/to",
+      "s29": "plans/S29-image-production.md §4.4 行 380：`{from_candidate_id, to_candidate_id, checkpoint_seq}`",
+      "s30": "plans/S30-video-production.md §6.4 行 965：`{from, to, checkpoint_seq}`",
+      "s31": "plans/S31-speech-production.md §6.4 行 1060：`{from, to, checkpoint_seq}`",
+      "why_it_matters": "三个生产事件、同一种检查点概念、两种键名。消费者（S41 时间线、S47 投影、S09 影响闭包）要同时处理这三种，而 `from`/`to` 单独看不知道指的是哪种候选。S30 的 PVR-4 已单独记过一对；这里补齐三方，因为缺了 S31 会让「少数服从多数」看起来像有依据——实际上三个都应该改成显式的名字。本文件按 S31 自己的示例收。"
+    },
+    {
+      "id": "PSR-4",
+      "summary": "rights_state 在 S33/S34 有闭集，在 S31 没有",
+      "s33": "plans/S33-sound-effects.md §4 DDL 行 777：`CHECK (rights_state IN ('usable','void','unknown'))`",
+      "s34": "plans/S34-music.md §4 DDL 行 834：同样的三值 CHECK",
+      "s31": "§6.4 行 1062 只有示例值 `\"usable\"`，无 DDL 列、无取值集合",
+      "why_it_matters": "三份计划都在说「这个 take 现在能不能用」，两份已经定成同一个三值闭集，S31 还没定。若 S31 后来选了别的值（例如 `revoked` 而不是 `void`），S41 与 S47 处理三种生产产物时就要各写一套映射。建议 S31 直接对齐 S33/S34 的三值。本 schema 不替它定，只收非空字符串。"
+    }
+  ]
+}
