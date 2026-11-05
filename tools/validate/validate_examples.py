@@ -33,6 +33,7 @@ EXAMPLES = os.path.join(CONTRACTS, "examples")
 SCHEMA_OF = {
     "admission": "admission-record.v2.schema.json",
     "admission-unknown": "admission-record.v2.schema.json",
+    "agent-task-completed": "event-envelope.v2.schema.json",
     "artifact-ingested": "event-envelope.v2.schema.json",
     "automation-policy": "automation-policy.v2.schema.json",
     "connector-observation-received": "event-envelope.v2.schema.json",

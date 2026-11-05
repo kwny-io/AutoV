@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 23 个 topic 带**（32 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 24 个 topic 带**（31 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -88,6 +88,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `connector.observation.received` | `connector.observation-received.v2.schema.json` | S27 §6.5 |
 | `continuity.check.completed` | `continuity.check-completed.v2.schema.json` | S17 §5.2 |
 | `context.pack.created` | `context.pack-created.v2.schema.json` | S18 §6.3 |
+| `agent.task.completed` | `agent.task-completed.v2.schema.json` | S19 §4.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -198,6 +199,31 @@ inbox 前全拒，S09 的依赖边一条也建不起来。所以这份 schema �
 用了**同一个** `aggregate_id` 字面量 `series_demo:canon:ep003`，却各自发 `31` 和 `12`——
 按 catalog 的 `tenant_id:aggregate_id` 分区，两个只读服务的序号会在一处交错（CCP-4）。
 
+`agent.task.completed` 是**第七类，也是最空的一类：消费者根本不存在**。前六类都还能指着某处
+说「这里断了」——字段缺、取值缺、信封拦住、闸门排除、名字撞车。这一条不是：S19 §4.3 行 553
+用加粗写了「**只有 S21（编排）与 S44（成本分析）**」，而这两个服务的方案里 grep 这个事件名
+命中 **0 次**——S21 §5.6 的消费表 5 条没有它，S44 §6.3 的消费行 9 条也没有它。同一条链路
+在 S19 自己的 §10.5 行 1167 又要求 S40 消费它建 `ReviewTask`，可 S40 §10.2 的消费行 3 条同样
+没有，反倒在自己的缺口表 G4 里写着「补 task 生命周期事件」——**S40 把「没有这个事件」当成缺口
+登记了**。仓库范围内它只出现在 5 个文件：S19 方案、只读设计包 ×2、`event-topics.v2.json`、
+`service-catalog.v2.json`。后两个是登记表，前两个不产生消费者。所以这份 schema 让事件
+「能被校验」，而它**仍然没有人收**（ATC-1）。§4.3 说「只有两个」、§10.5 又加上第三个，是同一份
+方案内部的自相矛盾。
+
+其余几处都源于「示例只画了一种终态」：§4.3 的示例是 SUCCEEDED 全套值（`result_ref` 非空、
+`data_ref` 非空），而状态机有四个终态，DDL 的 `result_ref` 可空、`task_result_once` 唯一索引
+就建在 `WHERE state = 'SUCCEEDED'` 上——所以另外三种终态**必然**是 `result_ref: null`。照示例
+实现的人会在第一条 FAILED 事件上崩，而 FAILED 恰恰是告警最关心的一类（ATC-2）。`NEEDS_REVIEW`
+还多一层：§3.6 行 404 的守卫要求「必须携带 `unresolved_issues[]`」，可那是 `task_result` 的列，
+不是 `agent_task` 的列，而事件 payload 里没有这个字段——它到底有没有结果行，全文没说。
+`state` 本身也两套：schema 收 4 个终态、DDL 的 CHECK 有 7 个（含三个非终态），两处取值集不同
+而没有任何一处写明这是刻意的（ATC-3）；`stop_reason` 是扁平 12 值，与四个终态之间没有配对
+约束，于是 `state=SUCCEEDED` + `stop_reason=STEP_LIMIT` 能通过校验——而 S19 §8 的告警正是按
+`state` 与 `stop_reason` 两个标签一起立的（ATC-5）。`role` 的 13 值闭集只存在于
+`tools/scaffold/generate_agents.py` 的 `ROLES` 列表里（catalog 里 grep 命中 0），而它是
+路由键（ATC-4）。`usage` 则同名不同量：事件 5 键、查询响应 8 键（ATC-7），链也拼不出——
+发了 `root_task_id` + `correction_round` 却不发 `correction_of_task_id`（ATC-6）。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -299,8 +325,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 23 个 payload schema
-                                                              （见上表；其余 32 个 envelope-only）
+                                        └──data_schema_ref──▶ 24 个 payload schema
+                                                              （见上表；其余 31 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -314,10 +340,10 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 23 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 24 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（40 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（41 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -369,7 +395,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：40 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：41 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

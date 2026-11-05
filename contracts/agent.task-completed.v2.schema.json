@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/agent.task-completed.v2.schema.json",
+  "title": "agent.task.completed payload v2",
+  "description": "event `agent.task.completed` 的 data 部分。权威定义在 plans/S19-agent-runtime.md §4.3（行 522–549，完整示例）、§5.2（行 620–668，`agent_task` DDL）、§4.1（行 462–489，`stop_reason` 枚举与 `cost_state`）、§6.5（行 897–901，终态唯一）。**这条事件是 S19 唯一的出站事件**（§4.4 行 557–562：`agent.task.started` / `agent.step.completed` / `agent.tool.called` 全部不进 Kafka，只进 OTel trace），所以它一份 payload 要同时承担三件事：告诉发起方「任务结束了」、给 S44 提供成本事实、给 S40 提供建 `ReviewTask` 的入口。三件事需要的字段不完全重合，而 §4.3 的示例只画了 SUCCEEDED 一种终态——这是本文件最要紧的一处缺口，见 x-conflicts ATC-2。**事件只带引用不带 `proposal` 正文**（§4.3 行 551）：产物可能几十 KB，且正文是未脱敏剧情，而事件保留 14 天、副本更多。正文走 `data_ref`。**`data_ref` 可以为 null**：FAILED / CANCELLED 的终态没有 `task_result`，envelope 的 `data_ref` 允许 null，本文件不另设字段表达这件事。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§4.3 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 538（示例 `breakdown`）+ §5.2 DDL 行 624（`role text NOT NULL`）+ §5.1 DDL 行 576（`role text NOT NULL,  -- 13 个注册角色之一`）。**刻意不收 enum**：13 个角色的唯一机器可读登记处是 `tools/scaffold/generate_agents.py` 的 `ROLES` 列表（generator，不是契约），`contracts/service-catalog.v2.json` 一处都没有（grep `\"role\"` 命中 0），`agents/<role>/agent.yaml` 是**从那个列表生成**的产物。把 13 值写进 schema 等于让一个脚手架脚本成为角色权威，而 §11 C7 正指出「工具注册表归属未定」是同一类问题。§11 行 1199 还有一条待决：是否按角色拆 topic——那会改 `partition_key` 语义，说明角色集本身还在讨论。见 x-conflicts ATC-4。**它是路由键**（§5.1 行 283：按 `role` 投到 `agent-<role>` 队列），所以拼写必须稳定；不一致会让同一个角色的任务落到两套 Deployment。"
+    },
+    "state": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "NEEDS_REVIEW",
+        "CANCELLED"
+      ],
+      "description": "来源：§4.3 行 539（示例 `SUCCEEDED`）+ §5.2 DDL 行 634–635（`state text NOT NULL CHECK (state IN ('ACCEPTED','RUNNING','CANCELLING','SUCCEEDED','FAILED','NEEDS_REVIEW','CANCELLED'))`）+ §6.5 行 899（「每个任务最多 1 条 `agent.task.completed`（终态唯一）」）+ §6.4 行 891（取消也要等「全部在途调用终态后」才发）。**这是本文件唯一一处刻意窄于 DDL 的字段**：DDL 的 CHECK 有 7 值（含三个非终态 `ACCEPTED`/`RUNNING`/`CANCELLING`），而这条事件只在终态发。收 7 值会让一个「任务还在跑」的通知通过校验——那是语义上不可能的 payload，且会让 S44 的成本事实把中间态计入。收 4 值是把 §6.5 的「终态唯一」写成机器可读。代价是 schema 与 DDL 的取值集不同，DDL 侧仍拦不住脏值，见 x-conflicts ATC-3。**四个终态都是 §3.6 状态机的落点**（行 395 的方框图 + 行 400–407 的迁移表），没有第五个。"
+    },
+    "stop_reason": {
+      "enum": [
+        "GOAL_REACHED",
+        "STRUCTURE_INVALID",
+        "STEP_LIMIT",
+        "TOKEN_LIMIT",
+        "TIME_LIMIT",
+        "COST_LIMIT",
+        "POLICY_DENIED",
+        "GENERATION_FAILED",
+        "GENERATION_UNKNOWN",
+        "TOOL_DENIED_REPEATEDLY",
+        "USER_CANCELLED",
+        "UNRESOLVED_CONFLICTS"
+      ],
+      "description": "来源：§4.1 行 489 逐字列出的 12 个值 + §4.3 行 540（示例 `GOAL_REACHED`）+ §5.2 DDL 行 636（`stop_reason text,`，**可空**）。**这里必填而非可空**：DDL 允许 NULL 是因为表里同时存着非终态行（`ACCEPTED` 时的 `stop_reason` 就是 NULL），而这条事件只携终态；§3.6 行 403 的守卫明写 `RUNNING→FAILED` 必须「已写 `stop_reason`」，§6.4 行 888 也规定取消时写 `USER_CANCELLED`。四个终态各有落点：`SUCCEEDED`→`GOAL_REACHED`；`FAILED`→中间九个之一；`NEEDS_REVIEW`→`UNRESOLVED_CONFLICTS`（§3.6 行 404 的守卫「必须携带 `unresolved_issues[]`」）；`CANCELLED`→`USER_CANCELLED`。**但 schema 表达不了这层配对**：`state=SUCCEEDED` + `stop_reason=STEP_LIMIT` 会被本文件接受。§4.1 只给了扁平枚举，没有给「哪个 state 允许哪些 reason」的表，见 x-conflicts ATC-5。"
+    },
+    "root_task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 541（示例 `agt_01J...`）+ §5.2 DDL 行 628（`root_task_id text NOT NULL`）+ §3.4 行 366（「`agent_task.root_task_id` 指向 round 0 的任务」）。round 0 的任务里它等于自身（DDL 行 666 的 `CHECK (task_id = root_task_id OR correction_of_task_id IS NOT NULL)`）。**它让消费方把一条终态事件归并到「一次分场」**：§3.4 行 366 说根任务可聚合查询整条纠正链的费用，S44 要靠它把 2–3 条独立结算合成「一次分场到底花了多少」。`root_task_id` 单独不构成链——见 ATC-6。"
+    },
+    "correction_round": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "来源：§4.3 行 542（示例 `0`）+ §5.2 DDL 行 630（`correction_round integer NOT NULL DEFAULT 0 CHECK (correction_round BETWEEN 0 AND 2)`）+ §2.7（`CORRECTION_LIMIT_REACHED` 是 422：再试一万次也还是三环）+ §3.8 不变量 6（行 441）。`maximum: 2` 逐字照搬 DDL 的 CHECK。**这不是「重试次数」**：S19 的同任务步骤重试不改它（§3.9 行 447），它是**纠正链**的深度，每一环是一个新的 `task_id`、独立结算（§3.4 行 366）。§7 行 1076–1080 的用例 T19-23..T19-27 里没有任何一条会越过 2。"
+    },
+    "result_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "content_hash"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "来源：§4.3 行 543（示例 `{\"id\":\"res_01J...\",\"revision\":1,\"content_hash\":\"sha256:...\"}`）+ §5.2 DDL 行 643（`result_ref jsonb,`，**可空**）+ §5.6 DDL（`task_result` 表，`UNIQUE (tenant_id, task_id)`）。**必须允许 null**：只有 `SUCCEEDED` 才有 `task_result`（§5.2 行 667 的 `task_result_once` 唯一索引就建在 `WHERE state = 'SUCCEEDED'` 上）；`FAILED` / `CANCELLED` / `NEEDS_REVIEW` 都没有行可指。§4.3 的示例只画了 SUCCEEDED，这是本文件如实补上的第二种形态，见 ATC-2。**注意 `revision` 恒为 1**：`task_result` 的主键是 `(tenant_id, result_id, revision)` 但 `UNIQUE (tenant_id, task_id)` 保证一个任务只有一行，§3.8 不变量 1 说「`task_result` 一旦写入不可变」，所以 revision 永远停在 1；这里仍收 `minimum: 1` 而不是 `const: 1`，因为那是 DDL 形状而非事件语义。哈希写裸 64 位小写 hex（DDL `char(64)` 装不下 `sha256:` 前缀），与全仓库一致；§4.3 行 543 的 `sha256:...` 是同一处全局不一致的又一例，不在此重复登记（见 PDL-5 / PRD-4）。"
+    },
+    "usage": {
+      "type": "object",
+      "description": "来源：§4.3 行 544（示例 5 个键）+ §5.2 DDL 行 645–649（`steps_used` / `tokens_in` / `tokens_out` / `cost_micro` / `cost_state`，五列各自 `NOT NULL DEFAULT 0` 或带 CHECK）+ §1.6（成本事实的门槛）。**这是 §4.1 那个 `usage` 的子集**：§4.1 行 476–484 的查询响应有 8 个键（多了 `wall_seconds` / `tool_calls` / `tool_denials`），事件只发 5 个。差额不是笔误——那三个在 `agent_task` 表里**没有列**（`wall_seconds` 可由 `created_at`/`finished_at` 推出，`tool_calls`/`tool_denials` 要聚合 `tool_call_audit`），所以事件要发它们就得现算。代价是 S44 拿不到工具调用与拒绝次数，见 x-conflicts ATC-7。**`cost_micro` 不是权威金额**：§1.6 行 95–100 三条禁令写明它不能对账、不能跨任务求和当租户花费、不能因为低于上限就认为还有钱；权威在 S23。",
+      "properties": {
+        "steps_used": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§4.3 行 544（示例 `7`）+ §5.2 DDL 行 645（`steps_used integer NOT NULL DEFAULT 0`）+ §5.3 DDL（`agent_step.step_index` 从 0 连续递增）。`minimum: 0`：一个在准入后就失败的终态任务走了 0 步。**`step_index` 连续**（§3.8 不变量 2 行 439：跳号即 bug），所以它也等于「最后一步的 index + 1」。"
+        },
+        "tokens_in": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§4.3 行 544（示例 `51200`）+ §5.2 DDL 行 646（`tokens_in integer NOT NULL DEFAULT 0`）。累计入口 token，来自 `agent_step.tokens_in` 的求和（§5.3 行 700）。"
+        },
+        "tokens_out": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§4.3 行 544（示例 `8100`）+ §5.2 DDL 行 647（`tokens_out integer NOT NULL DEFAULT 0`）。与 `tokens_in` 分开而不是合成一个总量：`max_tokens` 闸（§3.5 行 373）判的是「in+out 之和」，而 S44 的单价是分开计的——合成一个数就再也拆不开。"
+        },
+        "cost_micro": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§4.3 行 544（示例 `182000`）+ §5.2 DDL 行 648（`cost_micro bigint NOT NULL DEFAULT 0`）+ §3.8 不变量 3（行 440：「终态任务的 `cost_micro` 只增不减」）。**微单位整数**，不是浮点：§1.6 的禁令要求它可累加而不产生舍入漂移。`minimum: 0` 而非更大值——`POLICY_DENIED` / `STRUCTURE_INVALID` 的终态可以一分钱没花。**注意它可以继续增长**：`cost_state` 为 `PROVISIONAL` 时迟到结算还会加，所以下游看到的值是快照而非终值。"
+        },
+        "cost_state": {
+          "enum": [
+            "PROVISIONAL",
+            "FINAL"
+          ],
+          "description": "来源：§4.3 行 544（示例 `FINAL`）+ §5.2 DDL 行 649（`cost_state text NOT NULL DEFAULT 'PROVISIONAL' CHECK (cost_state IN ('PROVISIONAL','FINAL'))`）+ §4.1 行 489（「**只有 `FINAL` 能被 S44 当成本事实引用**」）+ §1.6。**这是整条事件里唯一一个会让下游算出错数的字段**：S44 若把 `PROVISIONAL` 的 `cost_micro` 计入成本投影，迟到的结算会使同一笔钱被算两次或漏算。§6.4 行 891 还规定取消时「在途的 S26 调用继续跑完并结算」，所以一条 `CANCELLED` 事件完全可能带 `PROVISIONAL`——取消不等于费用已定。"
+        }
+      },
+      "required": [
+        "steps_used",
+        "tokens_in",
+        "tokens_out",
+        "cost_micro",
+        "cost_state"
+      ],
+      "additionalProperties": false
+    },
+    "node_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 545（示例 `shot_3_2.script`）+ §2.1 行 122（execution-context 的同一字段）+ `contracts/execution-context.v2.schema.json`（`node_id` required, `minLength: 1`）。**它来自创建时刻的 `execution_context`，不是执行时刻的**：§3.9 行 449 说 S19 只读这两个游标「用于给结果打标」，从不推进它们。所以对于一条跨越了 epoch 推进的长时间任务，事件里的 `node_epoch` 是**发起时**的值，不是结束时的——见 ATC-6。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.3 行 545（示例 `4`）+ §3.9 行 447–449 + AGENTS.md 速查表（`node_epoch` 作用域 = 单个 `logical_node`，用途 = 局部重生成）。`minimum: 1` 与 `execution-context.v2.schema.json`、`generation.job-state-changed.v2.schema.json` 一致。**S19 既不产生也不推进它**（§3.9 行 447 粗体），这里只是把创建时 pin 的值带出来。AGENTS.md 的硬规则「旧 epoch 的结果永远不能推进当前接受指针」意味着**消费方必须拿它与当前值比对**，不能因为事件里带着它就认为结果有效——§3.9 行 449 明说判定归发起方（S08 §2.1 的 `STALE_DECISION`），S19「不替它判，也不缓存这个判断」。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.3 行 545（示例 `2`）+ §3.9 行 447–449 + AGENTS.md 速查表（`execution_fence` 作用域 = run / branch，用途 = 取消、故障切换）。`minimum: 1` 与兄弟 schema 一致。**不能与 `node_epoch` 混用**（AGENTS.md：「两者不能混用」）：fence 推进表示整个 run 换了执行、旧尝试全部作废；epoch 推进表示只重做这一个节点。S19 对两者的关系只在 §3.9 行 451 给了一条具体禁令——收到 `manifest.committed` 不得主动取消任务，因为「S19 一取消就分不清用户取消与 epoch 推进」。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "role",
+    "state",
+    "stop_reason",
+    "root_task_id",
+    "correction_round",
+    "result_ref",
+    "usage",
+    "node_id",
+    "node_epoch",
+    "execution_fence"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`state` 与 `stop_reason` 的合法配对表",
+      "demanded_by": "plans/S19-agent-runtime.md §4.1 行 489（扁平 12 值枚举）、§3.6 行 400–407（四个终态的迁移守卫）、§6.4 行 888/891（取消写 `USER_CANCELLED`）",
+      "s19_status": "§4.1 只把 `stop_reason` 的 12 个值并列出来，没有说明哪个 `state` 允许哪些 `reason`。§3.6 与 §6.4 的描述里能推出四条意图（SUCCEEDED→GOAL_REACHED、NEEDS_REVIEW→UNRESOLVED_CONFLICTS、CANCELLED→USER_CANCELLED、FAILED→其余九个），但**没有任何一处把这些写成表**，也没有说 SUCCEEDED 是否可能带 NO 之外的 reason。本 schema 无法表达跨字段约束，所以 `state: SUCCEEDED` + `stop_reason: STEP_LIMIT` 会被接受——而这一条恰恰是 S44 会把「成功」计入「撞闸」的那一格。要补需要 owner 定配对表，并把 §4.1 行 489 那句话扩成两列。"
+    },
+    {
+      "field": "`usage` 是否应携带 `wall_seconds` / `tool_calls` / `tool_denials`",
+      "demanded_by": "plans/S19-agent-runtime.md §4.1 行 476–484（查询响应有 8 个用量键）、§4.3 行 544（事件只有 5 个）、§5.2 DDL 行 645–649（只有 5 列）、§5.3 的 `agent_step`、§5.4 的 `tool_call_audit`",
+      "s19_status": "两个 `usage` 对象同名不同量：§4.1 的查询响应含 `wall_seconds`（可由 `created_at`/`finished_at` 推出）、`tool_calls` 与 `tool_denials`（须聚合 `tool_call_audit`），§4.3 的事件只有落表的那 5 个。事件要补齐就得在终态事务里多跑一次聚合或在 outbox 里存派生值——两者都会让「终态写入」这一步变重。缺口的下游是 S44：§11 C1 已经记了「评测产生的推理成本归属」待决，而工具拒绝率（`TOOL_DENIED_REPEATEDLY` 的分布）是判断「定义退化」的指标之一（§8 行 1005 的告警就是按 `stop_reason` 占比立的）。要定的是：事件补这三个派生值，还是 S44 一律经 `GET /agent-tasks/{id}` 回查——后者与 §4.3 行 553 的「S05/S06 不消费事件、同步等待结果」是同一个取舍方向。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "ATC-1",
+      "summary": "S19 点名了三个消费者，而这三个服务的方案里都没有订阅这条事件——仓库范围内它一个消费者都没有登记",
+      "producer_claim": "plans/S19-agent-runtime.md §4.3 行 553：「消费者：**只有 S21（编排）与 S44（成本分析）**」；§10.5 行 1167：「S40 从 `agent.task.completed`（`state=NEEDS_REVIEW`）建 `ReviewTask`」——三个服务，两种说法（§4.3 说「只有」两个，§10.5 又加了第三个）",
+      "s21_side": "plans/S21-orchestration.md §5.6 行 881–889 的「消费的事件」表列 5 条：`generation.job.state-changed`、`snapshot.manifest.committed`、`scheduler.permit.changed`、`review.decision.recorded`、`change.plan.applied`。**没有 `agent.task.completed`**。全文 grep 该事件名命中 0 次",
+      "s44_side": "plans/S44-evaluation-analytics.md §6.3 行 659 的「消费」行列 9 条：`finance.ledger.entry-posted`、`generation.job.state-changed`、四条 QC、`review.decision.recorded`、`snapshot.manifest.committed`、`delivery.package.published`。**没有 `agent.task.completed`**。全文命中 0 次",
+      "s40_side": "plans/S40-human-review.md §10.2 行 653 的「消费」行列 3 条：`snapshot.manifest.committed`、`policy.revision.published`、`access.grant.changed`。**没有 `agent.task.completed`**。全文命中 0 次。§10 缺口表 G4 行 671 反而写着「事件只声明 `review.decision.recorded`」→「待审队列、超时告警无法事件驱动」→ 建议「补 task 生命周期事件」——S40 自己把「没有任务生命周期事件」当成缺口登记了",
+      "measured": "仓库范围内 `agent.task.completed` 只出现在 5 个文件：`plans/S19-agent-runtime.md`、`docs/design-package/SERVICE-SPECIFICATIONS.md` 行 757、`docs/design-package/services/S19-agent-runtime.md`、`contracts/event-topics.v2.json` 行 205、`contracts/service-catalog.v2.json` 行 430。后两者是登记表，前两者是只读设计包与 S19 自己的方案——**没有任何一个消费方的方案提到它**",
+      "why_it_matters": "这是前六类缺口之外的新形态：不是字段缺、不是取值缺、不是信封拦住了生产者、不是消费者闸门排除了生产者、不是名字撞车——是**消费者根本不存在**。后果分三档：(1) S44 若真要按 §4.1 行 489 的 `cost_state=FINAL` 取成本事实，它现在没有任何路径拿到——它订阅的是 `finance.ledger.entry-posted`，而 S19 的推理成本走的是 S26 的 `generation.job.state-changed`（§11 C5 说预算按 `generation` 报），所以 Agent 推理费在 S44 的投影里可能已被计入、也可能重复计入，取决于 S26 与 S19 的边界，而没有任何一处写明；(2) S40 §10.5（S19 侧）与 S40 §10 缺口表 G4（S40 侧）对同一件事给出相反判断，两边的实现者会做出不同选择；(3) §4.3 行 553 用「**只有**」把 S40 排除在外，而 §10.5 行 1167 又要求 S40 消费它建 `ReviewTask`——同一份方案内部自相矛盾。**本 schema 只让这条事件能被校验，它仍然没有消费者**。要定的是：谁订阅、S40 是否真的从事件建 `ReviewTask`（还是改由发起方驱动）、以及 Agent 推理成本到底归 S26 的结算还是 S19 自己的 `cost_micro`。"
+    },
+    {
+      "id": "ATC-2",
+      "summary": "§4.3 的示例只画了 SUCCEEDED 一种终态，另外三种终态的 payload 形状没有任何示例",
+      "example": "plans/S19-agent-runtime.md §4.3 行 537–546：`state: SUCCEEDED`、`stop_reason: GOAL_REACHED`、`result_ref` 非空、`data_ref` 非空——一套完整值",
+      "other_terminals": "§3.6 行 395 的方框图给出四个终态（SUCCEEDED / FAILED / NEEDS_REVIEW / CANCELLED）；§6.4 行 891 说取消也发同一条事件（`state=CANCELLED`）；§10.5 行 1167 说 S40 从 `state=NEEDS_REVIEW` 建 `ReviewTask`；§7 行 1076–1082 的用例 T19-23..T19-29 覆盖四种终态的触发条件",
+      "ddl": "§5.2 行 643 `result_ref jsonb,` —— 可空；行 636 `stop_reason text,` —— 可空；行 667 `task_result_once` 唯一索引建在 `WHERE state = 'SUCCEEDED'` 上，说明只有一种终态有结果行",
+      "why_it_matters": "`result_ref` 在 FAILED / CANCELLED / NEEDS_REVIEW 三种终态下必然为 null，而 §4.3 的示例把它画成一个必有对象。照示例实现的消费者会在第一条 FAILED 事件上崩（`event['data']['result_ref']['id']`）——而 FAILED 恰恰是 §8 行 1005 告警最关心的一类。`data_ref` 同理：envelope 允许 null，S19 的示例非空，没有一处说 FAILED 时该填什么。本文件把 `result_ref` 定义成 `oneOf [object, null]` 是在**如实反映 DDL 与终态语义**，不是在替 S19 设计；但 `NEEDS_REVIEW` 那一种还有额外不确定性：§3.6 行 404 守卫说「必须携带 `unresolved_issues[]`」，而 `unresolved_issues` 在 `task_result` 表里（§5.6 行 764），不是 `agent_task` 的列——所以 NEEDS_REVIEW 到底有没有 `task_result` 行？若没有，`unresolved_issues` 装在事件哪里？§4.3 的 payload 没有这个字段。要定的是：NEEDS_REVIEW 是否写 `task_result`（那样 `result_ref` 非空且 `unresolved_issues` 可回查），还是事件必须内联 `unresolved_issues`。"
+    },
+    {
+      "id": "ATC-3",
+      "summary": "`state` 在本 schema 里是 4 值（终态），在 DDL 里是 7 值，两处取值集不同且没有一处声明这是刻意的",
+      "schema_side": "本文件 `state` 收 4 值：`SUCCEEDED` / `FAILED` / `NEEDS_REVIEW` / `CANCELLED`",
+      "ddl_side": "plans/S19-agent-runtime.md §5.2 行 634–635：`CHECK (state IN ('ACCEPTED','RUNNING','CANCELLING','SUCCEEDED','FAILED','NEEDS_REVIEW','CANCELLED'))` —— 7 值",
+      "rule": "§6.5 行 899：「每个任务最多 1 条 `agent.task.completed`（终态唯一）。`aggregate_sequence` 从 1 开始每次终态 +1」；§4.4 行 557：「S19 **不发布**任何过程性事件」",
+      "why_it_matters": "两处取值集不同本身不违反任何规则（DDL 管表、schema 管事件），但它制造了一个**漏斗两侧不对称**：库里能存 7 种状态，事件只能带 4 种。如果 S19 的实现者照 DDL 写枚举、在终态判断里漏了一个分支（例如把 `CANCELLING` 误当终态发出去），schema 会拒绝——这是好事。但如果实现者照 schema 写、把库里的 `state` 直接塞进事件而不等终态，那 schema 拦得住，可 `ACCEPTED` 的任务永远发不出事件也永远不报错——静默丢事件。真正的风险是**反方向**：DDL 侧没有反向约束说「非终态行不得进 outbox」，而 outbox 的 `event_type` 列只有一个值（§5.7 行 777），所以一条误写的 `ACCEPTED` 事件会一路流到 Kafka 才被消费方发现。本文件选择 4 值是让 schema 表达 §6.5 的意图，代价是 DDL 与 schema 的取值集需要各自维护。要定的是：是否把这条差异写进 §5.2 的注释（`-- 事件只发后 4 个终态`），以及 S19 侧是否需要在写 outbox 前断言 `state IN (四个终态)`。"
+    },
+    {
+      "id": "ATC-4",
+      "summary": "13 个角色的闭集只存在于一个脚手架脚本里，没有任何契约登记它，而 `role` 是路由键",
+      "ddl_comment": "plans/S19-agent-runtime.md §5.1 行 576：`role text NOT NULL,  -- 13 个注册角色之一` —— 「注册角色」但没说是哪个登记处",
+      "only_registry": "`tools/scaffold/generate_agents.py` 的 `ROLES` 列表：producer、writer、breakdown、storyboard-director、asset-curator、memory-extractor、continuity-reviewer、prompt-director、qc-reviewer、repair-planner、editor、sound-director、conversation-editor（13 个）",
+      "not_in_catalog": "`contracts/service-catalog.v2.json` grep `\"role\"` 命中 0 次；`agents/<role>/agent.yaml` 13 份是**从该脚本生成**的产物（`python tools/scaffold/generate_agents.py` 输出「wrote 13 agents」）",
+      "docs08": "docs/08-agents-prompts.md 行 5 用散文列出同样 13 个名字，同样是散文",
+      "why_it_matters": "`role` 不是装饰性字段——§5.1 行 283 说 S19 的调度器「按 `role` 把任务投到 `agent-<role>`」，§2.4 行 178 说「`role` 必须是注册的 13 个之一」，§5.1 行 587 的 `UNIQUE (tenant_id, role)` 让一个角色只能有一个定义容器。**名册的唯一机器可读来源是一个生成脚本**：改 `ROLES` 会静默让 13 份 agent.yaml 重新生成，却不会改任何契约；反过来，若某个服务实现了自己的角色白名单（S44 §7 行 472 的 `evaluator_ref` 提到「可能是 S19 agent」），两边就会漂移。§11 C7 记着同一类问题：「`contracts/mcp-tools.v2.design.json` 的 12 个工具是设计期名字，没有 `permission_key` 映射……没有它，§3.2 的定义期校验无法实现，只能硬编码角色名」——角色名册是它的孪生问题。本 schema 收非空字符串，把闭集留给 owner。要定的是：角色名册是否升格为契约（新增 `contracts/agents/role-registry.v2.json`），以及它是否与工具注册表 C7 放在同一处。"
+    },
+    {
+      "id": "ATC-5",
+      "summary": "`stop_reason` 是扁平 12 值枚举，与 4 个终态之间没有配对约束，任何组合都能通过校验",
+      "enum_source": "plans/S19-agent-runtime.md §4.1 行 489：`GOAL_REACHED`、`STRUCTURE_INVALID`、`STEP_LIMIT`、`TOKEN_LIMIT`、`TIME_LIMIT`、`COST_LIMIT`、`POLICY_DENIED`、`GENERATION_FAILED`、`GENERATION_UNKNOWN`、`TOOL_DENIED_REPEATEDLY`、`USER_CANCELLED`、`UNRESOLVED_CONFLICTS`",
+      "pairing_hints_only": "§3.6 行 403 `RUNNING→FAILED` 守卫「已写 `stop_reason`」（不指定哪一个）；行 404 `RUNNING→NEEDS_REVIEW` 守卫「必须携带 `unresolved_issues[]`」；§6.4 行 888 取消时「写 `stop_reason='USER_CANCELLED'` 的草案」；§3.5 行 372–375 四道闸各自映射一个 `FAILED(...)`",
+      "why_it_matters": "`stop_reason` 的消费价值全在**条件概率**上：§8 行 1005 的告警是「`s19_task_total{state=\"FAILED\",stop_reason=\"STRUCTURE_INVALID\"}` 占比 > 15%/1h」——它把 state 与 reason 一起当标签用，说明两者的组合是有意义的格子。§4.1 的枚举把这个格子表压平成了一维列表。后果：`state=SUCCEEDED, stop_reason=STEP_LIMIT` 会被本文件接受，而它会让那条告警的分母与分子同时失真（成功计入撞闸）。本 schema 不能表达跨字段约束（JSON Schema 的 `if/then` 可以写，但那等于替 S19 编一张它没写的表）。要定的是：把 §4.1 行 489 扩成「state → 允许的 reason 列表」两列，schema 再据此加 `allOf`/`if-then`。"
+    },
+    {
+      "id": "ATC-6",
+      "summary": "`root_task_id` + `correction_round` 让消费方能看见链的深度，但拼不出链——缺 `correction_of_task_id`；且 fence/epoch 是发起时的值",
+      "fields_present": "§4.3 行 541–542：`root_task_id`、`correction_round`",
+      "field_absent": "§5.2 DDL 行 629 有 `correction_of_task_id text,` —— **事件不发这个字段**",
+      "chain_query": "§3.4 行 366：`GET /agent-tasks/{id}` 返回 `chain: [{task_id, round, cost_micro, state}]` —— 这是**查询接口**，不是事件",
+      "stamping_rule": "§3.9 行 449：「`agent_task.execution_context` 带着**创建时刻**的 `execution_fence` 与 `node_epoch`，用于给结果打标」",
+      "why_it_matters": "两件事都影响 S44 与 S40。(1) **链拼不出**：S44 要回答「一次分场到底花了多少」（§3.4 行 366 的原话），需要把 round 0/1/2 三条独立事件归并。`root_task_id` 给了归属，`correction_round` 给了序号，但没有 `correction_of_task_id` 就**不知道上一条是谁**——只能按 `root_task_id` 全表扫，且无法判断链上是否有断裂（例如 round 1 失败后调用方没发 round 2，round 2 其实是另一条链）。若两条纠正链共享同一个 root（产品上不可能，但 DDL 的 `CHECK` 只保证「要么等于 root 要么有 correction_of」，不保证链唯一），按 root 归并会把它们混成一条。(2) **游标是旧值**：一条跑了 5 分钟、期间 `node_epoch` 被推进的任务，事件里带的是发起时的 epoch。消费方若拿事件里的 epoch 与当前值比对判有效性，得到的是「结果基于旧 epoch」——这是对的，因为结果确实是基于旧 epoch 算的；但如果消费方以为事件里的 epoch 是「产出时刻」的值，判断就反了。§3.9 行 449 说判定归发起方，可发起方若已超时不在场（§4.3 行 553 提到「事件到了但调用方已超时」的双路径问题），就没有人做这个判断。要定的是：事件是否补 `correction_of_task_id`，以及是否需要一个显式的「产出时游标」字段来区分「发起时」与「完成时」。"
+    },
+    {
+      "id": "ATC-7",
+      "summary": "`usage` 在事件与查询响应里同名不同量：8 个键 vs 5 个键，事件缺 `wall_seconds` / `tool_calls` / `tool_denials`",
+      "event": "plans/S19-agent-runtime.md §4.3 行 544：`{\"steps_used\":7,\"tokens_in\":51200,\"tokens_out\":8100,\"cost_micro\":182000,\"cost_state\":\"FINAL\"}` —— 5 个",
+      "query": "§4.1 行 476–484：同一段 JSON 里的 `usage` 有 8 个键，多 `wall_seconds`（`96`）、`tool_calls`（`4`）、`tool_denials`（`1`）",
+      "ddl": "§5.2 行 645–649 只有 5 列；`wall_seconds` 须由 `created_at`/`finished_at` 推出，`tool_calls`/`tool_denials` 须聚合 §5.4 的 `tool_call_audit`",
+      "why_it_matters": "同名两个对象、键集不同，是「消费者拿同一个字段名从两条路径得到不同形状」——程序上会表现为一条路径读 `usage.tool_denials` 得到 1、另一条得到 KeyError，而两边都认为自己读的是「用量」。更实质的是 S19 自己的一致性判断：§8 行 1005 的两条告警分别是 `stop_reason=\"STRUCTURE_INVALID\"` 占比与 §8.4 的每日对账（「跳号检测」），前者靠 `stop_reason`、后者靠 `agent_step`，都不需要这三项；但 §1.5 的三道门（工具调用）产生的拒绝次数只在 `tool_call_audit` 里，事件不带就得回查。要定的是：事件补这三项（代价是终态事务里多一次聚合），或明确「事件用量 = 表列子集，其余一律回查」，并把 §4.1 与 §4.3 的 `usage` 改成两个不同的名字（例如 `usage` 与 `usage_summary`）以免同名歧义。"
+    }
+  ]
+}
