@@ -37,6 +37,7 @@ SCHEMA_OF = {
     "artifact-ingested": "event-envelope.v2.schema.json",
     "asset-binding-set-created": "event-envelope.v2.schema.json",
     "automation-policy": "automation-policy.v2.schema.json",
+    "change-plan-applied": "event-envelope.v2.schema.json",
     "connector-observation-received": "event-envelope.v2.schema.json",
     "context-pack": "context-pack.v2.schema.json",
     "context-pack-created": "event-envelope.v2.schema.json",

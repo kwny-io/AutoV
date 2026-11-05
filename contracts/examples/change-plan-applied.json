@@ -1,0 +1,89 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBE5A2D4F6H8K0M2P4R6T8V0",
+  "source": "S07",
+  "type": "change.plan.applied",
+  "subject": "change-plan/change_01JBE5G7B3E5H9K2M6Q0U4X8Z1",
+  "time": "2026-11-06T09:41:00Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "change_01JBE5G7B3E5H9K2M6Q0U4X8Z1",
+  "aggregate_sequence": 1,
+  "correlation_id": "cmd_01JBE5F6A2D4G7J1N5R9V3Y6Z0",
+  "causation_id": "cmd_01JBE4D1F3H5J7L9N1P3R5T7V9",
+  "traceparent": "00-9a2c5e8b1d4f7a0c3e6b9d2f5a8c1e4b-9a2c5e8b1d4f7a0c-01",
+  "data": {
+    "schema_version": "2.0",
+    "plan_id": "change_01JBE5G7B3E5H9K2M6Q0U4X8Z1",
+    "plan_hash": "3e5a7c9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c",
+    "base_manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 12,
+      "content_hash": "8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a"
+    },
+    "new_manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 13,
+      "content_hash": "c1e3a5b7d9f1c3e5a7b9d1f3c5e7a9b1d3f5c7e9a1b3d5f7c9e1a3b5d7f9c1e3"
+    },
+    "execution_fence": 2,
+    "changed_node_epochs": [
+      {
+        "node_id": "shot_3_2.video",
+        "from": 4,
+        "to": 5
+      },
+      {
+        "node_id": "shot_3_2.keyframe",
+        "from": 2,
+        "to": 3
+      },
+      {
+        "node_id": "ep3.edl",
+        "from": 1,
+        "to": 2
+      },
+      {
+        "node_id": "ep3.subtitle_timing",
+        "from": 1,
+        "to": 2
+      },
+      {
+        "node_id": "ep3.mix",
+        "from": 1,
+        "to": 2
+      },
+      {
+        "node_id": "ep3.master",
+        "from": 1,
+        "to": 2
+      }
+    ],
+    "regenerate_node_ids": [
+      "shot_3_2.video",
+      "shot_3_2.keyframe"
+    ],
+    "recheck_node_ids": [
+      "ep3.subtitle_timing",
+      "ep3.mix"
+    ],
+    "reuse_artifact_refs": [],
+    "affected_episode_ids": [
+      "ep3"
+    ],
+    "memory_checkpoint_before": {
+      "commit_sequence": 27,
+      "content_hash": "2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d"
+    },
+    "memory_checkpoint_after": {
+      "commit_sequence": 29,
+      "content_hash": "5c7e9a1b3d5f7c9e1a3b5d7f9c1e3a5b7d9f1c3e5a7b9d1f3c5e7a9b1d3f5c7e"
+    },
+    "estimated_cost_upper_micro": 900000,
+    "currency": "USD",
+    "saga_id": "saga_01JBE5H8C4F6J0L3N7R1V5Y9Z2",
+    "applied_at": "2026-11-06T09:41:00Z"
+  },
+  "data_ref": null
+}

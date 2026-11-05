@@ -72,6 +72,7 @@
       "topic": "drama.change-management.v2",
       "producer": "S07",
       "schema_ref": "event-envelope.v2.schema.json",
+      "data_schema_ref": "change.plan-applied.v2.schema.json",
       "partition_key": "tenant_id:aggregate_id",
       "delivery": "at_least_once",
       "normal_retention_days": 14,
