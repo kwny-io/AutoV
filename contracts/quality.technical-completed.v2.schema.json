@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality.technical-completed.v2.schema.json",
+  "title": "quality.technical.completed payload v2",
+  "description": "event `quality.technical.completed` 的 data 部分。权威定义在 plans/S35-technical-qc.md §7（事件体示例）与 §2.3（QCReport 结构）；本文件只是把那份定义变成可校验的形状。事件刻意只带路由与决策所需字段——完整报告走 envelope 的 data_ref 回查（S35 §7 末段、docs/04「完整剧本/媒体不放普通事件」）。S39 是唯一消费者，它从本 payload 只读 artifact_sha256 做一致性比对（S39 §4.2 步骤 2c），其余字段供分流与排障；不读这里的字段去重建报告。本 schema 不含任何从消费方散文推断的字段；S35 里没有出处的字段见 x-needs-owner。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有约定（见 contracts/examples/artifact-ingested.json）。S35 §7 的示例没有画它，但每个已发布的 payload schema 都带，缺了它消费方无法判断用哪一版解析。"
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（required）+ §2.5 派生规则 `\"qc_\" + base32_lower(derived_key)[0:26]`（行 646）。S35 只在示例里写成 `qc_…`，没有把前缀写成约束，故此处不收窄为 pattern——收窄会拒掉 S35 自己没禁止的形式。"
+    },
+    "report_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S35 §2.3（required）+ §2.5「同 derived_key 已有报告数 + 1」（行 647）。重评会 +1，S39 只认同一派生键的最大 generation（行 652）。"
+    },
+    "qc_layer": {
+      "const": "technical",
+      "description": "来源：S35 §2.3 qc_layer / qc-report.v2.schema.json 的 qc_layer 闭集（technical|semantic|alignment|subtitle）。本事件由 S35 发出，恒为 technical。"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：S35 §0 第 1 条（行 44「报告绑定 artifact_sha256」）、§2.3 required、§2.3 subject.artifact_sha256 的 pattern。**这是 S39 从本 payload 读的唯一字段**：S39 §4.2 步骤 2c 要求 subject.artifact_sha256 等于事件 data.artifact_sha256，不等则 quarantine。"
+    },
+    "manifest_ref": {
+      "type": "object",
+      "description": "来源：S35 §7 事件示例（行 912）+ S35 §2.3 的 manifest_ref 定义（行 233–241），字段与约束逐字照搬。指向本报告所依据的 source manifest（S05），S39 可用它校「这份报告是不是针对当前 manifest revision 出的」。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S35 §2.3 manifest_ref.properties.id（type: string，无 pattern）。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S35 §2.3 manifest_ref.properties.revision（integer，minimum 1）。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S35 §2.3 manifest_ref.properties.content_hash（小写 hex 64）。"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "shot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §7 事件示例（行 913）+ §2.3 subject.shot_id。注意 §7 的示例同时写了 subject（envelope 层，`shot_3_2`）与 data.shot_id，两者必须一致；schema 跨不到 envelope，由 S35 自己保证。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（行 243–246）：「计数与去重用的稳定镜头血缘根；见 S39 §5.2」。S39 §4.3 的归因键第一项就是它——缺陷跨 shot_id 重生成仍能归并到同一条 RepairTarget。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S35 §2.3（行 328/333，required + minimum 1）+ §7 示例（行 913）。单一逻辑节点的局部重生成计数（AGENTS.md 版本与一致性速查）。S39 据此判断报告是否属于当前 epoch；旧 epoch 的结果不能推进接受指针。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（行 224 required 列表含 run_id；行 242 定义 `{ type: string, minLength: 1 }`）。跨服务的执行关联键，与 envelope 的 correlation_id 不是同一个量——correlation_id 是事件链，run_id 是编排运行。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S35 §2.3（行 224 required；行 241 定义 minimum 1）。作用域是 run/branch，用于取消与故障切换（AGENTS.md：不能与 node_epoch 混用）。S39 用它拒绝过期执行产生的报告。"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "repair",
+        "human_review",
+        "abstain"
+      ],
+      "description": "来源：S35 §7 示例（`\"decision\": \"repair\"`）+ qc-report.v2.schema.json 的 decision 闭集（4 值）。逐一照搬，不收窄也不放宽：S39 的分流直接吃这个值，且 S35 §2.6 的 decide() 输出必须与之自洽（S39 §4.2 步骤 2f 会重算比对）。"
+    },
+    "decision_reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（行 200 required；行 426 定义 string, minLength 1）。自由文本，示例是 `\"TECH.DURATION.MISMATCH blocker\"`——**不要把 check_id 解析成结构**：格式没有被规定，S35 §7 给的是一句话而不是契约。S39 不解析它。"
+    },
+    "defect_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S35 §7 事件示例（行 916）。S35 没有给出它的独立定义，也没有在 §2.3 的 required 里列它。这里按语义约束为 >= 0（缺陷数不可能是负数），但**取值与报告 defects[] 的一致性 schema 保证不了**，须由 S35 保证。只用于排障与指标分流，S39 不读。"
+    },
+    "blocker_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：仅 S35 §7 事件示例（行 916 `\"blocker_count\": 1`）。全文再无第二处定义：不在 §2.3 的 required 里，没有 DDL 列，§2.6 的 decide() 也没用到它。计划把它当分流用的折叠值（blocker 总数）保留在事件里，但**S35 必须先确认它确实要发这个字段**——见 x-needs-owner。"
+    },
+    "coverage_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "来源：S35 §2.3（行 407 required；行 414 定义）。与 qc-report.v2.schema.json 的 coverage.coverage_ratio 同域（0..1）。S35 §2.6 行 667 用它判 abstain（低于 policy.min_coverage_ratio 默认 0.90）。事件里放折叠值是为了让 S39 不拉报告就能看出「这份结论覆盖不足」。"
+    },
+    "attempt_slot_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：S35 §7 示例（`\"attempt_slot_id\": null`）+ §2.3 repair_context.attempt_slot_id（行 469 `{ type: \"string\" }`）+ DDL 列（行 823 `attempt_slot_id text`，可空）。**必须可 null**：首次质检没有修复尝试，S35 §2.5 的派生键里就是 `repair_context.attempt_slot_id ?? null`（行 644）。收窄成 string-only 会让所有首轮报告发不出去。minLength 1 排除空串——「没有尝试」由 null 表达，空串是第三种状态，而 S35 只有两种。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "report_id",
+    "report_generation",
+    "qc_layer",
+    "artifact_sha256",
+    "manifest_ref",
+    "shot_id",
+    "shot_lineage_id",
+    "node_epoch",
+    "run_id",
+    "execution_fence",
+    "decision",
+    "decision_reason",
+    "coverage_ratio",
+    "attempt_slot_id"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "blocker_count",
+      "demanded_by": "plans/S35-technical-qc.md §7 事件示例（行 916）",
+      "s35_status": "只有示例里出现过一次。§2.3 的 QCReport required 列表没有它，§2.3 的 properties 没有定义它，§7 的 DDL 没有对应列，§2.6 的 decide() 也不读它。本 schema 收下了它（因为它在 S35 已公开的事件示例里），但它是不是有意的字段需要 S35 确认——若只是示例里的示意数字，应从 S35 §7 删掉，本 schema 随之删。"
+    },
+    {
+      "field": "defect_count",
+      "demanded_by": "plans/S35-technical-qc.md §7 事件示例（行 916）",
+      "s35_status": "同上：只在事件示例里出现，§2.3 没有它的定义。可由报告的 defects[] 长度推出，因此放在事件里属于冗余；冗余本身不是错误（省一次回查），但它和 blocker_count 一样没有独立定义。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "QTC-1",
+      "summary": "S35 §7 事件示例里的 subject 与 data.shot_id 重复，且 schema 无法强制两者相等",
+      "s35": "envelope.subject = \"shot_3_2\"，data.shot_id = \"shot_3_2\"（行 902/913）",
+      "why_it_matters": "event-envelope 的 subject 是 string，没有与任何 payload 字段的相等约束。若实现时只更新一处，S39 会在做「这份报告属于哪个镜头」的判定时读到两个不同的值，而它目前只校验 artifact_sha256（§4.2 步骤 2c），不会发现这个不一致。要么 S35 在 §4.2 增加一条 subject == data.shot_id 的校验，要么把 data.shot_id 从 payload 删掉、统一读 envelope.subject。本文件保留该字段是因为 S35 §7 的示例里有它，不选边。"
+    }
+  ]
+}

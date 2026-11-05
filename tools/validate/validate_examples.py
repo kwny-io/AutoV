@@ -42,6 +42,10 @@ SCHEMA_OF = {
     "generation-command": "generation-command.v2.schema.json",
     "memory-claim": "memory-claim.v2.schema.json",
     "memory-committed-event": "event-envelope.v2.schema.json",
+    "post-subtitle-ready": "event-envelope.v2.schema.json",
+    "quality-alignment-completed": "event-envelope.v2.schema.json",
+    "quality-semantic-completed": "event-envelope.v2.schema.json",
+    "quality-technical-completed": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }
 

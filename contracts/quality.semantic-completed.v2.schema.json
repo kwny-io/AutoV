@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality.semantic-completed.v2.schema.json",
+  "title": "quality.semantic.completed payload v2",
+  "description": "event `quality.semantic.completed` 的 data 部分。S36 §7 说「`data` 与 S35 同结构（`qc_layer=\"semantic\"`），额外字段：」并给出 5 个字段（行 424–435）。本文件因此是 quality.technical-completed 的整份复用 + 那 5 个字段——**不是**只写额外的 5 个：消费方按「S35 同结构 + 额外」实现时需要的正是全集。与 S35 那份的差别只有 qc_layer 的 const 值和 s36_only 里的 5 个字段。S36 没有自己重画一遍完整示例，所以「同结构」的字面含义只能按 S35 §7 的示例兑现；若 S36 计划里有 S35 §7 之外的字段，本文件看不出来（见 x-conflicts QSC-1）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "来源：contracts 既有 payload 约定，与 quality.technical-completed 同。"
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（required）+ §2.5 派生规则。S36 §10 的用例引用 report_id，但 S36 没有重述它——按「同 S35 结构」取 S35 的定义。"
+    },
+    "report_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S35 §2.3 + §2.5（行 647）。S36 沿用同一套报告派生键机制。"
+    },
+    "qc_layer": {
+      "const": "semantic",
+      "description": "来源：S36 §7（行 424）明写 `qc_layer=\"semantic\"`；闭集见 qc-report.v2.schema.json。"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：S35 §2.3 / §7 示例 + S36 §2.3 DDL（行 313 `artifact_sha256 text NOT NULL`）。S39 §4.2 步骤 2c 从本 payload 读的就是这个字段，S36 必须发。"
+    },
+    "manifest_ref": {
+      "type": "object",
+      "description": "来源：S35 §2.3（行 233–241）的形状。S36 的 DDL 把同一信息拆成两列（行 309–310 `manifest_id` / `manifest_revision`），**没有 content_hash 列**——见 x-conflicts QSC-2。事件里按 S35 的嵌套形状发，因为 S36 §7 说与 S35 同结构。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S35 §2.3 manifest_ref.properties.id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S35 §2.3 manifest_ref.properties.revision。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S35 §2.3 manifest_ref.properties.content_hash。**S36 没有对应列**——见 QSC-2。"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "shot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3 subject.shot_id / §7 示例。S36 的 DDL 没有独立 shot_id 列（只有 shot_spec_revision），但 S35 事件体有，且「同 S35 结构」要求保留。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（行 243–246）。S39 §4.3 的归因键；S36 也必须发，否则语义缺陷无法与同血缘的技术缺陷归并到同一条 RepairTarget。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S35 §2.3 + S36 §2.3 DDL（行 308 `node_epoch integer NOT NULL`）。两处一致。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3 + S36 §2.3 DDL（行 311 `run_id text NOT NULL`）。两处一致。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S35 §2.3 + S36 §2.3 DDL（行 312 `execution_fence integer NOT NULL`）。两处一致。"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "repair",
+        "human_review",
+        "abstain"
+      ],
+      "description": "来源：qc-report.v2.schema.json 的 decision 闭集 + S36 §2.3 DDL（行 320 `decision text NOT NULL`）。S36 §10.2 的 E25-S3 要求双评估器分歧时 `decision=human_review`，该值在闭集内。"
+    },
+    "decision_reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S35 §2.3（行 426）。S36 的 DDL 没有单列（decision_reason 未出现在 §2.3 的列里），但 S39 §4.2 会重算 decision 与 defects 的一致性；理由文本对排障必需。保留。"
+    },
+    "defect_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S35 §7 事件示例。S36 未重述；见 quality.technical-completed 的同名字段说明（S35 只在示例里出现）。"
+    },
+    "blocker_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S35 §7 事件示例。S36 未重述；出处同样只有示例，见 x-needs-owner。"
+    },
+    "coverage_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "来源：S35 §2.3 + S36 §2.3 DDL（行 321 `coverage_ratio numeric(5,4) NOT NULL`）。S36 §10.1 E24-S6 要求 0.60 → abstain。numeric(5,4) 的域是 0.0000–9.9999，比 0..1 宽；事件层按 qc-report schema 收窄为 0..1。"
+    },
+    "attempt_slot_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：S35 §2.3 / §2.5 + S36 §2.3 DDL（行 322 `attempt_slot_id text`，可空）。首轮质检必须为 null；空串是第三种状态，不收。"
+    },
+    "includes_continuity_defects": {
+      "type": "boolean",
+      "description": "来源：S36 §7 额外字段（行 430）。语义：本次报告是否含连续性类缺陷。S17 的 expected_state_set 未取得时相关 check 标 dependency_unavailable（行 416），此时该标志应为 false——**S36 没有把这层因果写成约束**，schema 也无法表达（它需要与 defects[] 联合判断）。"
+    },
+    "expected_state_consumed": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：S36 §7 额外字段（行 431 `{ \"service_id\": \"S17\", \"ref_revision\": 7 }`）。**形状与 S36 自己的 DDL 不一致**：DDL 行 315 是 `expected_state_ref jsonb`，注释写「S17 ref + revision」，而 §5 行 408 的请求示例用的是完整 ref 形状 `{service_id, id, revision, content_hash}`。事件里只带 `service_id` + `ref_revision`（用了 `ref_` 前缀），丢了 `id` 与 `content_hash`——S39 无法据此回查同一份期望状态。见 x-conflicts QSC-3。可 null：S17 未返回时为空（行 416）。",
+      "properties": {
+        "service_id": {
+          "const": "S17",
+          "description": "来源：S36 §7（行 431）。恒为 S17——S36 只能吃 S17 给的 expected_state_set，不得从 S16 直接取正史（行 71）。"
+        },
+        "ref_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S36 §7（行 431 `\"ref_revision\": 7`）。字段名就是 `ref_revision`，不是 `revision`——与 §5 请求体的 `expected_state_ref.revision` 不同名。见 QSC-3。"
+        }
+      },
+      "required": [
+        "service_id",
+        "ref_revision"
+      ],
+      "additionalProperties": false
+    },
+    "model_disagreement": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "来源：S36 §7 额外字段（行 432 `\"model_disagreement\": 0.12`）。S36 只在示例里给了它，**没有定义量纲**——0.12 看起来像归一化分歧度（0..1），但 S36 §10.2 的 E25-S3 说的是「双评估器分歧 0.5」，两者单位一致的可能性高，但未明说。按 0..1 约束是语义推断，见 x-needs-owner。"
+    },
+    "evaluator_calls": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S36 §7 额外字段（行 433）+ §2.3 DDL 的 evaluator_call 表（行 331–347）。语义：本次报告调了几次 VLM。S36 行 385 说「`evaluator_calls: 41` 是常见量级」。可由 evaluator_call 表按 report_id 计数得出，事件里带是为了让 E25 取证不必回查。"
+    },
+    "cost_micro_units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S36 §7 额外字段（行 434）+ §2.3 DDL（行 344 `cost_micro_units bigint -- 从 S23 投影，非权威`）。**注意「非权威」四个字**：费用的唯一权威是 S23（AGENTS.md「S23 money」）。这个字段是投影副本，只可用于排障与指标，不得作为计费依据或对账依据。S36 §2.3 的 evaluator_call 表里它是每调用一行，事件里是折叠总和。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "report_id",
+    "report_generation",
+    "qc_layer",
+    "artifact_sha256",
+    "manifest_ref",
+    "shot_id",
+    "shot_lineage_id",
+    "node_epoch",
+    "run_id",
+    "execution_fence",
+    "decision",
+    "decision_reason",
+    "coverage_ratio",
+    "attempt_slot_id",
+    "includes_continuity_defects",
+    "expected_state_consumed"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "model_disagreement",
+      "demanded_by": "plans/S36-semantic-qc.md §7 额外字段（行 432）",
+      "s36_status": "只在示例里出现（0.12），全文没有定义它是什么、怎么算、量纲是什么。本 schema 按 0..1 归一化分歧度写，因为 S36 §10.2 E25-S3 说「双评估器分歧 0.5」→ human_review，0.5 这个点在 0..1 里才有意义。若 S36 打算用别的量纲（例如分歧的原始计数），这里要改。"
+    },
+    {
+      "field": "blocker_count",
+      "demanded_by": "plans/S36-semantic-qc.md §7 说「与 S35 同结构」（行 424），故继承 S35 的字段",
+      "s36_status": "S36 自己没提，是随「同 S35 结构」继承进来的。见 quality.technical-completed.v2.schema.json 的 x-needs-owner——若 S35 判定该字段不该发，这里一并删。",
+      "inherited_from": "quality.technical-completed.v2.schema.json"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "QSC-1",
+      "summary": "「与 S35 同结构」没有可照抄的完整示例，S36 实际会发的字段集合无法从计划确定",
+      "s36": "§7 行 424：`data 与 S35 同结构（qc_layer=\"semantic\"），额外字段：` —— 只给了 5 个增量字段，没有重画完整 data",
+      "why_it_matters": "本 schema 按「S35 §7 的 15 个字段 + S36 的 5 个」实现。若 S36 实现者只发了 S36 那 5 个增量字段（把「同结构」理解成「照 S35 的规范」而不是「照 S35 的示例」），S39 会因为 artifact_sha256 缺失而 quarantine 每一条语义报告（§4.2 步骤 2c）。这是实现期最容易踩的一处，因为两边的话都说得通。建议 S36 在 §7 补一份完整 data 示例，而不是只说「同结构」。本文件不选边。"
+    },
+    {
+      "id": "QSC-2",
+      "summary": "S36 的 manifest 只有 id + revision 两列，事件按 S35 形状还要 content_hash",
+      "s36": "§2.3 DDL 行 309–310：`manifest_id text NOT NULL` / `manifest_revision integer NOT NULL` —— 无 content_hash 列",
+      "s35": "§2.3 manifest_ref 形状要求 id/revision/content_hash 三个都必填（行 233–241）",
+      "why_it_matters": "S36 说事件与 S35 同结构，所以事件必须带 manifest_ref.content_hash；但 S36 的存储层没有这个值。要么 S36 在落库时从 S05 的 manifest 引用里把 content_hash 一并存下，要么改成事件带 manifest_id + revision、消费方自己回查 S05。前者的代价是多一列，后者违反「事件只读不查」的取向。本文件按 S35 形状写（因为既有的技术层事件已经是这个形状），S36 的存储侧需要补。"
+    },
+    {
+      "id": "QSC-3",
+      "summary": "expected_state 在四处有四种名字/形状",
+      "s36_request": "§5 行 408 请求体：`expected_state_ref: {service_id, id, revision, content_hash}`（完整 ref）",
+      "s36_ddl": "§2.3 行 315：`expected_state_ref jsonb`（注释「S17 ref + revision」）",
+      "s36_event": "§7 行 431 事件：`expected_state_consumed: {service_id, ref_revision}`（改名字、改子字段名、丢两个字段）",
+      "why_it_matters": "事件里的形状缺 id 和 content_hash，S39 拿不到「S36 具体消费了 S17 的哪一份期望状态」——它只能知道版本号，不知道是哪个对象的版本号。审计与复现（E24 系列要求证据可追溯）需要能回查到那一份。要么事件改回完整 ref 形状并与请求体同名（expected_state_ref），要么 S36 说明为什么事件需要更瘦的形状。另外 `ref_revision` 和 `revision` 是两个名字指同一个量，实现时极易各写各的。本文件按 S36 §7 事件示例的原样收下（不改名、不补字段），但把矛盾记在这里。"
+    }
+  ]
+}

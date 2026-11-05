@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality.alignment-completed.v2.schema.json",
+  "title": "quality.alignment.completed payload v2",
+  "description": "event `quality.alignment.completed` 的 data 部分。权威定义在 plans/S37-audio-alignment.md §7（事件体示例，行 321–347）与 §5（report DDL，行 147–177，给出每列的 NOT NULL 与类型）。**与 quality.technical/semantic 不同构**：S37 没有 manifest_ref 嵌套（拆成 manifest_id + manifest_revision 两列，见 x-conflicts QAC-1），多了音频域字段（audio_track_hash / language / max_lipsync_offset_ms / voice_embedding_distance / alignment_unit_count）。本文件按 S37 自己的形状写，不套 S35 的模板——S37 §7 从未声称「同 S35 结构」，套上去就是凭空加字段。S38 依赖本事件触发字幕作业（S37 §7 末段 / service.yaml depends_on: S37），所以 decision 必须够 S38 判要不要等。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有约定；S37 §7 的示例没有画它。"
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 148（`report_id text PRIMARY KEY`）+ §7 示例（`qc_…`）。S37 与 S35/S36 用同一套报告 ID 空间形态，但**是各自 schema 下的独立表**，不是共享表。"
+    },
+    "report_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S37 §5 DDL 行 149（`report_generation integer NOT NULL`）+ `UNIQUE (report_id, report_generation)`（行 175）。同一派生键重评会 +1。"
+    },
+    "qc_layer": {
+      "const": "alignment",
+      "description": "来源：S37 §7 示例（行 326 `\"qc_layer\": \"alignment\"`）；闭集见 qc-report.v2.schema.json。"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：S37 §5 DDL 行 154（`artifact_sha256 text NOT NULL`）+ §7 示例（行 327）。S39 §4.2 步骤 2c 从本 payload 读的唯一字段，S37 必须发。"
+    },
+    "audio_track_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 155（`audio_track_hash text NOT NULL`）+ §7 示例（行 327）+ §8（行 350 幂等键含它、行 351 S26 调用幂等键、行 355 ASR 结果按它缓存）。**S37 独有的关键字段**：音轨单独 hash 让「视频重编码但音轨没变」能复用 ASR，省一大笔费用（§8 行 352）。S37 §9 E26-A2 直接测这条。注意 §12 C2（行 414）说 qc-report.v2 的 subject.media.audio 只有 stream_index、没有 audio_track_hash——这是它必须在事件里出现的原因。"
+    },
+    "shot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 153（`shot_id text NOT NULL`）+ §7 示例（行 328）。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 152（`shot_lineage_id text NOT NULL`）+ §7 示例（行 328）+ §9 E26-A1（行 396「新报告 shot_lineage_id 不变」）。S39 §4.3 的归因键。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S37 §5 DDL 行 162（`node_epoch integer NOT NULL`；未给 CHECK）。S37 §7 的示例**没有画它**——事件体示例比 DDL 少字段。本文件按 DDL 收（NOT NULL 列必须出现在事件里，否则「已完成的报告」这一事实无法被消费方确认属于哪个 epoch）；这处差异见 x-conflicts QAC-2。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 160（`run_id text NOT NULL`）。同样不在 §7 示例里，理由同 node_epoch。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S37 §5 DDL 行 161（`execution_fence integer NOT NULL`）。同样不在 §7 示例里。"
+    },
+    "manifest_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 158（`manifest_id text NOT NULL`）。**与 S35/S36 不同**：S37 把它们拆成两列，不是 manifest_ref 嵌套。见 QAC-1。"
+    },
+    "manifest_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S37 §5 DDL 行 159（`manifest_revision integer NOT NULL`）。见 QAC-1。"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "repair",
+        "human_review",
+        "abstain"
+      ],
+      "description": "来源：S37 §5 DDL 行 171（`decision text NOT NULL`）+ §7 示例（`\"repair\"`）。**S38 直接读这个值决定要不要等**：§7 末段原话「`decision` 为 `pass`/`repair` 都可以先出字幕草稿，`abstain` 时 S38 必须等复检或标草稿」。所以这个字段的语义（尤其 abstain）是跨服务的硬约束，不是内部状态。"
+    },
+    "coverage_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "来源：S37 §5 DDL 行 172（`coverage_ratio numeric(5,4) NOT NULL`）+ §7 示例（0.97）。音频分析的覆盖率；§2 的 sampling_policy 定分母。"
+    },
+    "attempt_slot_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 174（`attempt_slot_id text`，可空）+ §7 示例（`null`）。首次对齐必须为 null；空串是第三种状态，不收。"
+    },
+    "defect_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S37 §7 事件示例（行 331 `\"defect_count\": 2`）。S37 的 DDL **没有这一列**——它是从报告 payload 折叠出来的数。与 S35 的同名字段处境相同（只在示例里出现，没有独立定义）。"
+    },
+    "blocker_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S37 §7 事件示例（行 331 `\"blocker_count\": 1`）。同样没有 DDL 列、没有独立定义。见 x-needs-owner。"
+    },
+    "language": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S37 §5 DDL 行 163（`language text NOT NULL`）+ §7 示例（`\"zh-CN\"`）。**不收窄为 enum**：S37 没有给闭集，例子里是 BCP 47 形状但没有声明它是 BCP 47。S38 的字幕排版规则按语言选（台账宽度、断句规则），所以这个值的写法是跨服务契约的一部分，但 S37 没定。见 x-needs-owner。"
+    },
+    "max_lipsync_offset_ms": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "来源：S37 §7 事件示例（行 333 `\"max_lipsync_offset_ms\": 142`）。S37 的 DDL 没有对应列，全文也没有第二处定义——**只有事件示例**。语义推测是本次对齐中音画偏移的最大绝对值（毫秒），但 S37 没写明方向（正负号含义）、没写是绝对值还是带符号。**必须可 null**：S37 §8.1（行 359）明确「无对白镜头 → 显式 no-op，报告仍然生成，decision=pass」，这类报告没有 lipsync 可测。收窄为 integer-only 会让无对白镜头的报告发不出去。见 x-needs-owner。"
+    },
+    "voice_embedding_distance": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "来源：S37 §7 事件示例（行 334 `\"voice_embedding_distance\": 0.08`）。同样只有示例、无 DDL 列、无定义。推测是声纹距离（越小越像），但没写度量（余弦距离 / 欧氏距离）也没写阈值方向。**可 null**，理由同 max_lipsync_offset_ms（无对白镜头无音色可比）。"
+    },
+    "alignment_unit_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S37 §7 事件示例（行 335 `\"alignment_unit_count\": 47`）。S37 §6 的 `GET /alignment-reports/{id}/units`（行 299–315）返回字级 unit 数组，本字段是其长度。无 DDL 列，但可由 units 表计数得出。S38 用它估算字幕作业量。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "report_id",
+    "report_generation",
+    "qc_layer",
+    "artifact_sha256",
+    "audio_track_hash",
+    "shot_id",
+    "shot_lineage_id",
+    "node_epoch",
+    "run_id",
+    "execution_fence",
+    "manifest_id",
+    "manifest_revision",
+    "decision",
+    "coverage_ratio",
+    "attempt_slot_id",
+    "language",
+    "max_lipsync_offset_ms",
+    "voice_embedding_distance",
+    "alignment_unit_count"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "max_lipsync_offset_ms",
+      "demanded_by": "plans/S37-audio-alignment.md §7 事件示例（行 333）",
+      "s37_status": "只在事件示例里出现过一次。§5 的 report DDL 没有这一列，§2/§3/§4 也没有定义它。三个问题没答案：(1) 是绝对值还是带符号（正负号代表音频超前还是滞后）；(2) 是整段最大偏移还是某类 unit 的最大值；(3) 无对白镜头时为 null 还是 0。本 schema 按可空整数写，但**这三点不确定，消费方不能依赖它的具体含义**。"
+    },
+    {
+      "field": "voice_embedding_distance",
+      "demanded_by": "plans/S37-audio-alignment.md §7 事件示例（行 334）",
+      "s37_status": "同上，只有示例。没写度量方式（余弦/欧氏）、没写取值范围、没写阈值方向（大于还是小于算异常）。本 schema 只约束 >= 0（距离不可能是负数），不收窄上界，因为没有依据定上界。"
+    },
+    {
+      "field": "blocker_count",
+      "demanded_by": "plans/S37-audio-alignment.md §7 事件示例（行 331）",
+      "s37_status": "只在事件示例里出现，DDL 无列、无独立定义。与 quality.technical-completed 的同名字段同样的处境。"
+    },
+    {
+      "field": "language",
+      "demanded_by": "plans/S37-audio-alignment.md §5 DDL 行 163 + §7 示例（zh-CN）",
+      "s37_status": "S37 有这一列（NOT NULL），但没有声明取值规范。示例是 BCP 47 形状（zh-CN），可是没有一句话说它就是 BCP 47、也没有说是否允许 zh / zh-Hans / zh-Hans-CN 这类变体。S38 按语言选排版规则，取值写法不一致会让「中文」匹配不上。需要 S37 明确。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "QAC-1",
+      "summary": "manifest 的表示：S35/S36 是嵌套 manifest_ref（带 content_hash），S37 是两列（无 content_hash）",
+      "s35_s36": "§2.3 manifest_ref {id, revision, content_hash}，三个都必填",
+      "s37": "§5 DDL 行 158–159：manifest_id / manifest_revision 两列，没有 content_hash",
+      "why_it_matters": "四个质检事件由同一个消费者 S39 读。若 S37 的 payload 用扁平两列、S35/S36 用嵌套三字段，S39 要为同一条信息写两套解析，而且 S37 那份缺 content_hash 就无法证明「这份报告针对的是不是当前 manifest 的内容」。可能是有意的（对齐报告不关心 manifest 内容，只关心版本号），也可能是照抄 S35 时的遗漏。需要 S35/S36/S37 三方取一个形状。本文件按 S37 自己的 DDL 写（扁平两列），不套 S35 的形状。"
+    },
+    {
+      "id": "QAC-2",
+      "summary": "S37 §7 的事件示例比 §5 的 DDL 少 4 个 NOT NULL 字段",
+      "s37": "§7 示例（行 321–347）的 data 里没有：node_epoch / run_id / execution_fence / manifest_id / manifest_revision / report_generation（§5 行 149 是 NOT NULL）",
+      "why_it_matters": "这是「示例不是契约」的典型：DDL 说这些列 NOT NULL，示例却没画。实现者按示例写就会漏字段，而 S39 需要 node_epoch 判断报告是否属于当前 epoch、需要 report_generation 判「只认最大 generation」。本文件以 DDL 为准（NOT NULL 列视为必须发），并把示例的缺失记在这里——建议 S37 §7 的示例补齐，否则它会一直误导下一个读它的人。"
+    },
+    {
+      "id": "QAC-3",
+      "summary": "S37 依赖 S15 的 lexicon_revision 与 voice_binding_ref 是 DDL 列，但事件体里没有",
+      "s37": "§5 DDL 行 165–166：`lexicon_revision integer`（null = 未使用）/ `voice_binding_ref jsonb`",
+      "event": "§7 示例的 data 里两者都没有",
+      "why_it_matters": "这两列决定同一段音频为什么得到同一个结果：换了发音词典 revision 或换了音色绑定，对齐结论可能不同，但 artifact_sha256 和 audio_track_hash 都不会变——于是 S37 §8 的「按 audio_track_hash 缓存复用 ASR」会在词典换了之后仍然命中旧结果。缓存键（§8 行 351）确实带了 asr_model_snapshot，却没带 lexicon_revision 与 voice_binding_ref。这是 S37 内部的缓存正确性问题，不是本 schema 能修的；记在这里因为它就发生在两个未出现在事件里的字段上。"
+    }
+  ]
+}
