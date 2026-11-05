@@ -128,3 +128,45 @@ print('scopes:',sorted({x['required_scope'] for x in d['tools']}))
 `docs/13` 那条清单里 `memory.extract` / `model.estimate` 紧贴中文字符，
 用 `\b[a-z_]+\.[a-z_]+\b` 抽会漏掉它们（`费model.estimate` 处没有词边界）。用不带 `\b` 的
 `[a-z_]+\.[a-z_]+` 才能抽全 13 个。
+
+## 5. 同一节里的统计数字：`payloads` 93 → 92
+
+`contracts/README.md` §「一个入口跑完所有仓库级检查」新写入的数字里，有一处是错的。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` L899，`payloads` 检查项 | 93 条 `schema_ref` / `data_schema_ref` | **92 条** | 按「每加一个带 payload 的 topic，schema_ref 与 data_schema_ref 各 +1」推的，把 55 + 37 = 92 误写成 93。`schema_ref` 是每个 topic 一条、恒定 55 条；`data_schema_ref` 才是随 payload 增长的那一列（36 → 37）。上一轮提交前的值是 91（55 + 36），本轮只该 +1。 |
+| 2 | `contracts/README.md` L903，`examples` 检查项 | 53 个示例 | **53 个示例（不改）** | 这条一度被我误判为应改成 54，理由是 `contracts/examples/` 下有 54 个 `.json`。但校验器打印的 `53 example(s) valid, 0 failing, 1 without a schema` 里，第三个数字是「没有对应 schema、被跳过」的示例（`capacity-plan.json`），不计入「对 schema 校验」的示例数。README 沿用的始终是 valid 数：HEAD~1 是 52 valid / 53 个 `.json`，HEAD~2 是 51 valid / 52 个 `.json`，两版 README 写的都是 valid 数。误改已撤回。 |
+
+**两条的错因是同一类**：都是从表里数出来的量跳到手写的数，中间夹了一步心算。
+第 1 条多算了 1；第 2 条换错了计数的基（文件数 vs 通过校验数）。
+复核时两边都回到源头数：
+
+```python
+import json
+reg = json.load(open('contracts/event-topics.v2.json', encoding='utf-8'))
+
+def walk(o):
+    if isinstance(o, dict):
+        if 'event_type' in o:
+            yield o
+        for v in o.values():
+            yield from walk(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from walk(v)
+
+t = list(walk(reg))
+s = sum(1 for x in t if 'schema_ref' in x)
+d = sum(1 for x in t if 'data_schema_ref' in x)
+print('topics', len(t), 'schema_ref', s, 'data_schema_ref', d, 'payloads', s + d)
+```
+
+输出 `topics 55 schema_ref 55 data_schema_ref 37 payloads 92`。
+
+`payloads` 的语义是「两类引用加起来」，不是「payload schema 文件数」（后者是 37）。
+一个 topic 同时有 `schema_ref` 和 `data_schema_ref`，所以 55 + 37 才是 README 那句话的数。
+
+`examples` 的语义是「通过 schema 校验的示例数」，不是 `contracts/examples/` 下的文件数：
+目录里共 56 个文件，其中 54 个 `.json`、2 个 `.yaml`（`runtime-safety.yaml`、
+`service-interactions.yaml`）不参与校验，`.json` 里又有 1 个（`capacity-plan.json`）没有对应 schema。

@@ -896,7 +896,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（112 个 JSON 解析）、`payloads`（93 条 `schema_ref` / `data_schema_ref`
+九项检查：`json`（112 个 JSON 解析）、`payloads`（92 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 37 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
