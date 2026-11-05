@@ -20,6 +20,7 @@
 | 幂等键格式 | `tenant_id + command_id + request_hash` | **47/48 一致**；S27 的幂等入口不同（`dispatch_id` + `stable_client_key` 双唯一约束，见 §6.2），不算偏离 |
 | `execution_fence` / `node_epoch` 混用 | 逐文件扫描误用句式 | **0 处混用** |
 | defect type 闭集 | 97 个 check 的 `defect_type` 对 14 值闭集 | **97/97 合规** |
+| 动作族一致性 | S35 §2.2.1 的 14 行 `chain` + `fallback` 逐格比对 `action-families.v2.json` | **14/14 一致**；`lipsync` 是单动作链（`redo_lipsync`，无箭头），需单独比对 |
 | QCReport 规范唯一性 | 检查是否被复述 | **唯一在 S35 §2**，S36/S37/S38 只引用 |
 | permit 状态机三方一致 | S22 / S26 / `admission-record.v2.schema.json` | **一致**；S22 的 `EXPIRED` 明确不外露（C22-4 已记录） |
 | reservation 状态机 | S23 / 契约枚举 | **一致**；`EXPIRED` 同样不外露（C23-4b 已记录） |
@@ -281,6 +282,8 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 
 - **42 个 outbox 补齐为可发信**（`0afca3e`，23 份方案）：`tenant_id` / `partition_key` / `headers` 三列此前缺失。缺 `tenant_id` 是信封 `required` 挡住的，缺 `partition_key` 是 S08 §6.4 的中继排序挡住的 —— 都不是风格问题。
 - **42 个 outbox 的 `aggregate_id` 加了语义标注**（`1e59f53`）：只写 `aggregate_id text` 而不说是哪个实体，实现者挑错一个字段，`aggregate_sequence` 就变成"看起来有序其实是错的"。S29–S34、S42、S44 的聚合键**逐事件不同**，那些地方没有写死一个值，而是指向各自的事件表。
+- **S38 §11 的契约缺口表被一条 blockquote 劈成两半**：`> **G2 已关闭（2026-11-01）**…` 夹在 C4 与 C5 之间，导致 C4 出现两次、C5 脱表。已把 G2 说明移到表后，C4 两条合并为一条。这类缺陷不会出现在链接检查里 —— 表格仍然"像是完整的"，只是少渲染两行。
+- **S35 §12 / S39 §11 的 C5–C8 仍标为未落**：`991ccee` 已落 `action-families.v2.json` / `qc-report.v2.schema.json` / `check-registry.v2.schema.json` / `validate_registry.py`，但两份方案的缺口表还写着"没有"。已补「已落项」小节并保留原缺口描述 —— **C5 只落了一半**（`check-registry.v2.json` 数据文件仍未落），不能整条划掉。
 
 ---
 
