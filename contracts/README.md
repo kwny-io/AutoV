@@ -97,7 +97,7 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
    | `escalation_rule` | **99/99 条** | 只有散文描述，没有 `metric` / `comparator` / `threshold` / `escalate_to` |
    | `default_action`、`allowed_actions` | **76 条**（S36/S37/S38） | 这三份表只有 4–5 列：`check_id` / `type` / 严重度 / 判定 / 依据 |
    | `recheck_scope` | **76 条** | 同上 |
-   | 枚举外 / 不可直接提取 | S35 中 1 处动作、10 处复检范围；四表合计 8 处带条件严重度（S35 4 / S36 1 / S37 1 / S38 2）、1 处二值、3 处为空 | 动作列 `remux→transcode`（`TECH.AUDIO.OFFSET`）；复检列 `全片抽检`、`连续窗口 ±0.5s`、`全轨`；严重度 `major（master 时 blocker）` |
+   | 枚举外 / 不可直接提取 | S35 中 2 处动作、10 处复检范围；四表合计 8 处带条件严重度（S35 4 / S36 1 / S37 1 / S38 2）、1 处二值、3 处为空 | 动作列 `remux→transcode`（`TECH.AUDIO.OFFSET`）、`—`（`TECH.META.MISSING`）；复检列 `全片抽检`、`连续窗口 ±0.5s`、`全轨`；严重度 `major（master 时 blocker）` |
 
    **不做的事**：不从散文推断这些值。给 76 条 check 凭空补 `window_scope` 和
    `default_action`，等于把设计决策伪装成数据提取 —— 尤其 `window_scope` 直接决定
@@ -114,7 +114,7 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
    **数这四张表要注意转义管道符。** `plans/S35:765` 的判定列写
    `|actual − ShotSpec.duration| > 1 帧`，绝对值符号是裸 `|`；朴素 `split('|')`
    会把这行切成 9 列，动作列与复检列整体右移。须用 `(?<!\\)\|` 切分。
-   本表此前的"3 处动作 / 11 处复检"就是切错列数出来的，实为 **1 处 / 10 处**。
+   本表此前的"3 处动作 / 11 处复检"就是切错列数出来的，实为 **2 处 / 10 处**。
 
 ## schema 管不到什么
 

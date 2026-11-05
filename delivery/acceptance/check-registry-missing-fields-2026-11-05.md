@@ -372,8 +372,13 @@ schema 的 `check_id` pattern 也强制三段：
 ② 给 `action-families.v2.json` 与 schema 加 `remux`（契约变更 + 全体 QC 服务发版）。
 **这是契约层的决定，不是提取问题。**
 
-顺带：`contracts/README.md:82` 说「S35 中 3 处动作、11 处复检范围」在枚举外。
-**这两个数都是转义管道符误解析的产物，correct 值是 2 处动作、10 处复检范围。**
+顺带：`contracts/README.md` 原写「S35 中 3 处动作、11 处复检范围」在枚举外。
+**这两个数都是转义管道符误解析的产物，正确值是 2 处动作、10 处复检范围。**
+
+（这两个数改了两轮才对：第一轮修成「1 处 / 10 处」，动作那格又少了 `TECH.META.MISSING`
+（[783](../../plans/S35-technical-qc.md)）的 `—`——复检那格已经把 `—` 算进 10 处，动作这格
+却只数了 `remux→transcode`。两格必须用同一口径：**非枚举值一律计数，`—` 也是非枚举值**。
+第二轮已改回 2 / 10。）
 
 成因：`TECH.DURATION.MISMATCH`（[765](../../plans/S35-technical-qc.md)）的判定列含
 `\|actual − ShotSpec.duration\|`。朴素 `split('|')` 把这一行切成 **9 列**（其余 22 行都是 7 列），
@@ -486,7 +491,8 @@ pat = re.compile(r'^\|\s*`(TECH|VIS|AUD|SUB)\.[A-Z0-9_.]+`\s*\|')
 
 ### 8.1 数字复核（2026-11-05 第二版）
 
-上一版正文里的数字是逐个手写的，不是脚本输出。这次全部用同一口径重算，**发现 8 处对不上**，
+上一版正文里的数字是逐个手写的，不是脚本输出。这次全部用同一口径重算，**发现 10 处对不上**
+（第 9、10 处是第二轮复核出来的：第 9 处来自加 §9 之后，第 10 处在 `contracts/README.md`），
 已就地改正（另有一组复核确认为真，列在后面的对照组）。记录格式：原写 → 正确 → 错因。
 
 | # | 位置 | 原写 | 正确 | 错因 |
@@ -499,6 +505,8 @@ pat = re.compile(r'^\|\s*`(TECH|VIS|AUD|SUB)\.[A-Z0-9_.]+`\s*\|')
 | 6 | §10.7 盘点合计 F 行 | 「其余 **94** 条 check，散文里一个字都没有」 | **55 条**（14 行被点名 + 30 行仅被族级覆盖 + 55 行无散文 = 99） | 94 是拿"99 − 5（A 类散文条目）"减出来的，但 A–E 数的是**散文条目**，不是**行**：一条族级散文（[S36:174](../../plans/S36-semantic-qc.md)）落在 30 行上，一条测试断言（[S38:456](../../plans/S38-subtitles.md)）落在 0 行上，A3/A4/A5 里 A4 根本不在 99 行内。分子分母口径不同，相减无意义。这类"条目数减行数"的错误和 §8.1 第 1 处的"减法漂移"是同源 |
 | 7 | §9.3 「其余 9 个族 / 62 条」 | 9 个族、**62** 条 | **10 个族、65 条**（97 − 32） | 两个错各自独立：族数少算 1（13 个非空族 − 3 个可按族拍定 = 10，原来写成 9），条数则既与族数不自洽（62 ≠ 97 − 32 = 65），也和 §9.3 下一段自己写的"另外 10 个族（合计 65 条）"直接冲突——同一节里两个数并存，和 §8.1 第 1 处是同一种毛病。已在表下补上 65 的逐族加总，以后可以逐行验 |
 | 8 | §9.3 末段「正文完全没提」的族清单 | 列了 `costume`/`prop`/`anatomy`/`hands`/`action_adherence`/`camera_adherence`，末尾接「之外的几个」 | 恰好 **6 个族**，没有"之外的"；且 `camera_adherence` 不能出现在这里 | 这句话把 `camera_adherence` 同时写进了两个互斥集合——上一段刚说它"可以按族拍定（3 条）"，末段又说它"正文完全没提"。它确实没提，但"没提"不影响它能否拍定（候选值 `shot` 无争议）。真正既没提、又要逐族拍的 6 个族是 `anatomy`/`hands`/`costume`/`prop`/`action_adherence`/`camera_adherence`，"之外的几个"是一句没算过的收尾。已删掉该短语 |
+| 9 | §9.3 表下「65 的逐族加总」 | 「identity 3 + anatomy 2 + hands 3 + costume 3 + prop 2 + continuity 8 + action_adherence 3 + temporal 7 + voice 10 + technical 23 = 65」 | 这十项相加是 **64**；第 65 条是 [S36:236](../../plans/S36-semantic-qc.md) `VIS.SAFE_AREA.TEXT_OVERLAP`（`defect_type=subtitle`，但查画面） | 第 7 处修完后按承诺"逐行验"，验出加总比被加数少 1。写加总时按"其余 10 个族"取族，而 S36:236 虽是 `subtitle` 类型却不在 S38 那 24 条里，被两边都漏掉——**它正好是 §9.1 #10 行末自己点名的那一条**。已在加总里显式列出。同一处还补完了第 8 处没做完的修改：末段族清单里的 `camera_adherence` 当时只删了收尾短语、没从清单里删掉，与"32 条含 camera_adherence"仍冲突 |
+| 10 | `contracts/README.md` 缺口表第 4 行 | 「S35 中 **3 处**动作 / 11 处复检；实为 **1 处** / 10 处」 | **2 处**动作 / 10 处复检 | 转义管道符那个 bug 修对了（3→2），但修的时候两格用了不同口径：复检格把 `—` 算进 10 处，动作格只数了 `remux→transcode`。`TECH.META.MISSING`（[S35:783](../../plans/S35-technical-qc.md)）的 `—` 也是枚举外的值，必须计。口径写死为：**非枚举值一律计数，`—` 也是非枚举值**，两格同进同出。§5.1 正文里的 2 / 10 一直是对的，只有 README 那格错 |
 
 **复核确认为正确、未改动的数字**（同样逐条复算过，作为对照组）：
 
@@ -622,20 +630,24 @@ S37 的音频对齐；`technical`（23 条）横跨从"文件解不开"到"响�
 | `lipsync` = `shot` | 5 | 无（族单成员，路由不受影响） |
 | `camera_adherence` = `shot` | 3 | 是否接受 `change_spec` 带来的跨镜影响 |
 | `identity` = `window` | 3 | **每条的 `window_max_frames`**（`frame`/`window` 必填） |
-| 其余 10 个族 | 65 | 都还要逐族拍，且 `temporal`/`technical` 内部还要再分组 |
+| 其余 10 个族 + 1 条跨服务 `subtitle` | 65 | 都还要逐族拍，且 `temporal`/`technical` 内部还要再分组 |
 
 **能"按族一次拍定"的只有 32 条**：subtitle 24 + lipsync 5 + camera_adherence 3
 （camera 那条还要先接受 `change_spec` 的跨镜影响）。**剩下 65 条必须逐族甚至逐条拍**，
 其中 `identity` 的 3 条虽然候选值只有一个（`window`），但每条都还要另给 `window_max_frames`。
 
-（上表"其余 10 个族 65 条"就等于 97 − 32，与 §9.1 的分族人数逐族相加一致：
+（上表"其余 10 个族 + 1 条 `subtitle` 65 条"就等于 97 − 32。逐项相加：
 identity 3 + anatomy 2 + hands 3 + costume 3 + prop 2 + continuity 8 + action_adherence 3
-+ temporal 7 + voice 10 + technical 23 = 65。）
++ temporal 7 + voice 10 + technical 23 **= 64**，再加跨服务的那 1 条
+[S36:236](../../plans/S36-semantic-qc.md) `VIS.SAFE_AREA.TEXT_OVERLAP` 才等于 65。
+它 `defect_type` 是 `subtitle`，但查的是画面，不能跟着 S38 的 24 条一起拍 ——
+这正是 §9.1 #10 那一行的最后一句。不要把它折回 `subtitle` 计数里。）
 
 这是本节能给出的最强结论：**分组不是捷径。** 它有 checks 的 13 个族里，
-只有 3 个族可以真正按"同族一致"拍（合计 32 条）；另外 10 个族（合计 65 条）
+只有 3 个族可以真正按"同族一致"拍（合计 32 条：`subtitle` 24 + `lipsync` 5 + `camera_adherence` 3）；
+另外 10 个族（合计 64 条）加那条跨服务的 `subtitle`（1 条）共 65 条
 要么族内混了不同粒度（`temporal`、`technical`），要么跨镜语义枚举表达不了（`continuity`），
-要么正文对"修复范围"完全没提（`anatomy`、`hands`、`costume`、`prop`、`action_adherence`、`camera_adherence`）。
+要么正文对"修复范围"完全没提（`anatomy`、`hands`、`costume`、`prop`、`action_adherence`）。
 **把 99 条压成 14 个问题是真的；但 14 个问题里 10 个并不比原来简单。**
 
 ### 9.4 为什么不能由我代填
