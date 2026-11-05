@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 33 个 topic 带**（22 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 34 个 topic 带**（21 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -97,6 +97,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `asset.binding-set.created` | `asset.binding-set-created.v2.schema.json` | S10 §5.3 |
 | `asset.voice.authorization.changed` | `asset.voice-authorization-changed.v2.schema.json` | S15 §5.3 / §10 C15-2 |
 | `model.capability.changed` | `model.capability-changed.v2.schema.json` | S24 §3.5 |
+| `model.route.selected` | `model.route-selected.v2.schema.json` | S25 §7.1 |
 | `change.plan.applied` | `change.plan-applied.v2.schema.json` | S07 §5.5 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
@@ -630,6 +631,43 @@ S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力
 §2.1 行 46 与 §2.2 行 105 都写「共享目录行 `tenant_id = '*'`」。envelope 只要求 `minLength: 1`，
 所以 schema 不拦也不推。另外 `subject` 在这里恒等于 `aggregate_id`，是全仓库唯一这么做的生产者。
 
+### `model.route-selected.v2.schema.json`：一条决策事件，三种身份共用 `route_id`，而它唯一的回源指针缺一个键
+
+形状本身是干净的：23 个必填字段、`additionalProperties: false`、没有一处值是从散文里猜的。
+问题全在它与自己引用的权威之间。
+
+| 事件说的 | 方案里的权威 | 差在哪 |
+|---|---|---|
+| `data_ref` = `{service_id, id, revision}` | envelope 的 `data_ref` 要求四个键，`additionalProperties: false` | §7.1 行 570–574 的示例**过不了本仓库自己的校验器**（MRT-1） |
+| `selected.expected_cost_micro` = 1180000 | `selected.quote_upper_bound_micro` = 1080000 | 期望成本**大于**「上界」，而上界按 S24 §2.5 行 330 的公式是档位最坏值 × 1.15（MRT-2） |
+| `revision` = `aggregate_sequence`，outbox `UNIQUE (aggregate_id, aggregate_seq)` | `route_decision` 主键是 `route_id`（行 404），不是 `(route_id, revision)` | 这一列实际只可能是 1，重新路由只能换一个新 `route_id`（MRT-3） |
+| `projection_lag: false` | 「`bundle_revision` 比事件序列小」（§9 行 610） | 「事件序列」未定义，且无 DDL 列；S24 的 MCG-1 让它在最该为 true 时说 false（MRT-4） |
+| `degradation_offered: ["pool","spec_adjust"]` | `degradation_option.kind` 的六值 `CHECK`（行 464） | 这是本文件唯一有真 DDL 依据的枚举；但 `auto_executable` / `silent_degradation` 不在事件里（MRT-8 的反面） |
+
+`data_ref` 缺 `content_hash` 这条最要紧，因为 §7.1 行 562 的约束 1 明写「事件只带 `data_ref`；
+需要明细的一方回源查」——`data_ref` 是这条事件唯一的回源指针，而 payload 里**本来就有**
+`content_hash`（行 531，注释「与 `route_decision.content_hash` 一致，供下游核对」）。
+正确修法是把同一个值也放进 `data_ref`，不是新建字段。本仓库的示例照此写了四键；方案原文的差异记在 MRT-1。
+
+`expected_cost_micro > quote_upper_bound_micro` 不是笔误量级：两数相差 10 万微单位，约等于 `margin_bps`
+默认 1500 的 15%。S25 §3 硬过滤 #16 用 `quote_upper_bound_micro` 与 S23 的剩余可承诺额比来判 `OVER_BUDGET`，
+所以这个方向系统性地错会漏判超预算。本文件**没有**把两者绑成 `expected <= upper_bound`——
+绑了就会拒掉照 §7.1 写的一切事件，而不绑它就静默通过。哪一侧是权威，记在 MRT-2 等 owner。
+
+`revision` 这一列的设计是自洽的（一次决策一条记录，`aggregate_seq` 恒为 1，`UNIQUE` 只在重投时生效），
+但它假设一条决策永不需要第二版。而 `quote_valid_to` 会让决策作废：S26 §12 第 2 条要求
+`now() <= quote_valid_to`，否则 409 `ROUTE_QUOTE_EXPIRED` 并要求重新路由。重新路由产生**新的 `route_id`**，
+所以消费方看到两条独立的流、不是同一条流的 rev 2。「这次尝试被重路由了几次」因此不可从事件流推出——
+`command_id` 唯一（行 425）而 `attempt_id` 可复用，两条约束方向相反。本文件收 `minimum: 1` 而不锁死 1。
+
+`normalized_input` 是这份契约里最该优先解决的一处：§12 行 681 把它变成 S26 的硬校验
+（「提交给 S27 的输入规格必须等于 `normalized_input`，不能是原始请求值」），而它的字段集没有任何 schema。
+示例只有 `duration_seconds` 与 `aspect_ratio` 两个键，而视频路径的 `GenerationCommand.input` 还有
+`resolution`、`mode`、`references[]`、`audio_strategy`。本文件收 `type: object` 不约束内容，记在 MRT-9 与 `x-needs-owner`。
+
+`home_cell` 在 §7.1 的示例里是 `cn-east-1`，是本仓库唯一一个非 `cell_a1` 的示例（其余 35 份带这个键的全是
+`cell_a1`，envelope 只要求 `minLength: 1`）。本仓库的示例用 `cell_a1`，与其余示例一致。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -726,8 +764,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 33 个 payload schema
-                                                              （见上表；其余 22 个 envelope-only）
+                                        └──data_schema_ref──▶ 34 个 payload schema
+                                                              （见上表；其余 21 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -740,11 +778,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（104 个 JSON 解析）、`payloads`（88 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 33 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（106 个 JSON 解析）、`payloads`（89 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 34 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（49 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（50 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

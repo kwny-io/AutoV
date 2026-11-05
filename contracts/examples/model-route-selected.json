@@ -1,0 +1,61 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "source": "S25",
+  "type": "model.route.selected",
+  "subject": "route_decision/route_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "time": "2026-10-30T03:12:00Z",
+  "tenant_id": "tnt_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "home_cell": "cell_a1",
+  "aggregate_id": "route_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "aggregate_sequence": 1,
+  "correlation_id": "run_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "causation_id": "cmd-s21-0001",
+  "traceparent": "00-7a1c9f3750b8d2e4a6c8f0b2d44d8b2e-7a1c9f3750b8d2e4-01",
+  "data": {
+    "schema_version": "2.0",
+    "route_id": "route_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "revision": 1,
+    "content_hash": "c41e8b0d2f6a9483570c1b2d4e6f8a0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c",
+    "project_id": "prj_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "series_id": "ser_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "episode_id": "ep_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "branch_id": "br_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "node_id": "shot_07",
+    "node_epoch": 3,
+    "execution_fence": 11,
+    "attempt_id": "att_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "command_id": "cmd-s21-0001",
+    "feasible": true,
+    "selected": {
+      "candidate_key": "seedance/volcengine/seedance-1-0-pro@250528#cn-beijing#pool_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+      "snapshot_id": "9f2c1b4d6a8e0c2f4b6d8a0e2c4f6b8d0a2e4c6f8b0d2e4a6c8f0b2d4e6a8c0e",
+      "combination_key": "6b3d9f1c4a7e0b2d5f8a1c4e7b0d3f6a9c2e5b8d1f4a7c0e3b6d9f2a5c8e1b4d",
+      "normalized_input": {
+        "duration_seconds": 5,
+        "aspect_ratio": "9:16"
+      },
+      "expected_cost_micro": 940000,
+      "quote_upper_bound_micro": 1080000,
+      "currency": "USD"
+    },
+    "infeasible_reason": null,
+    "eligible_count": 3,
+    "rejected_count": 12,
+    "degradation_offered": [
+      "pool",
+      "spec_adjust"
+    ],
+    "policy_snapshot_id": "pol_snap_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "capability_bundle_revision": 812,
+    "quote_valid_to": "2026-10-30T03:27:00Z",
+    "projection_lag": false
+  },
+  "data_ref": {
+    "service_id": "S25",
+    "id": "route_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "revision": 1,
+    "content_hash": "c41e8b0d2f6a9483570c1b2d4e6f8a0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c"
+  }
+}
