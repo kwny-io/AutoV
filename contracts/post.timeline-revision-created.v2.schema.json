@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/post.timeline-revision-created.v2.schema.json",
+  "title": "post.timeline.revision.created payload v2",
+  "description": "event `post.timeline.revision.created` 的 data 部分。定义在 plans/S41-editorial.md §6.3 行 617–628（示例），字段取自 §5 的 `editorial.timeline` / `editorial.timeline_revision` / `editorial.timeline_diff` 三张表。**这是 S41 唯一发布的事件**（§6.3 行 613–615 另外两条只是「建议补充（缺口 C3）」，不在 `event-topics.v2.json` 里）。**`data` 刻意不含片段完整内容与媒体 URL**（行 630）：800 个片段塞进 Kafka 会让每个消费者都解析一遍它不关心的东西，大负载走 `data_ref` 指向 revision（docs/04 §4）。**201 不表示「已接受」**（行 592–594）：只表示新 revision 已提交，接受与否由 S08 决定——`SUPERSEDED` / `VOIDED` 的 `TimelineRevision` 在这条事件里没有任何表示（见 PTR-4）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "timeline_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 619（示例 `tl_ep3`）与 §5 行 342。与 envelope 的 `aggregate_id` 同值（§6.3 行 613：「`aggregate_id = timeline_id`」），partition key 为 `tenant_id:timeline_id`。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§6.3 行 619（示例 `10`）与 §5 行 371（`revision integer NOT NULL CHECK (revision >= 1)`）。**不是包的版本、是时间线单调递增的提交序号**：§3.2 行 158 `current_revision: 1 → 2 → 3 ...（严格单调）`。§5 行 397 还有 `CONSTRAINT tr_base_lt CHECK (base_revision < revision)`。**这条事件不携带 `base_revision`**——CAS 的 expected_revision 只在提交响应里（行 585），事件消费方无法据此判断自己看到的 revision 是接在哪一版之后的（见 PTR-3）。"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§6.3 行 619（示例 `sha256:...`）与 §5 行 373（`content_hash char(64) NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$')`）。**裸 64 位小写 hex，不带 `sha256:` 前缀**——DDL 这条 CHECK 是全仓库少有的、直接把 contracts 的写法写进库的约束；§6.3 与 §4.3 的示例仍写 `sha256:`，与它自相矛盾（见 PTR-1）。§5 行 399 还有 `CREATE UNIQUE INDEX tr_hash_uniq ON editorial.timeline_revision (tenant_id, timeline_id, content_hash)`：同一时间线上内容完全相同的两个 revision 会撞唯一键——**重算 EDL 得到同一结果的提交不是幂等重放，是被拒绝**（§4.5 行 328 把「同一 revision 重算 EDL 结果不同」列为告警，但没写相同时怎么办）。"
+    },
+    "duration_ticks": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§6.3 行 620（示例 `5400000`）与 §5 行 385（`duration_ticks bigint NOT NULL CHECK (duration_ticks >= 0)`）。单位是 tick，不是秒：§5 行 351 `tick_rate integer NOT NULL DEFAULT 90000`（90kHz），所以示例的 5400000 tick 正好 60 秒。**消费方必须自己除以 `tick_rate` 才能得到时间**，而这个事件**不发 `tick_rate`**——默认值可以变（它是 `DEFAULT`，不是固定常量），消费方硬编码 90000 会随 S41 改默认值而错（见 PTR-2）。"
+    },
+    "completeness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "incomplete"
+      ],
+      "description": "来源：§6.3 行 621（示例 `complete`）与 §5 行 386（`completeness text NOT NULL CHECK (completeness IN ('complete','incomplete'))`）。两个值照收——DDL 有 CHECK。**`incomplete` 的 revision 是合法的**（§4.4 行 312：「可以提交、可以预览」），不是错误态。`gaps` 明细（§4.4 行 298–306 的六种 `kind`）**不进事件**（见 PTR-5）。"
+    },
+    "formal_master_eligible": {
+      "type": "boolean",
+      "description": "来源：§6.3 行 621（示例 `true`）。**这是计算字段，DDL 里没有这一列**——它由 `completeness` 派生（§4.4 行 314：「`incomplete` 的 revision 可以提交、可以预览，但 `formal_master_eligible=false`」）。本 schema 不表达这个等式：JSON Schema 无法约束 `formal_master_eligible == (completeness == 'complete')`，只能靠 S41 保证。**这一位是 E37 在 S41/S42 之间的落点**（行 315）：S42 收到 `false` 做正式 master 必须返回 422 `INCOMPLETE_TIMELINE`，不是尽力而为。**但它只是提交时刻的快照**：§4.4 行 317 明说 `gaps` 是快照、S42 渲染前必须重新向 S28/S38/S15 复查——「快照用于解释，实时复查用于放行」。所以 `true` 不代表现在仍可正式合成，`false` 也可能已经被补上了。"
+    },
+    "built_against": {
+      "type": "object",
+      "description": "来源：§6.3 行 622（示例 `{\"manifest_ref\":{...},\"execution_fence\":2,\"node_epoch\":4}`）与 §5 行 376–379（`built_against jsonb NOT NULL`，注释 `{manifest_ref, execution_fence, node_epoch, shot_revisions:[...], memo_checkpoint}`）。**注释里五个键，示例只画了三个**：`shot_revisions` 与 `memo_checkpoint` 完全没有示例、没有类型、也没有任何一处说明其形状。本 schema 只收这三个有示例的键，另外两个列进 x-needs-owner——从一句列注释推断它们的结构会让 schema 变成 S41 没同意过的契约。",
+      "properties": {
+        "manifest_ref": {
+          "type": "object",
+          "description": "§6.3 行 622 示例写作 `{...}`（未展开），§5 行 381 的索引 `USING gin ((built_against -> 'manifest_ref'))` 说明它是一个对象。**内部形状全文未定义**：既没说是 `{id, revision}` 还是 S08 manifest 的完整引用，也没说是否含 `content_hash`。本 schema 只要求它是对象、非 null，内部键全部放开（`additionalProperties: true`）——收窄就等于替 S41 定形状。注意 `built_against.manifest_ref` 与 §3.1 行 145 的 `execution_fence` 失效判定是两件事：前者是「基于哪版生产状态剪的」，后者是「剪完之后 fence 有没有推进」。",
+          "additionalProperties": true
+        },
+        "execution_fence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "§6.3 行 622 示例 `2`。**这是 S41 缓存的投影，权威在 S08**（§3.2 行 162–164：「`execution_fence` 归 S08，S41 只是缓存它的投影」）。作用域是 run/branch（AGENTS.md 速查表），不是 timeline 自己的版本号——`lock_version` 才是（§3.2 行 159，且 `lock_version` 不进事件）。"
+        },
+        "node_epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "§6.3 行 622 示例 `4`。作用域是单个 `logical_node`（AGENTS.md 速查表），与 `execution_fence` 不可混用：旧 epoch 的结果永远不能推进当前接受指针。两者同时出现在一条 payload 里时，消费方必须分别判断「fence 变了 → 整条分支作废」与「epoch 变了 → 这个节点要重生成」，判据不同（见 PTR-6）。"
+        }
+      },
+      "required": [
+        "manifest_ref",
+        "execution_fence",
+        "node_epoch"
+      ],
+      "additionalProperties": false
+    },
+    "diff_ref": {
+      "type": "object",
+      "description": "来源：§6.3 行 623–624（示例 `{\"timeline_id\":\"tl_ep3\",\"from_revision\":9,\"to_revision\":10,\"diff_hash\":\"sha256:...\"}`）与 §5 行 461–472（`editorial.timeline_diff` 表，主键 `(tenant_id, timeline_id, from_revision, to_revision)`）。**这是一个引用，不是 diff 本身**——完整 `TimelineDiff` 在 `timeline_diff.payload` 里，消费方要拿得再查（§6.2 的查询接口）。`from_revision` 只出现在这里，顶层的 `revision` 就是 `to_revision`。",
+      "properties": {
+        "timeline_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "§6.3 行 623 示例 `tl_ep3`。与顶层 `timeline_id` 重复——同一对象里发了两遍。本 schema 照着示例收，不消除这个冗余。"
+        },
+        "from_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "§6.3 行 623 示例 `9`。对应 §5 行 464 的 `from_revision`。§5 行 470 `CONSTRAINT diff_forward CHECK (to_revision > from_revision)`：diff 只能向前，`from_revision >= to_revision` 的行在库里不存在。"
+        },
+        "to_revision": {
+          "type": "integer",
+          "minimum": 2,
+          "description": "§6.3 行 623 示例 `10`。**必须等于顶层的 `revision`**——两者是同一个量（§5 行 371 的 revision 就是这次提交的序号）。JSON Schema 无法表达跨字段相等，靠 S41 保证。`minimum: 2` 是因为 `diff_forward` 要求 `to_revision > from_revision >= 1`。"
+        },
+        "diff_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "§6.3 行 624 示例 `sha256:...`，裸 hex 同 `content_hash`。对应 §5 行 465（`diff_hash char(64) NOT NULL`）。**全文没给算式**——`content_hash` 与 `diff_hash` 都是 `char(64)`，但只有 `content_hash` 有 CHECK 约束格式。"
+        }
+      },
+      "required": [
+        "timeline_id",
+        "from_revision",
+        "to_revision",
+        "diff_hash"
+      ],
+      "additionalProperties": false
+    },
+    "affected_ranges": {
+      "type": "array",
+      "description": "来源：§6.3 行 626（示例 `[...]`，**未展开**）。§6.3 的注释只说「冗余进事件：下游不必再回源拉 diff 才能决定要不要重算」。**这个字段名与它在别处的名字不一致**：§4.3 行 274 的完整 `TimelineDiff` 叫 `affected_output_ranges`，§4.3 行 288 的正文与 plans/S42-composition.md 行 305 的消费逻辑也用它，§5 行 466 的 DDL 列才叫 `affected_ranges`。事件跟的是 DDL 列名，不是消费方用的字段名——见 PTR-1。元素的形状按 §5 行 466 的列注释（`-- [{start,end}] ticks，已合并`）取：两个整数键、单位 tick、闭开区间、已合并（§4.3 行 288「是并集，不是逐 clip 列表」）。**`[...]` 在示例里是省略号，本 schema 的 `[start, end]` 形状来自 DDL 注释而非示例**——这是本文件里唯一一处形状来自注释的地方，已在 PTR-1 里连带说明。",
+      "items": {
+        "type": "object",
+        "description": "§5 行 466 的 `[{start,end}]` 中一个区间。闭开区间（`start` 含、`end` 不含），单位 tick。",
+        "properties": {
+          "start": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "区间起点，含。单位 tick（§5 行 351 的 `tick_rate`，默认 90000）。"
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "区间终点，不含。**必须大于 `start`**——空区间不应出现（已合并的并集不含空段）。JSON Schema 无法表达跨字段比较，靠 S41 保证。"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "affected_tracks": {
+      "type": "array",
+      "description": "来源：§6.3 行 627（示例 `['v1','a1','a_sfx','a_bgm']`）与 §5 行 467（`affected_tracks text[] NOT NULL`）。轨道 id 列表，**不是闭集**：轨道的合法 id 由时间线自己定义（§5 的 `editorial.track` 表），本 schema 只要求非空字符串。**空数组是合法的**：一个只改元数据、不动任何轨道的提交仍然会产生新 revision。§4.3 行 276 的完整 `TimelineDiff` 里还有 `change_causes`（行 279–282），**不进事件**。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "timeline_id",
+    "revision",
+    "content_hash",
+    "duration_ticks",
+    "completeness",
+    "formal_master_eligible",
+    "built_against",
+    "diff_ref",
+    "affected_ranges",
+    "affected_tracks"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`built_against.shot_revisions` 的形状",
+      "demanded_by": "plans/S41-editorial.md §5 行 376–379（`built_against jsonb NOT NULL, -- {manifest_ref, execution_fence, node_epoch, shot_revisions:[...], memo_checkpoint}`）",
+      "s41_status": "**只有一句列注释里的名字**。`shot_revisions` 在 §6.3 的示例（行 622）、§4 的关键流程、§6.1 的命令体中都没有出现过；没有元素结构、没有示例、没有类型。本 schema 不收这个键（`built_against` 的 `additionalProperties: false` 只放 `manifest_ref` / `execution_fence` / `node_epoch` 三个有示例的），S41 若真发它会**被本 schema 判为非法**。补齐需要 S41 给出形状：至少是 `[{shot_id, revision}]` 还是 `{shot_id: revision}` 这一点没写。"
+    },
+    {
+      "field": "`built_against.memo_checkpoint` 的键名与形状",
+      "demanded_by": "plans/S41-editorial.md §5 行 379（`memo_checkpoint`）与 plans/S08-revision-snapshot.md 行 425（`MEMORY_CHECKPOINT_BEHIND`，依据 `memory_checkpoint.commit_sequence`）",
+      "s41_status": "两处**拼写不一致**：S41 写 `memo_checkpoint`，S08 的错误码与它读的字段都写 `memory_checkpoint`。S41 全文只出现这一次（grep 只有行 379 一处），S08 也只出现一次。看不出是简称还是笔误。本 schema 不收这个键。要定的是：键名是 `memo_` 还是 `memory_`，以及它的形状是不是 `{commit_sequence, checkpoint_id}`（S08 读的是 `commit_sequence`，其余未知）。"
+    },
+    {
+      "field": "`manifest_ref` 的内部形状",
+      "demanded_by": "plans/S41-editorial.md §6.3 行 622（示例 `{...}`）与 §5 行 381（`USING gin ((built_against -> 'manifest_ref'))`）",
+      "s41_status": "示例直接写 `{...}`，正文没有任何一处展开它。与之对照，§4.4 行 301 的 gap 示例里 `expected_ref` 和 `asset_ref` 都画了完整结构（后者甚至带 `service_id` / `id` / `revision`，与 contracts 的 `artifact_ref` 同构）。这说明作者知道怎么写引用，`manifest_ref` 的省略是刻意的还是遗漏，无法判断。本 schema 放开内部键（`additionalProperties: true`）而不猜。若 S41 想与既有 `artifact_ref` 对齐全仓库的写法，应主动给出 `{\"service_id\":\"S08\", id, revision, content_hash}` 这样的形状。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PTR-1",
+      "summary": "同一个量有三个名字：DDL 列叫 affected_ranges，完整 diff 叫 affected_output_ranges，消费方查的也是后者，事件跟的是前者",
+      "s41_diff": "§4.3 行 274（`\"affected_output_ranges\"`，注释「合并后的闭开区间，单位 tick」）；行 288「**`affected_output_ranges` 是并集，不是逐 clip 列表**」；行 292「`affected_output_ranges` 是**保守超集**」；行 231 的传播链图同样用 `affected_output_ranges`",
+      "s41_ddl": "§5 行 466：`affected_ranges    jsonb NOT NULL,   -- [{start,end}] ticks，已合并`",
+      "s41_event": "§6.3 行 626：`\"affected_ranges\":[...],   // 冗余进事件`",
+      "consumer": "plans/S42-composition.md 行 305–313：正文写「S41 给了 `affected_output_ranges`。S42 的复用判定：」，紧接着的伪代码里却写 `s.intersects(affected_ranges)`——**同一段里两个名字**",
+      "why_it_matters": "三个名字指同一个区间集合，但事件只发其中一个。S42 的正文用 `affected_output_ranges`、它自己的伪代码用 `affected_ranges`、事件发的是 `affected_ranges`——三个地方要碰对两个才能跑通。取错名时得到的是 `undefined` 而不是异常，于是「哪些段要重算」退化成「全都要重算」或「都不用重算」，两种都静默。前者的代价是整集重渲染（§4.3 行 292 明说「多算的代价是一次多余重渲染」），后者更糟：§4.3 行 292「少算的代价是交付里字幕对不上口型」。更麻烦的是**这条事件的区间形状只在 DDL 的一句列注释里**（`[{start,end}]`），§6.3 与 §4.3 的示例都把数组画成 `[...]` 省略号——所以本 schema 的 `start`/`end` 形状取自注释而非示例，这在本仓库的规矩里是需要点名的例外（contracts/README「不从散文推断这些值」）。要定的是：统一到一个名字（建议事件与完整 diff 都用 `affected_output_ranges`，DDL 列名作为内部实现自由），并把元素的键名写进示例。"
+    },
+    {
+      "id": "PTR-2",
+      "summary": "事件的时长单位是 tick，但 tick_rate 只在 DDL 的 DEFAULT 里且不进事件",
+      "s41_ddl": "§5 行 351：`tick_rate integer NOT NULL DEFAULT 90000 CHECK (tick_rate > 0)`；§5 行 385 `duration_ticks bigint NOT NULL`；§5 行 466 的区间注释「单位 tick」",
+      "s41_event": "§6.3 行 620 与行 626–627：发 `duration_ticks`、`affected_ranges`，**不发 `tick_rate`**，正文也没有任何一处说「tick 固定 90kHz」",
+      "why_it_matters": "`tick_rate` 是 `DEFAULT 90000` 而不是常量——按 §5 开头的说明「无金额、无浮点计算（tick 用 bigint）」，选 tick 正是为了避免浮点，但 tick 的换算率本身是可配置的列。消费方拿到 5400000 要变成秒，只能自己乘一个换算率；事件不给，就只能硬编码 90000。一旦某条时间线用了别的 `tick_rate`（列允许），同一个 `duration_ticks` 在消费方算出来的时长就错——而这条事件恰好要被 S38（字幕时码，§4.3 行 292 说漏算会让「字幕对不上口型」）和 S42（合成区间）使用，两者都对时长敏感。`fps_num` / `fps_den`（§5 行 349–350）同样不进事件，而 §5 的 EDL 表用帧（行 456 的 `record_in_frame` / `record_out_frame`）——tick 与帧之间还隔着这两个数。要定的是：`tick_rate`（可能还有 `fps_num`/`fps_den`）是否进事件；若不进，正文必须把「tick 恒为 90kHz」写成不变量，否则这个列就不该是可变默认值。"
+    },
+    {
+      "id": "PTR-3",
+      "summary": "content_hash 有唯一索引，但事件与示例都没说「重算得到同一结果」时该走幂等还是拒绝",
+      "s41_index": "§5 行 399：`CREATE UNIQUE INDEX tr_hash_uniq ON editorial.timeline_revision (tenant_id, timeline_id, content_hash);`",
+      "s41_flow": "§4.5 行 328：「同一 revision 重算 EDL 结果不同 | 自检 | 告警 + 拒绝提交 | EDL 是 revision 的纯函数」",
+      "s41_idempotency": "§7.1 行 638–645：幂等键是 `tenant_id + command_id + request_hash`，同键不同 body → 409（AGENTS.md 同条）",
+      "why_it_matters": "唯一索引约束的是 `(tenant_id, timeline_id, content_hash)`，不是命令——所以两个**不同** `command_id` 但产出相同 `content_hash` 的提交（例如编辑器重连后原地重发、或者两个用户做了同样的修改）会在索引上撞键。§4.5 只讨论了「结果不同」的情形，没写「结果相同」该当幂等返回还是报冲突。若报冲突，客户端会看到 500/409 而没有可恢复路径；若当幂等返回，返回的 revision 号与这次提交的不匹配（那个 revision 号属于第一次提交）。这条事件是在提交成功后发的，所以撞键时不会有事件——消费方看到的是「提交没成功、也没有 revision」，与 §4.5 行 322「提交事务内崩溃 → 事务整体回滚…无半成品 revision」在外部看起来完全一样。要定的是：`content_hash` 重复时返回什么（复用已有 revision？409 带 `existing_revision`？），并把它写进 §3.3 的拒绝码表。"
+    },
+    {
+      "id": "PTR-4",
+      "summary": "TimelineRevision 有三态和两条出边，但这条事件只覆盖入口的那一态",
+      "s41_machine": "§3.1 行 140–156：`COMMITTED` → `SUPERSEDED`（被新 revision 取代）、`COMMITTED` → `VOIDED`（fence 失效 / 分支作废），**终态不回退**",
+      "s41_ddl": "§5 行 374–375：`state text NOT NULL CHECK (state IN ('COMMITTED','SUPERSEDED','VOIDED'))`",
+      "s41_events": "§6.3 行 613–615：只发 `post.timeline.revision.created`。`SUPERSEDED` 与 `VOIDED` 没有任何事件；§6.3 行 614 的「建议补充（缺口 C3）」是另外两条（`post.timeline.stale` / `post.timeline.completeness.changed`），**都不覆盖这两个状态**",
+      "why_it_matters": "`VOIDED` 的语义最重：§3.1 行 153「`VOIDED` 的 revision **永远不能**再被 S42 用于渲染正式 master」。S42 的 422 `INCOMPLETE_TIMELINE` 只筛掉 `formal_master_eligible=false` 的（plans/S42 行 253、行 272），**不筛 `VOIDED`**——一个已经 VOIDED、但 `complete` 的 revision 在 S42 的判定里是通过的。所以 S42 必须另有办法否决被作废的 revision，而事件流不提供：它只能在渲染前**主动回查** S41 的 revision 状态，或者靠消费 `snapshot.manifest.committed`（§6.3 行 615）自己推 invalidation 规则。后者要求 S42 复刻 S41 的规则，正是 §4.3 行 288 反对的做法（「逐 clip 会让 S38/S42 各写一套区间合并逻辑，容易漏重叠」——同一逻辑抄两次就是同一类错）。`SUPERSEDED` 稍轻（历史仍可读、仍作证据，行 152），但一个只按 `created` 事件建投影的看板会把被取代的 revision 当成当前版。要定的是：`VOIDED` 是否单独发事件（它关系到「不能用于正式渲染」，属于必须传播的事实），或 S42 是否被明确要求每次正式渲染前回查 S41。"
+    },
+    {
+      "id": "PTR-5",
+      "summary": "completeness 只有两值，但让它变 incomplete 的六种 gap 全都不进事件",
+      "s41_gaps": "§4.4 行 298–306：六种 `kind`——`missing_artifact` / `hash_mismatch` / `missing_subtitle_track` / `missing_stem` / `insufficient_handles` / `rights_expired`；§5 行 387 `gaps jsonb NOT NULL DEFAULT '[]'::jsonb`",
+      "s41_event": "§6.3 行 617–628 的 `data` **没有 `gaps`**，只有 `completeness` 与 `formal_master_eligible` 两个布尔/枚举",
+      "why_it_matters": "`completeness` 收成两值是有 DDL CHECK 依据的，所以本 schema 收 `enum` 是对的。但事件消费方拿到 `incomplete` 之后**无事可做**：要显示「缺什么素材」（S47 的工作台、以及 §4.4 行 306 说权利类 gap「只能由 S15/S02 解除」，即需要把 `rights_expired` 的 `asset_ref` 交给 S15 那条链路），必须回查 S41 的 revision 详情。而 §6.3 行 626 已经给 `affected_ranges` 加了「冗余进事件：下游不必再回源拉 diff 才能决定要不要重算」的理由——同一个理由对 `gaps` 同样成立，却只应用在了 diff 上。另外 §4.4 行 317 明说 `gaps` 是提交时刻的快照、S42 渲染前必须重新复查，所以**事件里放 gaps 也不会让人误以为是当前值**（这句话已经写在正文里了）。要定的是：`gaps` 是否进事件；若不进，明写「要理由必须回查」。"
+    },
+    {
+      "id": "PTR-6",
+      "summary": "built_against 同时带 execution_fence 与 node_epoch，但两者失效的判定不同，事件不区分",
+      "agp": "AGENTS.md「版本与一致性速查」：`execution_fence` 作用域是 run / branch（取消、故障切换）；`node_epoch` 作用域是单个 `logical_node`（局部重生成）；「两者不能混用。旧 epoch 的结果永远不能推进当前接受指针」",
+      "s41": "§3.2 行 162–164：`execution_fence` 归 S08，S41 只是缓存投影；「任何提交都必须带 `expected_execution_fence`；与本地投影不一致 → 409 `STALE_FENCE`」；§3.1 行 153：`VOIDED` 用于 fence 推进后把在途候选标记为作废",
+      "why_it_matters": "两个游标在同一对象里，语义却不同：fence 变了是**整条分支作废**（revision 直接 VOIDED），epoch 变了只是**这个节点的产物要重生成**（revision 是否还能用取决于它引用的节点）。事件把两者并排放在 `built_against` 里，没有任何键说明「哪个变了会毁掉这个 revision」。消费方若用一个通用规则（「任一不等就丢弃」）会过度失效——epoch 推进一个与这条时间线无关的节点时，整条时间线被无谓地重剪；若「任一相等就保留」则漏失效。§4.3 行 231 的传播链图里写的是 `affected_output_ranges = [旧位置, 新位置 的并集]`，只处理了位置变化，没处理游标失效。这个 payload 是本仓库第八个同时携带两个游标的 schema——另外七个是 `execution-context.v2`、`episode-manifest.v2`、`generation.job-state-changed.v2`、`review.decision-recorded.v2` 与三个 `quality.*.completed.v2`；`production.image-ready.v2` 也有两个游标，但它把 epochs 那个叫 `node_epoch_input`，连名字都不统一。每一处都要消费者自己重新推导失效规则——而推导依据分散在 AGENTS.md 与原计划里，不在任何 schema 里。要定的是：是否有一个统一的「哪个游标变化导致什么失效」的契约（例如把两者拆成 `fence_changed_by` / `epoch_changed_for` 这样的显式字段），还是继续让每个消费者抄一遍 AGENTS.md 那两句。"
+    }
+  ]
+}
