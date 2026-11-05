@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 34 个 topic 带**（21 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 35 个 topic 带**（20 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -99,6 +99,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `model.capability.changed` | `model.capability-changed.v2.schema.json` | S24 §3.5 |
 | `model.route.selected` | `model.route-selected.v2.schema.json` | S25 §7.1 |
 | `change.plan.applied` | `change.plan-applied.v2.schema.json` | S07 §5.5 |
+| `storyboard.shot.revision.created` | `storyboard.shot-revision-created.v2.schema.json` | S06 §4.3 / §11 C3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -627,7 +628,7 @@ S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力
 `outbox` 也没有，全仓库没有对应的 `CHECK`。本文件照 `contracts/README.md` 的原则收 `minLength: 1`
 而不枚举，词表归属记在 `x-needs-owner`。
 
-`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 49 份示例是 `tnt_` 前缀或 `tenant_demo`）。它有据：
+`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 51 份示例是 `tnt_` 前缀或 `tenant_demo`）。它有据：
 §2.1 行 46 与 §2.2 行 105 都写「共享目录行 `tenant_id = '*'`」。envelope 只要求 `minLength: 1`，
 所以 schema 不拦也不推。另外 `subject` 在这里恒等于 `aggregate_id`，是全仓库唯一这么做的生产者。
 
@@ -665,8 +666,40 @@ S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力
 示例只有 `duration_seconds` 与 `aspect_ratio` 两个键，而视频路径的 `GenerationCommand.input` 还有
 `resolution`、`mode`、`references[]`、`audio_strategy`。本文件收 `type: object` 不约束内容，记在 MRT-9 与 `x-needs-owner`。
 
-`home_cell` 在 §7.1 的示例里是 `cn-east-1`，是本仓库唯一一个非 `cell_a1` 的示例（其余 35 份带这个键的全是
-`cell_a1`，envelope 只要求 `minLength: 1`）。本仓库的示例用 `cell_a1`，与其余示例一致。
+`home_cell` 在 §7.1 的示例里是 `cn-east-1`，是本仓库唯一一个非 `cell_a1` 的示例（其余 36 份带这个键的全是
+`cell_a1`，envelope 只要求 `minLength: 1`；S06 §4.2/§4.3 又写了一处 `cell-a1`，与 S25 这处并列）。本仓库的示例用 `cell_a1`，与其余示例一致。
+
+### `storyboard.shot-revision-created.v2.schema.json`：一条事件的聚合键漏了分支，唯一的消费者建不出主键
+
+八个字段，形状都不难。问题同样不在形状，而在**它和它自己的 outbox、和它唯一的消费者之间的关系**：
+
+| 权威说的 | 另一处权威说的 | 后果 |
+|---|---|---|
+| `aggregate_id = shot_id`（§4.3 行 575） | `storyboard.shot` 主键是 `(tenant_id, branch_id, shot_id)`（§5.4 行 686） | 分支分叉沿用 `shot_id`（§3.2.3、T06-09），两分支同号 revision 撞 outbox 的 `UNIQUE`（SRC-2） |
+| payload 八个键，没有 `branch_id` | S09 `lineage_edge` 的 `branch_id text NOT NULL`，全部索引首维 | 唯一的消费者（S09 写 `SHOT_FIELD_DEPENDS`）建不出这一行（SRC-3） |
+| `changed_fields: ["camera.angle"]`（§4.3 行 577、T06-20） | S09 `CHECK (field_path ~ '^(/[^/]*)+$')`，示例 `/beats/2/action` | 点号与 JSON Pointer 两种写法，转换规则无人定义（SRC-4、SRC-5） |
+| `source_storyboard_ref` 两个键 | 同文件 `breakdown_ref` 三个键（带 `content_hash`，§4.2 行 556） | 引用无法核对是否读到同一版（SRC-8） |
+| `content_hash: "sha256:..."` | `char(64)`（§5.5 行 710）、`^[0-9a-f]{64}$`（envelope 的 `data_ref`、S09 的 `edge_hash_shape`） | 照示例抄，写库与过信封各拒一次（SRC-4 的同一根因） |
+
+**SRC-2 是这一批事件里唯一一个会让写入直接失败的**，不是不一致而是回滚：`outbox` 没有
+`branch_id` 列，`UNIQUE (aggregate_id, aggregate_sequence, event_type)` 里也没有（§5 行 789–801），
+而 `partition_key` 是 `tenant_id:aggregate_id`，同样不含分支。于是分支 A 与分支 B 的同一镜
+各写一次 rev 6，就撞同一条唯一键；由于 outbox 与业务写在同一事务里，**撞了等于整笔单镜重写回滚**。
+根因是聚合键少了一个维度——`shot` 的身份本来就是 `(branch_id, shot_id)`，事件只用了后半截。
+修法两条互斥（把 `branch_id` 拼进 `aggregate_id`，或在 outbox 唯一键里补列），本文件不选边。
+
+`changed_fields` 这一列还藏着两个 E03 才能暴露的洞：`beats` / `dialogue` 是数组，
+`changed_fields` 无法寻址元素——`/beats/2/action` 这种写法在 S09 的边定义里出现过（行 74），
+在 S06 的示例里从没出现过；而 `beats` 的元素**没有 id**（`shot-spec.v1` 的 `items` 只有
+`time_range` 与 `action`），只能按序号寻址，插入一条就整体平移。另一个洞是增、删、重排
+三类变更在「这个字段的值变了」这个表示法里无处安放，而 `shot_order` / `display_shot` 正是
+revision 自己的列（§5.5 行 704–705）。
+
+与 S25 那一条同一类：**§4.3 的示例也过不了本仓库的校验器**——缺 12 个信封键，其中包括
+`data_ref`。而同一节行 584 那句「这条事件在 `event-topics.v2.json` 中不存在」是错的：
+括号里就是它自己的名字，目录里也登记着；真正缺席的是上一节 §4.2 的 `storyboard.revision.created`
+（`drama.storyboard.v2` 上只登记了本事件一个类型）。§11 C3 记录了这个缺口，但给的路径
+`contracts/events/...` 在本仓库不存在——payload schema 一律平铺在 `contracts/` 下。
 
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
@@ -764,8 +797,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 34 个 payload schema
-                                                              （见上表；其余 21 个 envelope-only）
+                                        └──data_schema_ref──▶ 35 个 payload schema
+                                                              （见上表；其余 20 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -778,11 +811,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（106 个 JSON 解析）、`payloads`（89 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 34 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（108 个 JSON 解析）、`payloads`（89 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 35 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（50 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（51 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

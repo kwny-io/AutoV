@@ -74,6 +74,7 @@ SCHEMA_OF = {
     "review-decision-recorded": "event-envelope.v2.schema.json",
     "scheduler-permit-changed": "event-envelope.v2.schema.json",
     "snapshot-manifest-committed": "event-envelope.v2.schema.json",
+    "storyboard-shot-revision-created": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }
 
