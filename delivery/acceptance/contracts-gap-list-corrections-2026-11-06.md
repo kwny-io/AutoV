@@ -219,3 +219,59 @@ print('example json', len(glob.glob('contracts/examples/*.json')))
 （含 `contracts/examples/*.json`、`contracts/service-catalog.v2.json`、`docs/design-package/` 下
 的存档、生成物等），不是 `contracts/*.schema.json`。这两个数不能互相校验，这也是 L962 那句话
 容易失守的原因——它没有对应的恒等式，只能靠每轮重跑 `check_all` 时顺手回填。
+
+## 7. S46 这一轮：我自己写错的两处，以及第 6 节留下的口径问题
+
+写 `integration.command-accepted.v2.schema.json` 时有两处先写错、在探测/回源时发现并改掉。
+两条都不是"文档里本来就有"的错，是我这一轮新引入的，所以按原写 → 正确 → 错因记下来。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | schema `properties.receipt_id.description` | 「见 ICA-8 的邻条 ICA-4 与 §9.1 的 E28 讨论」 | 「见本文件 `x-needs-owner` 第四条（「`receipt_id` 是裸主键」）」 | 裸主键这件事只写在 `x-needs-owner` 里，**没有编号**；`x-conflicts` 的 ICA-4 讲的是 `params_sha256` / `params_bytes`，ICA-8 讲的是示例的信封三处。我把一个"在 needs-owner 里"的说法硬套成了 conflicts 编号，等于造了一个指错门的交叉引用。 |
+| 2 | `x-conflicts[ICA-3].s46_ddl` 与 `why_it_matters` | 「`NOT NULL` 且无 `DEFAULT` 的列有十二个」+ 列名清单一串（含 `receipt_id`，漏 `state`）；正文写「四个值对十二个必填列」 | 「必填且无 `DEFAULT` 的列有十三个」：显式 `NOT NULL` 十二个（`state` 在内），加 `receipt_id`（`text PRIMARY KEY`，主键隐含 `NOT NULL`）；正文改「四个值对十三个必填列」 | 我把 `receipt_id`（无 `NOT NULL` 字样）算进了"`NOT NULL` 列"，同时漏了 `state`（有 `NOT NULL`、无 `DEFAULT`，只是当时被我按"状态列有默认值"想当然了）。两种错互相抵消成 12，所以初看是对的。**回源方法：把 §5.2 行 489–524 的建表语句按列拆开逐行判 `NOT NULL` 与 `DEFAULT`**，不靠记忆数。 |
+
+第 2 条值得单独说一句：**两个错误抵消成正确的总数，是最难自查的一类**。如果我只核"总数是不是 12"，
+它一直是 12，看不出问题；只有把每一列单独判一遍，才会发现一个该在的不在、一个不该在的在。
+
+复核口径（本节数字回这里，不沿用第 6 节）：
+
+```python
+import json, glob, re
+reg = json.load(open('contracts/event-topics.v2.json', encoding='utf-8'))
+
+def walk(o):
+    if isinstance(o, dict):
+        if 'event_type' in o:
+            yield o
+        for v in o.values():
+            yield from walk(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from walk(v)
+
+t = list(walk(reg))
+s = sum(1 for x in t if 'schema_ref' in x)
+d = sum(1 for x in t if 'data_schema_ref' in x)
+print('topics', len(t), 'schema_ref', s, 'data_schema_ref', d,
+      'payloads', s + d, 'envelope-only', len(t) - d)
+
+# NOT NULL 判定要逐列，不能数总数
+lines = open('plans/S46-developer-integration.md', encoding='utf-8').read().split('\n')
+blk = '\n'.join(lines[488:524])
+cols = [l for l in blk.split('\n')
+        if re.search(r'^\s+\w+\s+[a-z]', l) and 'CONSTRAINT' not in l and 'CREATE' not in l]
+nn = [c for c in cols if 'NOT NULL' in c and 'DEFAULT' not in c]
+print('explicit NOT NULL, no DEFAULT:', len(nn))
+for c in nn:
+    print('   ', c.strip()[:70])
+```
+
+写这份更正时输出 `topics 55 schema_ref 55 data_schema_ref 40 payloads 95 envelope-only 15`；
+`schema files 49`、`example json 57`；`python tools/check_all.py` 打印
+`ok json 118 file(s)`、`ok payloads 95 schema ref(s), 40 topic(s) with a payload schema`、
+`56 example(s) valid, 0 failing, 1 without a schema`、`9 check(s) passed`。
+`NOT NULL` 那一条打印 12 行，加上隐含的 `receipt_id` 才是 13——这就是第 2 条错的来源。
+
+第 6 节末尾那段说「`json` 的 116 与 `schema files` 的 48 相差很大」。那两句里的两个数都是**当时**的值：
+本轮加了 1 个 schema、1 个示例，于是变成 118 / 49。**差值仍是 69，不是恒等式，仍然不能互相校验**——
+这正说明第 6 节那句「只能靠每轮重跑 `check_all` 时顺手回填」是对的，因为它会随文件增减漂，而没有任何机制替它回填。

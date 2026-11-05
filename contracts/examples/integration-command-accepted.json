@@ -1,0 +1,31 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCHP2Q4R6T8V0X2Z4B6D8F0H2",
+  "source": "S46",
+  "type": "integration.command.accepted",
+  "subject": "integration-command/op_01JCHN8M6K4J2H0G8F6E4D2C1B0",
+  "time": "2026-11-06T09:20:00Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "op_01JCHN8M6K4J2H0G8F6E4D2C1B0",
+  "aggregate_sequence": 1,
+  "correlation_id": "ext_01JCHN5K3H1G9F7E5D3C1B0A9Z8",
+  "causation_id": "ext_01JCHN5K3H1G9F7E5D3C1B0A9Z8",
+  "traceparent": "00-7f3c1d9a4b2e6f8c0a5d3e1b9c7f4a2d-6b8e0d2c4a1f3e5b-01",
+  "data": {
+    "schema_version": "2.0",
+    "operation_id": "op_01JCHN8M6K4J2H0G8F6E4D2C1B0",
+    "receipt_id": "rcpt_01JCHN8M6K4J2H0G8F6E4D2C1B0",
+    "command": "episode.generate",
+    "state": "ACCEPTED",
+    "target": {
+      "project_id": "prj_ep",
+      "episode_id": "ep_03"
+    },
+    "api_client_id": "clic_01JCG7X5W3V1U9T7S5R3Q1P0N9",
+    "principal_type": "api_client",
+    "client_trace_id": "trace-abc"
+  },
+  "data_ref": null
+}

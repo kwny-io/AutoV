@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 39 个 topic 带**（16 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 40 个 topic 带**（15 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -104,6 +104,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `adaptation.training.completed` | `adaptation.training-completed.v2.schema.json` | S48 §4.3 / §11 C48-4 |
 | `project.episode.created` | `project.episode-created.v2.schema.json` | S03 §5.3 |
 | `audit.export.ready` | `audit.export-ready.v2.schema.json` | S45 §4.3 |
+| `integration.command.accepted` | `integration.command-accepted.v2.schema.json` | S46 §4.5 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -854,7 +855,7 @@ PEC-6 是这批里唯一需要往外补的：S03 §5.3 行 654–658 列了三�
 
 S45 只有一条发布事件（§4.3 行 443「只有一条」），而它的状态机有两条终点出口不产生任何信号。
 这份 schema 的每一个字段都有出处——七字段列表加完整示例（§4.3 行 445–466），是剩下 16 个
-envelope-only topic 里证据最全的一条——**问题不在字段，在字段背后的那台状态机**。
+envelope-only topic 里证据最全的一条（当时的口径；本段写完之后 S46 也补上了 payload schema）——**问题不在字段，在字段背后的那台状态机**。
 
 §3.6 行 305–310 的六个态是 `REQUESTED → BUILDING → SEALED → READY`，另有 `FAILED`（不可重试
 错误直接终止，可恢复错误重试后仍失败）和 `EXPIRED`（`expires_at` 到点）。事件名是 `ready`，
@@ -908,6 +909,93 @@ AEX-5 是示例层的适配：计划示例的 `data_ref` 写裸字符串 `"audit
 `tools/validate/validate_examples.py` 用 `Draft202012Validator(target, registry=reg)` 且不传
 `format_checker`。这个行为与全仓其余带 `format` 的字段一致，已在 schema 描述里写明，免得
 被当成强约束。
+
+### `integration.command-accepted.v2.schema.json`：事件是受理那一刻的快照，可唯一的消费方要的是流水
+
+这是剩下 16 个 envelope-only topic 里字段证据最全的一条：§4.5 行 369–392 给了九个字段加完整示例，
+八个值能在 DDL 里指到列。**字段是全的，缺的是时间。**
+
+先说最锋利的一处。§10.6 行 1052 是全篇唯一一条对消费方的**硬性呈现要求**：
+
+> S47 订阅 `integration.command.accepted`，用于外部客户端面板的「最近调用」列表。
+> S47 **必须显示 `accepted_at` 作为水位**，不得把「最新受理」呈现为「最新完成」。
+
+plans/S47-realtime-projection.md 行 85 确实把这条事件登记进了订阅表（用途「外部调用列表」）。
+而 `accepted_at` 在本事件的字段清单里**没有**——它只在另外三处出现：DDL §5.2 行 517
+（`accepted_at timestamptz NOT NULL DEFAULT now()`）、202 响应 §3.1 行 167、轮询响应 §4.2 行 328。
+S47 自己又写着「事件里没有的字段，投影里就没有，而不是按上一次的值保留」（plans/S47 §2.1 行 88）。
+两条合起来是个死结：**S47 被要求显示一个它按自己的规则不该有的字段**（ICA-1）。
+
+「不得把最新受理呈现为最新完成」这半句还有第二层。§4.5 行 399 明说「只发 `accepted`，
+不发状态变更」——回执后来变成 `FORWARDED` / `REJECTED` / `FORWARD_UNKNOWN` 时**没有任何信号**。
+于是 S47 的面板不但拿不到水位，还会把每一条调用永久显示成受理态：不是把「受理」说成「完成」，
+而是**把「已完成」也说成「受理」**，比那句禁令想防的呈现更糟。C46-6（§11 行 1067）把
+「没有命令状态流转事件」登记成缺口，但影响栏只写「外部客户只能轮询」，没写这条内部硬要求也跟着塌了。
+同样缺席的还有 `forwarded_at`（DDL 行 518）与 `upstream_ref` / `upstream_state` /
+`upstream_state_as_of`（行 511–513）——§4.2 的轮询响应把它们当必填展示（行 335「必填：上游快照的水位」）。
+
+**ICA-2 是一个不存在的态名，配一个碰巧正确的结论。** §3.1 行 174 写「回执有 `state`：
+`ACCEPTED → FORWARDED | FORWARD_FAILED`」，而 §3.2 行 178–187 的状态机与 §5.2 行 506–508 的
+`CHECK` 里都没有 `FORWARD_FAILED`。真实出口有四个：上游 2xx → `FORWARDED`、上游 4xx/409 且明确未执行
+→ `REJECTED`、可重试失败 → `FORWARD_RETRYING` → 超次数 → `FORWARD_UNKNOWN`。行 174 后面那句
+「按 §7.3 处理」指的也是 `FORWARD_UNKNOWN`，不是它写的那个名字。结论碰巧对，引用是错的——
+这类「错误引用 + 巧合正确结论」最容易被后来者当证据链。真正要紧的是别反过来往 DDL 里补
+`FORWARD_FAILED`：`FORWARD_UNKNOWN` 与「失败」的区分正是行 189–199 那条纪律的全部内容
+（AGENTS.md 第 19 行禁令在 S46 的落点），给它换个带「失败」的名字，等于给出「可以重试」的暗示，
+而重试会走到 S26 重复付费。
+
+`state` 的 enum 照 DDL 收全七值，其中 `CANCELLED` **在回执状态机里没有入边**（ICA-7）：
+它来自 §3.5 行 242–247 的 webhook 投递状态机（那边有「订阅被删/停用」这条边），
+更可能是从 `webhook_delivery` 那份 `CHECK` 抄过来时多带的值。`STALE_UNKNOWN` 则有明确入边
+（§3.3 行 218 的 7 天窗口）。两个状态机共享了 `CANCELLED` 这个值名却装两件事——
+回执的态是「这条命令走到哪了」，投递的态是「这个 webhook 发出去没有」。
+
+**`target` 是全仓第二处放开内部键的字段。** DDL 行 502 只写 `target jsonb NOT NULL`，
+§2.3 行 106–119 的十二条命令分别打到 S21 / S07 / S40 / S43 / S16 / S18 / S02 / S23 / S44，
+各自要的 id 不同（`run.get` 要 `run_id`，`change.apply` 要 `change_plan_id`，
+`cost.query` 要时间窗与维度），而全文只给了 `episode.generate` 那一套
+（`{project_id, episode_id}`，§2.2 行 85 与 §4.5 行 386 同形）。**没有第二套示例**——
+找不出 `run_id` 作为 target 键的任何一处。一个字段、十二种形状、零份定义（ICA-5）。
+消费方要按它建索引、校验、渲染 UI（S47 行 85、S45 §10.5 行 1042），做不到。
+C46-2（§11 行 1063）提的 `contracts/integration-commands.v1.json` 正是缺的那份东西。
+schema 只要求非空对象、内部键全放开；`minProperties: 1` 是我的判断不是出处，
+理由在 ICA-5 里写了。
+
+**ICA-4：讲防控的那一段引用了两个不在清单里的字段。** §4.5 行 397 说
+「字段形状上：事件只带 `params_sha256` / `params_bytes`，正文根本没有可落的位置」——
+这两个字段既不在行 381–389 的清单里，也不在示例里；DDL 行 503–504 有。
+第一道防控（字段形状）在文件自己的字段清单里就不成立，第二道（`INGRESS_SECRET_SCAN` 就地替换）
+是实的，§2.2 行 100 的顺序论证（先替换后哈希，否则合法重试变 `REQUEST_HASH_MISMATCH`）也扎实。
+而「用 `data_ref` 回查」这条退路同样堵着：回执表只存摘要不存正文（行 503 注释），
+§5.6 行 659 又明确不建 `request_body_log`，**所以 params 正文在整个 S46 里不存在**。
+回查拿得到回执、拿不到入参。
+
+**ICA-6 是一处比 C46-3 更早的空白。** §2.1 行 61–65 列了三种凭据：API key、OAuth2 access token
+（企业 SSO 直连）、MCP client。而 DDL 行 498 的 `CHECK` 只允许 `api_client` / `mcp_client` 两个值——
+**OAuth2 那一种无处落**。回执表里没有任何列能表达「这次调用是 SSO 用户授权的」，
+`delegation_id`（行 499）是委派链不是主体类型。而 §10.5 行 1042 要求审计 details 带 `principal_type`，
+审计要区分机器与人在。把 OAuth2 记成 `api_client`，审计里就分不出「客户的服务在调」还是「客户的员工在调」。
+C46-3 问的是「`api_client` 在 S01 侧怎么映射」，比它更早的一层还没人问：OAuth2 该记成什么。
+
+另外两处是过程性的，不影响 payload 形状但影响实现：§3.1 行 158 的 `INSERT` 只给四个值，
+DDL 有十三个 `NOT NULL` 无默认值的列（ICA-3），而 `operation_id` 由谁在哪一步生成全文没写——
+它恰好就是本事件的 `aggregate_id`，一次生成还是两次生成决定分区键稳不稳。ICA-8 是示例层的适配：
+计划写 `causation_id: null`（行 379）与裸字符串 `data_ref`（行 391），信封两者都拒
+（`causation_id` 无非空字符串之外的分支，`data_ref` 是 `oneOf`[四键对象 | `null`]，没有字符串分支）。
+写 `null` 的动机是「这次调用没有上游命令」，可 S46 恰好有一条真实存在的 `command_id`
+（客户端生成，§2.2 行 82），所以示例填它。`data_ref` 只能写 `null`——回执**有** id（`receipt_id`）
+与真实服务 id（`S46`），但**全表没有 revision 列**（§5.2 行 489–524），也没有整行的 `content_hash`
+（`request_hash` 是请求的哈希，不是回执的），四键对象拼不出来。这与 S48 的处境相同、理由不同。
+
+示例的信封这次是完整且自洽的：16 键齐备，`data_ref` 写 `null`，`aggregate_sequence` 写 `1`
+（每个 `operation_id` 只发一条）。负向探针 payload 层 34 例全部符合预期：九个必填键缺一各拒、
+`state` 小写 / `FORWARD_FAILED` / 未知值各拒（`FORWARDED`、`CANCELLED` 通过——照 DDL 收全）、
+`principal_type` 收 `oauth_user` 与 `human` 各拒（`mcp_client` 通过）、`target` 收空对象 /
+字符串 / `null` 各拒（`{run_id}` 与带嵌套的任意键通过——内部键放开）、`client_trace_id` 收整数拒
+（`null` 通过）、四个 id 收空串各拒、`operation_id` 收整数拒、顶层多 `accepted_at` / `params_sha256` /
+`upstream_ref` / `run_id` 各拒。信封层 3 例负向（`causation_id: null`、裸字符串 `data_ref`、
+`aggregate_sequence: 0`）全部被拒；正向 2 例通过，且**确认了两件本来就想确认的事**：
+`source` 不被信封钉死在某个服务 id 上，`data_ref` 收四键对象（本例没用到，因为拼不出来）。
 
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
@@ -1005,8 +1093,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 39 个 payload schema
-                                                              （见上表；其余 16 个 envelope-only）
+                                        └──data_schema_ref──▶ 40 个 payload schema
+                                                              （见上表；其余 15 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1019,11 +1107,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（116 个 JSON 解析）、`payloads`（94 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 39 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（118 个 JSON 解析）、`payloads`（95 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 40 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（55 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（56 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

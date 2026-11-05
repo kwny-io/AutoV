@@ -34,6 +34,7 @@ SCHEMA_OF = {
     "access-grant-changed": "event-envelope.v2.schema.json",
     "audit-export-ready": "event-envelope.v2.schema.json",
     "project-episode-created": "event-envelope.v2.schema.json",
+    "integration-command-accepted": "event-envelope.v2.schema.json",
     "adaptation-training-completed": "event-envelope.v2.schema.json",
     "admission": "admission-record.v2.schema.json",
     "admission-unknown": "admission-record.v2.schema.json",
