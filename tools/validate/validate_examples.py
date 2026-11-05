@@ -32,6 +32,7 @@ EXAMPLES = os.path.join(CONTRACTS, "examples")
 # which is a deliberate state and not a failure.
 SCHEMA_OF = {
     "access-grant-changed": "event-envelope.v2.schema.json",
+    "project-episode-created": "event-envelope.v2.schema.json",
     "adaptation-training-completed": "event-envelope.v2.schema.json",
     "admission": "admission-record.v2.schema.json",
     "admission-unknown": "admission-record.v2.schema.json",

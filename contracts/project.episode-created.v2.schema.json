@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/project.episode-created.v2.schema.json",
+  "title": "project.episode.created payload v2",
+  "description": "event `project.episode.created` 的 data 部分。定义在 plans/S03-project-catalog.md §5.3 行 656：`{episode_id, series_id, project_id, release_ordinal|null, shooting_ordinal|null, spec_hash}`。**这是 envelope-only topic 里少数几个真的写出了字段清单的**（加这份 schema 之前有 18 条，现在剩 17 条）——另两条 S03 声称要发的事件（`project.episode.reordered`、`project.lifecycle.changed`）在 §5.3 行 657–658 标着「**新增，待登记**」，`event-topics.v2.json` 里也没有，见 PEC-6。**一条事件一个 episode**：§5.3 行 664 说明 partition key 是 `tenant_id:aggregate_id`，一条带 N 个 episode 就填不出 `aggregate_id`，所以粒度不是设计选择而是分区约束的结果。**本事件只是通知，不是权威**：§4.4 行 577–578 明确 `GET /episodes/{id}` 原样返回 `episode.head_revision` 供调用方 CAS，S08 据此建 manifest 壳（plans/S08-revision-snapshot.md §6.2 行 682）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "与本仓库全部 payload schema 一致。§5.3 行 656 的字段清单里没有它，但 `contracts/README.md` 的约定是每个 payload 的 `data` 都带版本，且它在 `required` 里。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "§5.3 行 656 第一个字段。§2 行 107 规定 ID 是 ULID 文本、前缀区分类型（`ep_`）。**这里不写 `pattern`**：全文只有行 107 那句「前缀区分类型」，没有任何一处给出 `ep_` 后面的长度或字符集；把 `^ep_[0-9A-Z]{26}$` 写进契约就是替 S03 决定 ULID 的具体编码。同仓 `breakdown-revision-created` 等示例确实用 26 位 Crockford base32，那是示例的惯例，不是 DDL 约束。"
+    },
+    "series_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "§5.3 行 656。`episode.series_id` 是 NOT NULL 且有外键（§2.3 行 175、186–187），所以事件里不会缺。见 PEC-4：事件给了它，但没给 `branch_id`，而 S08 建 manifest 壳要的键是 `(tenant, series, episode, branch)`（plans/S08-revision-snapshot.md §2 行 56）。"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "§5.3 行 656。§2.3 行 199 说明这一列在 `episode` 上是**冗余**的，写入时由 `series_id` 派生并在同一事务校验，目的是「这一集属于哪个项目可以单表回答」。事件里带它等于把这个冗余也发出去——两者永远一致，所以不是第二权威，但消费方若拿它和 `series_id` 不一致去判断，会读到一个不可能出现的状态。"
+    },
+    "release_ordinal": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "§5.3 行 656 写成 `release_ordinal|null`，所以 `null` 是一个正当取值，不是缺失。§4.2 行 507：一集可以**不带任何 ordinal**（纯草稿集），此时它在 `episode_order` 里没有行。`minimum: 1` 照 §2.4 行 221 的 `order_ordinal_chk CHECK (ordinal >= 1)`。**但序号的真正归属是 `episode_order` 行，不是这一列**：§2.3 行 197 刻意不建 `episode_number` 列，理由是「一个方便字段会被下游当成权威」。一个下游若把这个字段存下来当「第几集」，就复现了该行要防的错误——它只在创建时刻成立，重排后即失效，而**重排没有事件**（PEC-6）。"
+    },
+    "shooting_ordinal": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "§5.3 行 656。同上，`episode_order(order_kind='shooting')` 才是归属表（§1.2 行 78）。§1.2 行 82–84 解释拍摄顺序归 S03 的理由是它属生产排期而非叙事；四个顺序（发行/拍摄/故事时间/模型执行）绝不用同一序号代替（docs/01 §1 原句，行 71）。此字段与 `release_ordinal` 同源同风险：都是创建时刻的快照。"
+    },
+    "spec_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "§5.3 行 656 最后一个字段。**这个字段的准备是全文最大的空洞**：`spec_hash` 在整份方案里只出现这一次（在 §5.3 的事件表里），没有任何 DDL 列、没有命令体字段、没有流程步骤产出它。§4.1 行 480–482 的创建事务依次写 `project`、`spec_revision(scope=project, revision=1)`、每个 series 的 `spec_revision(scope=series, revision=1)`、`episode`、`episode_order`、物化 `episode_spec_effective`——**没有写 episode 级的 `spec_revision` 行**（`spec_revision.scope_kind` 的 CHECK 里有 `'episode'`，行 251，但创建路径不用它）。所以能填进来的候选有两个：`episode_spec_effective.content_hash`（物化结果，行 261，PK 是 `(tenant, episode_id)`，每集恰好一行）或 `spec_revision.body` 的哈希（行 246）。§1.4 行 97 明确「三层合并结果**在写入时就物化**」，§2.5 行 286 又说 `output` 段与 `shot-spec.v1` 同名字同义——按这个意图，消费方要的是**物化后的生效规格**，即前者。**本 schema 收 `^[0-9a-f]{64}$`（照 §2.5 行 246 的 `sha256(JCS(body))` 与 `char(64)` 列型），但不指定它是哪个对象的哈希**，见 PEC-1。无论哪个，**事件的 `spec_hash` 都不带版本号**，而 §6.2 行 704 明确说规格版本必须比 `content_hash` 而不是比 revision——所以只给 hash 不给 `derived_from` 是自洽的；反过来只给 revision 就不行。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "episode_id",
+    "series_id",
+    "project_id",
+    "release_ordinal",
+    "shooting_ordinal",
+    "spec_hash"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`spec_hash` 哈希的是哪个对象",
+      "demanded_by": "plans/S03-project-catalog.md §5.3 行 656（字段名），与 §2.5 行 246 / 261（两个候选列）",
+      "s03_status": "**`spec_hash` 全文只出现一次，就在事件表的字段清单里**。`git grep -F spec_hash -- plans/S03-project-catalog.md` 只命中行 656。创建路径（§4.1 行 480–482）写的是 `spec_revision(scope=project)`、`spec_revision(scope=series)` 和物化后的 `episode_spec_effective`，**不写 episode 级 `spec_revision`**。所以事件里的这个值来自物化结果 `episode_spec_effective.content_hash` 还是 `spec_revision.body` 的哈希，方案没有说。按 §1.4 行 97「继承是物化的」与 §2.5 行 286「与 shot-spec.v1 同名字同义」的意图，前者更合理——但「更合理」不是出处。本 schema 只收形状（64 位小写 hex），不收语义。"
+    },
+    {
+      "field": "`episode_id` 的字符集与长度",
+      "demanded_by": "plans/S03-project-catalog.md §2 行 107（「ID 一律 ULID 文本，前缀区分类型：`prj_ / ser_ / ep_ / ord_ / mem_ / spc_`」）",
+      "s03_status": "只有前缀被点名，**后缀的编码没写**：ULID 是 26 位 Crockford base32，这是 ULID 规范而非本方案的声明。仓库里 `contracts/examples/breakdown-revision-created.json` 等示例确实用 26 位，但那是示例惯例。本 schema 一律 `minLength: 1`，不写 `pattern`——六种 ID 都一样处理，写法与 `breakdown.revision-created` 对 `breakdown_id` / `episode_id` 的处理一致。若要收窄，应先让 S03 在 DDL 加 `CHECK`，再一起改 schema 与全部示例。"
+    },
+    {
+      "field": "`aggregate_sequence` 的计数起点与推进规则",
+      "demanded_by": "plans/S03-project-catalog.md §5.3 行 660（「三个事件都用 `aggregate_seq` 单调」）",
+      "s03_status": "只有「单调」一句。`project_catalog.outbox` 有 `aggregate_seq bigint NOT NULL` 与 `UNIQUE (tenant_id, aggregate_id, aggregate_seq)`（§2.8 行 358、366），所以**唯一性**有 DB 约束兜底；但**开头是多少、跳号允许与否**没写。本事件是某 episode 的第一条事件，按「每个 episode 首次落库」（行 656）推断它应是 1，但「推断」不是出处，所以示例填 1 并在此登记。与 S48 的 ATR-3 是同一类问题（计数器只活在 outbox 里），但 S03 的 outbox 有 UNIQUE 约束，比 S48 好一层。"
+    },
+    {
+      "field": "S03 声称要发的另两条事件",
+      "demanded_by": "plans/S03-project-catalog.md §5.3 行 657–658 与 §10.2 C03-3 行 914",
+      "s03_status": "`project.episode.reordered`、`project.lifecycle.changed` 在 §5.3 标着「**新增，待登记**」，`event-topics.v2.json` 里**没有**（本批次已核对 55 条 topic 全表）。C03-3 把补登记的责任派给「契约维护方」，但补登记不只是加两行——两条事件都已有字段清单（行 657 `{series_id, order_kind, window_key, order[], head_revision}`；行 658 `{scope, id, from, to, reason}`），所以真要做需要三步：登记 topic、写 payload schema、让 S21/S28/S43 三个按发行序工作的服务接上（行 662 点名这三个）。**本批次不补**：按 AGENTS.md，登记一条没有生产方在跑的事件与登记一条没有形状的事件，是同一种「先造契约再造事实」。见 PEC-6。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PEC-1",
+      "summary": "`spec_hash` 是事件里唯一一个「有名字、没有出处」的字段",
+      "s03_event": "plans/S03-project-catalog.md §5.3 行 656：`{episode_id, series_id, project_id, release_ordinal|null, shooting_ordinal|null, spec_hash}`",
+      "s03_ddl": "§2.5 行 239–266 有两列都能当来源：`spec_revision.content_hash char(64) NOT NULL`（行 246，`sha256(JCS(body))`）与 `episode_spec_effective.content_hash char(64) NOT NULL`（行 261）。两者的键不同：前者是 `(tenant, spec_id, revision)`，后者是 `(tenant, episode_id)`。",
+      "s03_create_path": "§4.1 行 480–482 的创建事务写 `project` → `spec_revision(scope=project, revision=1)` → 每个 series 的 `spec_revision(scope=series, revision=1)` → `episode` → `episode_order` → `episode_spec_effective`。**没有 episode 级 `spec_revision`**，尽管 `spec_scope_chk` 允许 `'episode'`（行 251）。而 §4.2 行 499 的 `episode_spec_effective` 物化在「此事务内」完成。",
+      "why_it_matters": "消费方拿 `spec_hash` 去做什么，决定了填错是静默错误还是立即失败。若它是**生效规格**的哈希，S06 生成 `ShotSpec.output_spec` 时可以直接比对（§2.5 行 286 说两边字段同名同义）；若它是**覆盖规格**的哈希，那没有覆盖的集根本不该有值，而字段是必填的。两种读法下必填都别扭：前一种要求每集都物化（成立），后一种要求每集都有 episode 级 spec 行（创建路径不写）。**本 schema 只锁形状不锁语义**，并在 `x-needs-owner` 第 1 条点名。",
+      "fix_shape": "S03 owner 二选一：(a) 在 §4.1 的创建事务里补一行 `spec_revision(scope=episode)` 并对齐事件字段；(b) 明确 `spec_hash = episode_spec_effective.content_hash`，在 §5.3 行 656 把字段改成 `effective_spec_hash` 并注明。任一都要改计划，不能只改 schema。"
+    },
+    {
+      "id": "PEC-2",
+      "summary": "事件发的是「创建时刻的序号」，但序号的可变部分没有事件",
+      "s03_event": "§5.3 行 656 发 `release_ordinal` / `shooting_ordinal`；行 550「重排不发 `project.episode.created`」；行 657 的 `project.episode.reordered` 标「待登记」",
+      "s03_ddl": "§2.3 行 197：`episode` 表**刻意没有** `episode_number` 列——「任何『第几集』都必须从 `episode_order` 查，不允许存在一个『顺手能用』的整数列。一个方便字段会被下游当成权威」。序号在 `episode_order.ordinal`（§2.4 行 210）。",
+      "why_it_matters": "事件把 `episode_order` 里一个**可变**的 `ordinal` 搬进了**不可变**的事件流，而改变它的动作（重排）恰恰没有事件。于是：消费方存下这个值 → 永远正确直到第一次重排 → 之后静默过期，而且**过期没有信号**。§4.2 行 505 还说明 `release_ordinal` 由调用方给、支持插入集（「第 3.5 集」补拍），所以创建后必然会有重排。行 662 更点明 S21 批量调度、S28 归档命名、S43 交付清单三个服务都按发行序——**三个按序工作的服务，收到的序在第一次重排后就失效了**。这与 §2.3 行 197「不许存在方便字段」是同一件事的两面：方案防住了 DDL 里的方便列，没防住事件里的方便字段。",
+      "consequence": "本 schema 保留这两个字段（它们是 §5.3 明确列出的），但把 `null` 写成正当取值并在 description 里写明「只在创建时刻成立」。**不建议任何消费方把它当持久序号**——要么回查 `GET /episodes/{id}`（§4.4 行 566–569 返回 `orders.release.ordinal`），要么等 `project.episode.reordered` 登记后再建投影。",
+      "fix_shape": "补登记 `project.episode.reordered` 并让 S21/S28/S43 消费它（C03-3 已把责任派给契约维护方）；或者从本事件里删掉两个 ordinal，让所有消费方统一回查。二者择一，不要两边都留着。"
+    },
+    {
+      "id": "PEC-3",
+      "summary": "`release_window` 在 DDL 里、在查询里、在事件里三个不同的位置",
+      "s03_ddl": "§2.3 行 180：`release_window tstzrange, -- 计划播出窗口（业务计划，非事实）`",
+      "s03_query": "§4.4 行 566–569 的响应只回 `orders.{release,shooting}.{ordinal,window_key}`，**不回 `release_window`**；行 570 回 `story_window_ref`。",
+      "s03_event": "§5.3 行 656 的事件字段里**既没有 `release_window` 也没有 `window_key`**。",
+      "why_it_matters": "三个东西的名字都带「窗口」，但指三件事：`release_window` 是时间区间（tstzrange），`episode_order.window_key` 是重播窗口的**标识**（§2.4 行 209「重播窗口标识；release 用 ''」），`story_window_ref` 是叙事时间（S16 解释，行 179）。§1.2 行 84 明确说独立表的作用之一是「表达『同一集在两个发行窗口各有一个序号』（重播/分季）」——那么消费者若要知道「这集在哪个发行窗口」，事件里没有 `window_key`，而 `release_ordinal` 在没有 `window_key` 的情况下是**有歧义的**：同一集在 `release` 与 `rebroadcast` 两个 `order_kind` 下各有一个 ordinal，事件只发了一个 `release_ordinal`。",
+      "consequence": "按 §2.4 行 209，`release` 的 `window_key` 恒为 `''`，所以 `release_ordinal` 在 release 语义下是明确的；但事件里没有任何东西能让消费方**确认**它是 release 的序号而不是别的窗口的。本 schema 的字段名承担了这个歧义（名字里有 `release_`），这是方案已有的选择，不改。",
+      "fix_shape": "若重播窗口需要被下游知道，`window_key` 应进事件；若不需要，§1.2 行 84 那个理由就只对 `episode_order` 表成立、对事件流不成立。"
+    },
+    {
+      "id": "PEC-4",
+      "summary": "事件不带 `branch_id`，而它是 S08 建 manifest 壳的四个键之一",
+      "s03_event": "§5.3 行 656 的字段清单：`episode_id` / `series_id` / `project_id` / 两个 ordinal / `spec_hash`。**没有 `branch_id`。**",
+      "s08_consumer": "plans/S08-revision-snapshot.md §6.2 行 682：「`project.episode.created` | S03 | 建 manifest 壳（`current_revision=1` 的初始版本）」。而 §2 行 56 的 manifest 唯一键是 `UNIQUE (tenant_id, series_id, episode_id, branch_id)`，行 64 补充「`manifest_id` 与 `(tenant_id, series_id, episode_id, branch_id)` 一一对应」，`branch_id text NOT NULL`（行 46）。",
+      "s03_branch": "S03 只有一个**建议值**：`series.branch_default text NOT NULL DEFAULT 'canon'`（§2.2 行 154），行 167 明确「只是『新建集时建议用哪个分支』的默认值，**不是分支权威**。分支、谱系、merge 状态全在 S16/S08」。",
+      "why_it_matters": "S08 收到这条事件后必须填一个 `branch_id` 才能 INSERT manifest。事件没给，于是 S08 只有两个来源：自己写死 `'canon'`，或者回查 S03 的 `series.branch_default`。前者在「S03 改了 series 默认分支、或 S08 已为该系列建过别的分支」时会对不上；后者要一次同步调用，而这条事件是**批量创建时每集一条**（§4.1 行 483）——24 集项目就是 24 次回查。两条路都可行，但**没有一条是契约写的**。",
+      "consequence": "本 schema 不含 `branch_id`（它不是 §5.3 列的字段）。消费方要么回查，要么依赖 `branch_default` 的默认值 `'canon'`——后者在 S03 改了默认值之后重建的集会落到别的分支。这是一个跨服务的静默分歧点。",
+      "fix_shape": "S03 把 `branch_id`（取自 `series.branch_default` 的当时值，作为创建时刻的决定）加进事件，并在事件里同时给出它的出处；或 S08 明确写「回查 S03 `series.branch_default`」并承担调用成本。"
+    },
+    {
+      "id": "PEC-5",
+      "summary": "`draft→active` 的副作用栏写着「发 `project.episode.created`？**否**」，理由指向的是一节讲别的事的地方",
+      "s03_machine": "§3.1 行 425：`| draft→active | 必须至少有一个 series，且 series.lifecycle ∈ {draft,active} | 发 project.episode.created？**否**（见 §5.3 的事件缺口） |`",
+      "s03_s53": "§5.3 行 648–664 讲的是事件**粒度**与**为什么需要 reorder**，没有任何一句解释为什么 `draft→active` 不发 `project.episode.created`。那一节真正讨论「不发」的是行 550：**重排**不发——不是激活不发。",
+      "why_it_matters": "这不是笔误层级的问题，是两个动作被混了：`draft→active`（项目级生命周期迁移）本来就不该发**集**创建事件，这个「否」是对的；但它引用的地方（§5.3）讨论的是**重排**不发，引错了。后果是审计时顺着引用点过去，会读到一个讲另一件事的段落，然后合理推断「所以激活也不发 reorder 事件」——而激活确实不该发，结论碰巧一样，但**理由是错的**。这种「错误引用 + 巧合正确结论」最容易被后来者当成证据链。",
+      "consequence": "本 schema 不受影响（事件在 `episode` 落库时发，与生命周期无关）。记录在此是因为 C03-3 的补登记工作要读 §3.1 与 §5.3 两处，若照行 425 的指引去 §5.3 找「事件缺口」，会找不到。",
+      "fix_shape": "行 425 的引用应指向 C03-3（§10.2 行 914）或删除括注。"
+    },
+    {
+      "id": "PEC-6",
+      "summary": "S03 的三条事件只有一条登记了，另两条连 topic 都没有；而按序工作的三个服务已经在等它们",
+      "s03_s53": "§5.3 行 654–658 列了三条：只登记了 `project.episode.created`（行 650 明说「`event-topics.v2.json` 只登记了一个」）；`project.episode.reordered` 与 `project.lifecycle.changed` 标着「**新增，待登记**」。",
+      "registry": "`contracts/event-topics.v2.json` 全表 55 条 topic，`project.*` 只有 `project.episode.created` 一条。**本批次已逐条核对，两条都不存在。**",
+      "dependency_evidence": "§5.3 行 662：「S21 的批量调度、S28 的归档命名、S43 的交付清单都按发行序。没有 reorder 事件，这三个服务只能靠轮询或『每次用前查一次』，前者浪费、后者在批量场景会被打爆。」§10.2 C03-3（行 914）把补登记派给「契约维护方」。",
+      "why_it_matters": "这是「事件被设计过、被依赖、但没有契约」的典型。三条事件里唯一登记的那条恰好是**唯一不需要额外信息就能消费的**（新集出现），而两条真正携带变化（重排、生命周期）都没登记。于是下游三个服务在实现时必然各写一份轮询或回查——**分歧发生在他们没有契约可依的地方**，而不是在他们违约的地方。",
+      "consequence": "本 schema 只做已登记的 `project.episode.created`。**不补登记另两条**：补登记需要同时定 topic 名、分区键、保留期、payload schema，并按 AGENTS.md「先验证 E12–E23…再接真实模型」的顺序做——那是契约维护方的动作，不是本批次能顺手加的。",
+      "fix_shape": "按 C03-3 补登记两条；`reordered` 的分区键要选 `series_id`（它的 `aggregate_id` 按行 660 是 `series_id`，而语义上它改变的是整个系列的顺序），`lifecycle.changed` 按行 660 用「对应 scope 的 id」。两条的 payload 字段清单已经写在行 657–658，可以直接照抄。"
+    }
+  ]
+}

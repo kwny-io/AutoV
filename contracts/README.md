@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 37 个 topic 带**（18 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 38 个 topic 带**（17 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -102,6 +102,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `storyboard.shot.revision.created` | `storyboard.shot-revision-created.v2.schema.json` | S06 §4.3 / §11 C3 |
 | `breakdown.revision.created` | `breakdown.revision-created.v2.schema.json` | S05 §4.2 / §11 C3 |
 | `adaptation.training.completed` | `adaptation.training-completed.v2.schema.json` | S48 §4.3 / §11 C48-4 |
+| `project.episode.created` | `project.episode-created.v2.schema.json` | S03 §5.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -786,6 +787,68 @@ schema 只是把它变得显眼：我们为一条无人订阅的事件写了 11 
 本文件初稿曾是唯一的 `null`。`plans/` 下写 `null` 的共三篇（S48 行 431、S45、S46），
 动机都一样：「没有上游命令触发它」。动机合理，但信封没为根事件留出口。
 
+### `project.episode-created.v2.schema.json`：唯一一条「有字段清单、没有出处」的事件
+
+在还剩 17 个 envelope-only topic 里，这一条最该先做，理由很朴素：**§5.3 行 656 真的写出了字段清单**。
+`{episode_id, series_id, project_id, release_ordinal|null, shooting_ordinal|null, spec_hash}`——七个值，
+六个能在 DDL 里指到列，第七个指不到。这不是巧合，是本仓库写作顺序的反面：多数 topic 只有「何时发」，
+这条连「发什么」都有，于是它的缺陷一眼可见，而不是藏在散文里。
+
+先说结论免得误导：**schema 是完整的，字段是有毛病的。**
+
+`spec_hash` 是全文最大的空洞。`git grep -F spec_hash -- plans/S03-project-catalog.md` 只命中一处，
+就是它自己的字段清单（行 656）。没有 DDL 列、没有命令体字段、没有流程步骤产出它。
+创建事务（§4.1 行 480–482）依次写 `project` → `spec_revision(scope=project)` →
+每个 series 的 `spec_revision(scope=series)` → `episode` + `episode_order` + 物化
+`episode_spec_effective`，**没有 episode 级的 `spec_revision` 行**——尽管 `spec_scope_chk`
+明明允许 `'episode'`（行 251）。于是候选只剩两个：`spec_revision.content_hash`（行 246，
+`sha256(JCS(body))`）和 `episode_spec_effective.content_hash`（行 261，PK 是 `(tenant, episode_id)`，
+每集恰好一行）。§1.4 行 97「三层合并结果**在写入时就物化**」和 §2.5 行 286「与 shot-spec.v1
+同名字同义」都指向后者——但「更合理」不是出处，所以 schema 只锁形状（`^[0-9a-f]{64}$`，
+照 `char(64)` 列型），语义登记为 PEC-1，等 S03 owner 二选一。
+
+PEC-2 是同一个错误在别处的镜像。§2.3 行 197 刻意不建 `episode_number` 列，原话是
+「一个方便字段会被下游当成权威，这是历史上同类系统最常见的错误」——方案防住了 DDL。
+但事件把 `episode_order.ordinal` 这个**可变**值搬进了**不可变**的事件流，而改变它的动作
+（重排）恰恰不发事件（行 550）。§4.2 行 505 又明说 `release_ordinal` 由调用方给、支持
+「第 3.5 集」插入，所以创建后**必然**会重排。结果：消费方存下这个值 → 永远正确到第一次重排 →
+之后静默过期，而且过期没有信号。§5.3 行 662 点名的 S21 批量调度、S28 归档命名、S43 交付清单
+三个服务全都按发行序工作——**三个靠顺序吃饭的服务，拿到的顺序在第一次重排后即失效**。
+schema 保留这两个字段（§5.3 列了它们），把 `null` 写成正当取值（行 507：纯草稿集在
+`episode_order` 里没有行），并在描述里写明「只在创建时刻成立」。
+
+PEC-4 是跨服务的。S08 §6.2 行 682 用这条事件建 manifest 壳，而 S08 的 manifest 唯一键是
+`UNIQUE (tenant_id, series_id, episode_id, branch_id)`，`branch_id text NOT NULL`（行 46、56）。
+事件里没有 `branch_id`。S03 唯一的汇报是 `series.branch_default text NOT NULL DEFAULT 'canon'`
+（§2.2 行 154），并且行 167 明确「**不是分支权威**」。所以 S08 只有两条路：写死 `'canon'`，
+或逐集回查。两条都能跑，但**没有一条写进契约**——而 §4.1 行 483 是「每个 episode 一条」，
+一个 24 集项目就是 24 次回查。这是分歧发生的地方不在违约、而在无契约可依的典型。
+
+PEC-3 小一点但仍值得记：三个名字都带「窗口」的东西指三件事——`release_window tstzrange`
+（行 180，时间区间）、`episode_order.window_key`（行 209，重播窗口标识，`release` 用 `''`）、
+`story_window_ref`（行 179，叙事时间，S16 解释）。事件里三个都没有。`release_ordinal`
+之所以不歧义，只是因为字段名里写了 `release_`——名字在承担语义，这层已经由方案自己付过账，
+schema 不改。
+
+PEC-6 是这批里唯一需要往外补的：S03 §5.3 行 654–658 列了三条事件，registry 只登记了一条。
+`project.episode.reordered` 和 `project.lifecycle.changed` 都标着「**新增，待登记**」，
+逐条核对 55 个 topic 确认都不存在。讽刺的是，登记的那条恰好是**唯一不需要额外信息就能消费**
+的（新集出现），两条携带真正变化的反而缺席。C03-3（§10.2 行 914）把补登记派给「契约维护方」；
+本批次**不补**——登记一条没有生产方在跑的事件，和登记一条没有形状的事件，是同一种
+「先造契约再造事实」（AGENTS.md）。
+
+顺带修一处引用：§3.1 行 425 的 `draft→active` 副作用栏写「发 `project.episode.created`？**否**（见
+§5.3 的事件缺口）」。§5.3 讲的是事件粒度与为什么需要 reorder，里面唯一说「不发」的是行 550——
+**重排**不发，不是激活不发。结论碰巧对，引用是错的。这种「错误引用 + 巧合正确结论」最容易被
+后来者当证据链，记为 PEC-5。
+
+示例的信封这次是完整且自洽的：16 键齐备，`data_ref` 填四键对象（S03 既有 `head_revision=1`
+也有 `content_hash`，和 S48 只能写 `null` 的情况不同）。负向探针 payload 层 16 例、信封层 3 例全部被拒：七个必填键缺一各拒、`release_ordinal: 0` 与
+`shooting_ordinal: 0` 与 `"8"` 拒、`sha256:` 前缀 / 大写 / 短串三种 hash 形状各拒、多余 `branch_id` 拒、
+空 `episode_id` 拒、`schema_version` 不等于 `"2.0"` 拒；信封层 `data_ref` 写字符串拒、
+`causation_id: null` 拒、`aggregate_sequence: 0` 拒。正向探针 3 例如预期通过：`release_ordinal: null`
+（行 507 的纯草稿集）、`data_ref: null`、`source` 不被信封钉死在 `S03`。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -896,11 +959,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（112 个 JSON 解析）、`payloads`（92 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 37 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（112 个 JSON 解析）、`payloads`（93 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 38 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（53 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（54 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

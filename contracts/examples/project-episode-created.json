@@ -1,0 +1,31 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCHM4Q6S8U0W2Y4A6C8E0G2",
+  "source": "S03",
+  "type": "project.episode.created",
+  "subject": "ep_01JCG7K2M4P6R8T0V2X4Z6B8D0",
+  "time": "2026-11-06T02:30:00Z",
+  "tenant_id": "tnt_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "home_cell": "cell_a1",
+  "aggregate_id": "ep_01JCG7K2M4P6R8T0V2X4Z6B8D0",
+  "aggregate_sequence": 1,
+  "correlation_id": "cmd_01JCHM2P4R6T8V0X2Z4B6D8F0",
+  "causation_id": "cmd_01JCHM2P4R6T8V0X2Z4B6D8F0",
+  "traceparent": "00-3f8a1c5e9b2d7046a8c0e2f4b6d8a0c2-3f8a1c5e9b2d7046-01",
+  "data": {
+    "schema_version": "2.0",
+    "episode_id": "ep_01JCG7K2M4P6R8T0V2X4Z6B8D0",
+    "series_id": "ser_01JCFA3C5E7G9J1L3N5P7R9T1",
+    "project_id": "prj_01JCF90B4D6F8H0K2M4P6R8T0",
+    "release_ordinal": 8,
+    "shooting_ordinal": 3,
+    "spec_hash": "4ca35a36926f043dd9f139ac13a852536236c88795f452bc11c1ec2729398dd7"
+  },
+  "data_ref": {
+    "service_id": "S03",
+    "id": "ep_01JCG7K2M4P6R8T0V2X4Z6B8D0",
+    "revision": 1,
+    "content_hash": "4ca35a36926f043dd9f139ac13a852536236c88795f452bc11c1ec2729398dd7"
+  }
+}
