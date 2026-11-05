@@ -83,6 +83,35 @@ python contracts/quality/validate_registry.py <registry.json>
 `--families` / `--schema` 路径不存在 → 2。`owner_service` 那条要挑**真的不符**的项改，
 把 `S36` 的项改成 `S36` 不构成用例。
 
+### `keyframe_edit` 的 6 帧前置条件是加载期规则（ROUTE-T4）
+
+`plans/S35:1010` 写的是「给 `window_scope=shot` 的 check 登记 `keyframe_edit` → 加载期拒绝」，
+同一条件在三处各说了一遍：`check-registry.v2.schema.json:90`（`window_max_frames`
+"Gates keyframe_edit, whose precondition is <= 6"）、`action-families.v2.json:68`
+（`identity` 把 `keyframe_edit` 列进 `forbidden`，"when is continuous over more than 6 frames"）、
+`plans/S29:109-122`（执行期 `end_frame - start_frame + 1 ≤ 6`，否则 422）。
+但在补上这条之前，校验器只认「动作不得越族」，于是
+
+```json
+{"defect_type": "identity", "default_action": "keyframe_edit", "window_scope": "shot"}
+{"defect_type": "identity", "default_action": "keyframe_edit",
+ "window_scope": "window", "window_max_frames": 30}
+```
+
+两种都返回 **0「OK: 1 check(s) loaded」**。schema 表达不了它——这条规则把动作成员资格和
+两个兄弟字段（`window_scope`、`window_max_frames`）关联起来，是跨字段的；S29 只在执行期挡，
+意味着错误配置能一路装到线上，直到第一次真修才 422。
+
+现在 `validate()` 里有一条 `KEYFRAME_MAX_FRAMES = 6` 的闸：凡是 `default_action`、
+`allowed_actions`、`escalation_rule.escalate_to` 任一提到 `keyframe_edit` 的登记项，
+`window_scope` 必须是 `frame` / `window`，且 `window_max_frames ≤ 6`。四件事一起判，
+因为只查 `default_action` 会放过 `escalation_rule` 升级到 `keyframe_edit` 的路径。
+
+回归矩阵（`window_scope` / `window_max_frames` / 期望退出码）：
+`shot` / — → 1；`window` / 30 → 1；`window` / 6 → 0；`frame` / 1 → 0；
+不含 `keyframe_edit` 的 `identity` + `shot` → 0；`escalate_to: keyframe_edit` + `shot` → 1；
+`escalate_to: regenerate_video` + `shot` → 0。
+
 ## 三层文件的关系
 
 ```

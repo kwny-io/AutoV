@@ -23,6 +23,11 @@ DEFAULT_SCHEMA = os.path.join(HERE, "check-registry.v2.schema.json")
 LAYER_OF_PREFIX = {"TECH": "technical", "VIS": "semantic", "AUD": "alignment", "SUB": "subtitle"}
 LAYER_OWNER = {"technical": "S35", "semantic": "S36", "alignment": "S37", "subtitle": "S38"}
 
+# S35 §10.3.1 ROUTE-T4. 24fps x 6 frames = 0.25s, shorter than any provider's
+# shortest generation tier, so a defect wider than this has crossed a semantic
+# boundary inside the shot and static editing cannot fix it in isolation.
+KEYFRAME_MAX_FRAMES = 6
+
 
 def load(path):
     with open(path, encoding="utf-8") as f:
@@ -77,6 +82,32 @@ def validate(registry, families):
 
         if c.get("never_auto_repair") and not c.get("no_auto_reason"):
             errors.append(f"{where}: never_auto_repair=true requires no_auto_reason")
+
+        # ROUTE-T4: keyframe_edit only works on a continuous window of at most
+        # KEYFRAME_MAX_FRAMES. A shot/track/all scope, or a window scope with a
+        # larger ceiling, would let S39 hand a long span to per-frame editing.
+        # The schema cannot express this (it relates two sibling fields to
+        # action membership), and S29 only rejects it at execution time with a 422.
+        names_keyframe = "keyframe_edit" in (
+            [c.get("default_action")] + list(c.get("allowed_actions") or [])
+        )
+        esc_to = (c.get("escalation_rule") or {}).get("escalate_to")
+        if esc_to == "keyframe_edit":
+            names_keyframe = True
+        if names_keyframe:
+            scope = c.get("window_scope")
+            mx = c.get("window_max_frames")
+            if scope not in ("frame", "window"):
+                errors.append(
+                    f"{where}: names keyframe_edit but window_scope is {scope!r}; "
+                    f"keyframe_edit needs a continuous window of at most "
+                    f"{KEYFRAME_MAX_FRAMES} frames"
+                )
+            elif mx is None or mx > KEYFRAME_MAX_FRAMES:
+                errors.append(
+                    f"{where}: names keyframe_edit but window_max_frames is {mx!r}; "
+                    f"the precondition is at most {KEYFRAME_MAX_FRAMES} frames"
+                )
 
         prefix = cid.split(".")[0]
         expect_layer = LAYER_OF_PREFIX.get(prefix)
