@@ -311,6 +311,31 @@ KNOWN_BAD_CHECK_IDS = {
 }
 
 
+def check_payload_refs(name):
+    """Every data_schema_ref / schema_ref a topic names must be a real file.
+
+    A topic that points at a schema which does not exist is worse than one with
+    no payload contract at all: consumers see a typed contract and the validator
+    cannot load it, so the failure lands at read time in someone else's service.
+    """
+    r = Result(name)
+    topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
+    refs = 0
+    with_payload = 0
+    for t in topics:
+        for key in ("schema_ref", "data_schema_ref"):
+            ref = t.get(key)
+            if not ref:
+                continue
+            refs += 1
+            if key == "data_schema_ref":
+                with_payload += 1
+            if not os.path.exists(os.path.join(CONTRACTS, ref)):
+                r.fail(f"topic {t.get('topic')}: {key} -> {ref} does not exist")
+    r.note = f"{refs} schema ref(s), {with_payload} topic(s) with a payload schema"
+    return r
+
+
 def check_check_ids(name):
     """check_id values in the four QC plans match the schema's naming pattern.
 
@@ -363,6 +388,7 @@ def check_check_ids(name):
 
 CHECKS = [
     ("json", check_json, "every contracts/**.json parses"),
+    ("payloads", check_payload_refs, "every topic schema_ref/data_schema_ref names a real file"),
     ("checkids", check_check_ids, "check_id values in the QC plans match the schema pattern"),
     ("links", check_links, "every relative markdown link resolves"),
     ("catalog", check_catalog, "service/topic ids agree across catalog, docs/02, topics"),

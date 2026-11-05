@@ -33,6 +33,7 @@ EXAMPLES = os.path.join(CONTRACTS, "examples")
 SCHEMA_OF = {
     "admission": "admission-record.v2.schema.json",
     "admission-unknown": "admission-record.v2.schema.json",
+    "artifact-ingested": "event-envelope.v2.schema.json",
     "automation-policy": "automation-policy.v2.schema.json",
     "context-pack": "context-pack.v2.schema.json",
     "enterprise-change-plan": "enterprise-change-plan.v2.schema.json",
@@ -59,6 +60,24 @@ def local_registry():
     return reg
 
 
+def payload_schemas():
+    """event_type -> schema file name, for topics that register a payload schema.
+
+    `schema_ref` names the envelope, so it types the whole event but leaves
+    `data` an unconstrained object. A topic that wants its payload typed adds
+    `data_schema_ref` in contracts/event-topics.v2.json. Today only
+    artifact.ingested does; every other topic is envelope-only, which is the
+    normal state and not a gap.
+    """
+    with open(os.path.join(CONTRACTS, "event-topics.v2.json"), encoding="utf-8") as f:
+        topics = json.load(f)["topics"]
+    return {
+        t["event_type"]: t["data_schema_ref"]
+        for t in topics
+        if t.get("data_schema_ref")
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true", help="list mappings and exit")
@@ -76,6 +95,7 @@ def main():
         return 2
 
     reg = local_registry()
+    payload = payload_schemas()
     paths = sorted(glob.glob(os.path.join(EXAMPLES, "*.json")))
     if not paths:
         print(f"no examples found under {EXAMPLES}")
@@ -95,13 +115,25 @@ def main():
             schema = json.load(f)
         with open(p, encoding="utf-8") as f:
             doc = json.load(f)
-        errs = sorted(
-            Draft202012Validator(schema, registry=reg).iter_errors(doc),
-            key=lambda e: list(e.absolute_path),
-        )
-        if errs:
-            loc = "/".join(str(x) for x in errs[0].absolute_path) or "<root>"
-            failures.append((os.path.basename(p), len(errs), loc, errs[0].message))
+
+        # An envelope schema types everything except `data`. When the example's
+        # topic registers a payload schema, validate `data` against it too —
+        # otherwise the payload is exactly as unconstrained as having no schema.
+        checked = [(schema, doc, "")]
+        payload_name = payload.get(doc.get("type"))
+        if payload_name:
+            with open(os.path.join(CONTRACTS, payload_name), encoding="utf-8") as f:
+                checked.append((json.load(f), doc["data"], "data/"))
+
+        found = []
+        for target, sub, prefix in checked:
+            for e in Draft202012Validator(target, registry=reg).iter_errors(sub):
+                found.append((prefix + "/".join(str(x) for x in e.absolute_path), e))
+        found.sort(key=lambda pair: pair[0])
+
+        if found:
+            loc, first = found[0]
+            failures.append((os.path.basename(p), len(found), loc or "<root>", first.message))
         else:
             ok += 1
 
