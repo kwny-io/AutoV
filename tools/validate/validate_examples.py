@@ -35,6 +35,7 @@ SCHEMA_OF = {
     "admission-unknown": "admission-record.v2.schema.json",
     "artifact-ingested": "event-envelope.v2.schema.json",
     "automation-policy": "automation-policy.v2.schema.json",
+    "connector-observation-received": "event-envelope.v2.schema.json",
     "context-pack": "context-pack.v2.schema.json",
     "delivery-package-published": "event-envelope.v2.schema.json",
     "enterprise-change-plan": "enterprise-change-plan.v2.schema.json",

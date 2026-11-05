@@ -296,6 +296,7 @@
       "topic": "drama.provider-connectors.v2",
       "producer": "S27",
       "schema_ref": "event-envelope.v2.schema.json",
+      "data_schema_ref": "connector.observation-received.v2.schema.json",
       "partition_key": "tenant_id:aggregate_id",
       "delivery": "at_least_once",
       "normal_retention_days": 14,
