@@ -189,11 +189,7 @@ round 3：correction_of=round2      → 422 CORRECTION_LIMIT_REACHED
 
 ### 2.5 `POST /agent-tasks/{id}:cancel`
 
-```jsonc
-{ "command_id": "cmd_...", "reason": "user_cancelled" }
-```
-
-语义见 §6.4：**不假退款**。已经提交给 S26 的调用会继续跑完并结算，S19 只是不再发起新步骤。
+请求体 `{"command_id": "...", "reason": "user_cancelled"}`。语义见 §6.4：**不假退款**——已经提交给 S26 的调用继续跑完并结算，S19 只是不再发起新步骤。
 
 ### 2.6 `POST /agent-definitions/{id}/revisions`
 
@@ -448,11 +444,11 @@ def call_tool(task, defn, call):
 
 ### 3.9 S19 与 `execution_fence` / `node_epoch`
 
-**S19 既不产生也不推进这两个值。** S19 的"重试"是任务内步骤重试（同一个 `task_id`）；它不改变 `execution_fence`（那是 S08/S21 的），也不改变 `node_epoch`（那是被改节点的）。
+**S19 既不产生也不推进这两个值。** S19 的"重试"是任务内步骤重试（同一个 `task_id`）；它不改变 `execution_fence`（S08/S21 的），也不改变 `node_epoch`（被改节点的）。
 
-唯一的接触点是**读取**：`agent_task.execution_context` 里带着创建时刻的 `execution_fence` 与 `node_epoch`，用来在结束时给结果打标。发起方拿结果落库前会自己比对当前 fence/epoch（[S08 §2.1](S08-revision-snapshot.md) 的 `STALE_DECISION`）。S19 不替它判，也不缓存这个判断。
+唯一接触点是**读取**：`agent_task.execution_context` 带着创建时刻的 `execution_fence` 与 `node_epoch`，用于给结果打标。发起方落库前自己比对当前 fence/epoch（[S08 §2.1](S08-revision-snapshot.md) 的 `STALE_DECISION`）。S19 不替它判，也不缓存这个判断。
 
-一个具体的错误实现：S19 在任务创建后收到 `manifest.committed` 事件，就主动取消任务。**不要这样做**——取消的权威在 S21，S19 一取消就无法区分"用户取消"与"epoch 推进"，`stop_reason` 的统计也会失真。
+一个具体的错误实现：S19 收到 `manifest.committed` 就主动取消任务。**不要这样做**——取消的权威在 S21；S19 一取消就分不清"用户取消"与"epoch 推进"，`stop_reason` 统计也失真。
 
 ---
 
@@ -490,9 +486,7 @@ def call_tool(task, defn, call):
 }
 ```
 
-`stop_reason` 枚举：`GOAL_REACHED`、`STRUCTURE_INVALID`、`STEP_LIMIT`、`TOKEN_LIMIT`、`TIME_LIMIT`、`COST_LIMIT`、`POLICY_DENIED`、`GENERATION_FAILED`、`GENERATION_UNKNOWN`、`TOOL_DENIED_REPEATEDLY`、`USER_CANCELLED`、`UNRESOLVED_CONFLICTS`。
-
-`cost_state`：`PROVISIONAL`（仍有在途 S26 结算）/ `FINAL`（全部结算到账）。**只有 `FINAL` 才能被 S44 当成本事实引用**，`PROVISIONAL` 只是本任务内熔断用的数（§1.6）。
+`stop_reason` 枚举：`GOAL_REACHED`、`STRUCTURE_INVALID`、`STEP_LIMIT`、`TOKEN_LIMIT`、`TIME_LIMIT`、`COST_LIMIT`、`POLICY_DENIED`、`GENERATION_FAILED`、`GENERATION_UNKNOWN`、`TOOL_DENIED_REPEATEDLY`、`USER_CANCELLED`、`UNRESOLVED_CONFLICTS`。`cost_state` 取 `PROVISIONAL`（仍有在途结算）或 `FINAL`（全部到账）；**只有 `FINAL` 能被 S44 当成本事实引用**（§1.6）。
 
 ### 4.2 `task_result`（候选结构）
 
@@ -802,3 +796,405 @@ CREATE INDEX outbox_unpublished_idx
 - **不建 `agent_memory` / `agent_state`。** 记忆归 S16。Agent 没有跨任务状态——一个有持久记忆的 Agent 就是新的权威。
 - **不建 `token_ledger` / `cost_account`。** 金额归 S23；`cost_micro` 只是本任务熔断数（§1.6）。
 - **不建 `tool_result_cache`。** 工具结果可能含租户内容，缓存会带来"一个任务的工具结果被另一个任务读到"的跨租户风险（E28）。
+
+---
+
+## 6. 幂等与并发
+
+### 6.1 创建事务模板
+
+```python
+with db.transaction() as tx:                       # REPEATABLE READ
+    rec = tx.idempotency_begin(tenant_id, command_id, request_hash, 'CREATE_TASK')
+    if rec.replayed:
+        return rec.response_code, rec.response_body
+
+    # 1. 本地校验（不产生外部调用）
+    defn = load_published_definition(tx, role, definition_revision)   # 422 if not published
+    assert limits_subset(body.limits, defn.limits_json)               # 422 LIMITS_EXCEED_DEFINITION
+
+    # 2. 纠正链推导（服务端算，不信客户端）
+    if body.correction_of_task_id:
+        parent = load_task(tx, body.correction_of_task_id)            # 404 跨租户
+        assert parent.role == role and parent.definition_revision == definition_revision
+        round_ = parent.correction_round + 1
+        if round_ > 2: raise ApiError(422, 'CORRECTION_LIMIT_REACHED')
+        root = parent.root_task_id
+    else:
+        round_, root = 0, new_ulid('agt_')
+
+    # 3. 外部校验（在事务内但只读，失败则整体 ROLLBACK）
+    assert s01_permission_checks(...) == 'allow'                      # 403
+    assert s18_pack_matches(defn.required_perspective, ...)            # 422 PERSPECTIVE_MISMATCH
+    assert s18_pack_watermark_ok(...)                                  # 422 CONTEXT_PACK_STALE
+
+    # 4. 写任务（此时不写 outbox——事件在终态才发）
+    task_id = new_ulid('agt_')
+    insert_agent_task(tx, task_id, ...)
+    tx.idempotency_finish(tenant_id, command_id, 202, response_body(task_id))
+    return 202, {"task_id": task_id, "state": "ACCEPTED", "replayed": False}
+```
+
+第 3 步的外部只读调用在事务里做，意味着**事务持有时间包含两次网络往返**。这是刻意的取舍：如果把外部校验挪到事务外，就会出现"校验通过 → 事务开始 → 期间权限被撤销"的窗口，而 E27 要求撤权及时生效。代价是 503 时事务回滚，客户端重试，可接受。
+
+第 4 步不写 outbox，是 S19 与其它服务最不一样的地方：**任务创建不是业务事件**。只有进入终态才发 `agent.task.completed`。
+
+### 6.2 步骤写入
+
+```python
+with db.transaction() as tx:
+    task = tx.execute("""
+        SELECT steps_used, tokens_in, tokens_out, cost_micro
+          FROM agent_task WHERE tenant_id=%s AND task_id=%s
+            AND state='RUNNING' FOR UPDATE
+    """, (tenant_id, task_id)).one()
+    if task is None:
+        raise Abort("TASK_NOT_RUNNING")          # 被取消/被回收，本步不写
+
+    step_index = tx.execute("""
+        SELECT coalesce(max(step_index)+1, 0) FROM agent_step
+         WHERE tenant_id=%s AND task_id=%s
+    """, (tenant_id, task_id)).scalar()
+
+    insert_agent_step(tx, step_index, ...)
+    update_agent_task_counters(tx, ...)           # 熔断计数在同一事务内推进
+```
+
+`FOR UPDATE` 锁任务行，让"步数递增"与"状态检查"原子。代价是单任务串行——这正确，因为一个任务本来就只有一个 worker。多 worker 抢同一任务只在 lease 失效时发生，那时 `state<>'RUNNING'` 会让第二方直接放弃。
+
+### 6.3 并发
+
+| 场景 | 行为 |
+|---|---|
+| 两个 worker 同时领同一 `ACCEPTED` 任务 | `UPDATE ... WHERE state='ACCEPTED' AND (lease_expires_at IS NULL OR lease_expires_at < now()) RETURNING`，只有一个拿到 |
+| 取消与完成并发 | 终态先写入者生效；另一方的 `UPDATE ... WHERE state='RUNNING'` 影响 0 行 → 返回 409 `TASK_NOT_CANCELLABLE` 或丢弃结果 |
+| 同一纠正被并发发起 | `command_id` 不同则两个都建；`UNIQUE (tenant_id, role, correction_of_task_id)` 不存在，允许多次尝试是错的 → 见下 |
+| 结算事件延迟 | `cost_micro` 只增不减，`cost_state` 由"在途结算数 == 0"派生 |
+
+第三行要展开：**同一父任务的同一轮纠正只允许一次**。加唯一索引：
+
+```sql
+CREATE UNIQUE INDEX correction_once
+  ON agent_runtime.agent_task (tenant_id, correction_of_task_id)
+  WHERE correction_of_task_id IS NOT NULL;
+```
+
+没有这条索引，S05 可以在一次网络抖动时对同一份违规列表发起两个 round-1 纠正，付两笔钱，然后只能用一个。这与"最多 2 次纠正"是同一件事的两半：**次数上限按轮，不按请求**。
+
+### 6.4 取消语义
+
+`:cancel` 是**软取消**：
+
+1. `RUNNING → CANCELLING`，写 `stop_reason='USER_CANCELLED'` 的草案（终态时才正式写）；
+2. worker 在下一个步骤边界发现 `CANCELLING` → 不再发起新步骤；
+3. 在途的 S26 调用**继续跑完并结算**（不假退款，与 [S26 §1](S26-generation-jobs.md) 的"取消不假退款"一致）；
+4. 全部在途调用终态后 → `CANCELLED`，`cost_state` 转 `FINAL`，发 `agent.task.completed`（`state=CANCELLED`）。
+
+`ACCEPTED` 态的任务可以立即 `CANCELLED`（没有在途调用）。`CANCELLING` 再收到 `:cancel` → 200 幂等（同 `command_id` 回放）。
+
+**取消不发"退款事件"**，因为 S19 从不持有钱。退款是 S23 的事，由 S26 的结算驱动。
+
+### 6.5 事件量与顺序
+
+每个任务最多 1 条 `agent.task.completed`（终态唯一）。`aggregate_sequence` 从 1 开始每次终态 +1——对单任务而言就是恒等于 1，但保留这个列是为了让 relay 与下游用统一逻辑（[S08 §6.4](S08-revision-snapshot.md)）而不是特例。
+
+不会有跳号：S19 的 outbox 只在一个事务里被写一次，且该事务同时把 `state` 推到终态。若 relay 崩溃，`published_at IS NULL` 的行会被补发；若发布成功但 `UPDATE published_at` 失败，会重发一次，下游按 `event_id` 去重。
+
+---
+
+## 7. 失败分支
+
+### 7.1 准入阶段
+
+| 情况 | 返回 | 是否写入 | 备注 |
+|---|---|---|---|
+| `role` 未注册 | 422 `UNKNOWN_ROLE` | 否 | |
+| 定义 revision 不是 `PUBLISHED` | 422 `DEFINITION_NOT_PUBLISHED` | 否 | 含"已 RETIRED" |
+| `limits` 放宽 | 422 `LIMITS_EXCEED_DEFINITION` | 否 | 不放宽再降级处理 |
+| 输出 schema 不符 | 422 `SCHEMA_NOT_ALLOWED` | 否 | |
+| 纠正链已满 | 422 `CORRECTION_LIMIT_REACHED` | 否 | 交人工（S40） |
+| pack 的 perspective 不符 | 422 `PERSPECTIVE_MISMATCH` | 否 | |
+| pack watermark 落后 | 422 `CONTEXT_PACK_STALE` | 否 | 可重试（重取 pack） |
+| S01 判定 deny | 403 `PERMISSION_DENIED` | 否 | 不写幂等 DONE（可重试） |
+| S01 不可用 | 503 `AUTHORIZATION_UNAVAILABLE` | 否 | 不降级为放行 |
+| S18 不可用 | 503 `CONTEXT_UNAVAILABLE` | 否 | 不降级为"无上下文" |
+
+最后两行是同一类：**依赖不可用时不许"先跑起来"**。一个没有 pack 的 Agent 会自己编前情，产出的提案看起来完整但全是虚构——这比失败更坏。
+
+### 7.2 执行阶段
+
+| 情况 | 结果 | 费用 | 后续 |
+|---|---|---|---|
+| S25 返回 `INFEASIBLE` | `FAILED(GENERATION_FAILED)` | 0 | 调用方换对照组的 `limits` 或缩 `goal` |
+| S26 返回 409（预算/配额/额度） | `FAILED(POLICY_DENIED)` | 0 | 不自动重试 |
+| S26 返回 `SUBMISSION_UNKNOWN` | `FAILED(GENERATION_UNKNOWN)` | 保留额度 | **不重提**，等对账（S26 §7.2） |
+| S26 超时未到终态 | `FAILED(GENERATION_FAILED)` | 视状态 | checkpoint 保留，人工可查 |
+| 模型输出结构非法 | `FAILED(STRUCTURE_INVALID)` | 已花 | 调用方决定是否发纠正（S05/S06） |
+| 工具被拒绝 3 次连续 | `FAILED(TOOL_DENIED_REPEATEDLY)` | 已花 | 说明定义白名单与需求不匹配 |
+| 闸命中（步数/token/时间/费用） | `FAILED(*_LIMIT)` | 已花 | 终态，不重试同 body |
+| 结果含禁止字段 | `FAILED(STRUCTURE_INVALID)` | 已花 | 422 `OUTPUT_CONTAINS_FORBIDDEN_FIELD` |
+| 有硬冲突且 `on_unresolved='review'` | `NEEDS_REVIEW` | 已花 | S40 建 ReviewTask |
+
+### 7.3 恢复阶段
+
+| 情况 | 行为 |
+|---|---|
+| worker 崩溃，lease 到期 | 另一 worker 接管，从最后 checkpoint 续 |
+| checkpoint 指向的在途 S26 任务已成功 | 直接用结果继续，**不重提** |
+| checkpoint 指向的在途 S26 任务未知 | `FAILED(GENERATION_UNKNOWN)`，不盲重提 |
+| checkpoint 的 `messages_ref` 不可读 | `FAILED(STRUCTURE_INVALID)`，人工可查 state_digest |
+| checkpoint 落后于 `agent_step` | 以 checkpoint 为准重放未提交的步骤；已提交的步骤不重做 |
+| lease 被强夺（脑裂） | 旧 worker 的写全部被 `WHERE state='RUNNING' AND lease_owner=$me` 拒绝 |
+
+最后一行是 E34（Region 灾备/旧执行器）的落点：**旧执行器的写入必须被栅栏挡住**，而不是靠"它应该已经停了"。
+
+### 7.4 存储与事件
+
+| 情况 | 行为 |
+|---|---|
+| 写 `task_result` 时 `task_result_once` 冲突 | 说明已有成功结果 → 200 返回既有结果，不报错 |
+| 写结果成功、写 outbox 失败（同事务） | 事务回滚，任务回到 `RUNNING`，下个边界重试 |
+| 事务提交、relay 前崩溃 | 重启补发 |
+| 发布成功、`published_at` 更新失败 | 重发一次，下游按 `event_id` 去重 |
+| `agent_step` 主键冲突（并发写同一步） | 唯一约束拒绝，worker 重读 `step_index` 重试一次；仍冲突则 `FAILED` |
+
+### 7.5 依赖不可用
+
+| 依赖 | 契约不可用时的行为 | 能否降级 |
+|---|---|---|
+| S26 | 任务 `FAILED(GENERATION_FAILED)`，未花费用 | 否（不许绕开） |
+| S01 | 503，不创建任务 | 否 |
+| S02 | 503，不创建任务 | 否 |
+| S18 | 503，不创建任务 | 否 |
+| S20（模板读取） | 503，不创建任务 | 否 |
+| S25 | S26 侧报错 → `FAILED(GENERATION_FAILED)` | 否 |
+| S45（审计投递） | 异步，不阻塞；审计本地先落 `tool_call_audit` | 是（审计补投） |
+
+唯一可降级的是审计外发，因为它不参与决策。其余六项任何一项消失，Agent 就不该跑。
+
+### 7.6 回滚与独立升级（E01）
+
+- 迁移只加列、加表、加索引（`CREATE INDEX CONCURRENTLY`），不改已有列语义。
+- 旧版本 worker 与新版并存时，新版只写新列；旧版读不到新列不影响（全部有默认值）。
+- `task_result.proposal` 的 schema 兼容由 `output_schema_ref.revision` 决定，不由部署版本决定——**已经产出的结果永远按它自己的 schema revision 解释**。
+- 回滚一次部署不会中断在途任务：worker 从 checkpoint 续跑，checkpoint 里 `remaining` 是值不是增量。
+
+---
+
+## 8. 可观测
+
+### 8.1 指标
+
+| 指标 | 类型 | 标签 | 用途 |
+|---|---|---|---|
+| `s19_task_total` | counter | `role`, `state`, `stop_reason` | 角色成功率与终止原因分布 |
+| `s19_task_duration_seconds` | histogram | `role` | P50/P95/P99 |
+| `s19_step_total` | counter | `role`, `kind`, `outcome` | 工具拒绝率 |
+| `s19_tool_denial_total` | counter | `role`, `tool_name`, `reason` | 白名单配置漂移 |
+| `s19_correction_round_total` | counter | `role`, `round` | 纠正是否在增多（质量回归信号） |
+| `s19_cost_micro` | histogram | `role` | 单任务成本分布 |
+| `s19_cost_state_provisional_age_seconds` | gauge | `role` | `PROVISIONAL` 滞留时长（结算积压） |
+| `s19_lease_reap_total` | counter | `role` | 崩溃频率 |
+| `s19_checkpoint_age_seconds` | gauge | `role` | 长任务健康 |
+| `s19_permission_check_latency_seconds` | histogram | — | S01 P95 是否拖慢步骤 |
+
+### 8.2 告警
+
+| 条件 | 级别 | 含义 |
+|---|---|---|
+| `s19_task_total{state="FAILED",stop_reason="STRUCTURE_INVALID"}` 占比 > 15%/1h | P1 | 定义或模板退化，不是模型随机性 |
+| `s19_correction_round_total{round="2"}` > 0.1 × 任务数 | P2 | 纠正常态化，说明提示或 schema 有问题 |
+| `s19_tool_denial_total{reason="NO_GRANT"}` > 0/5m | P2 | 白名单配了一个 Agent 实际没有的权限 |
+| `s19_cost_state_provisional_age_seconds` > 1800 | P1 | S26 结算事件积压，成本不可信 |
+| `s19_lease_reap_total` > 10/h | P2 | worker 不稳 |
+| `outbox` 未发布最老条数 > 5 分钟 | P2 | relay 或 Kafka 异常 |
+| `s19_step_total{outcome="DENIED"}` 单任务 > 5 | P3 | 任务在反复撞墙，浪费步数与钱 |
+
+### 8.3 审计
+
+- **每一步都进 trace**：`s19.task`（root span）→ `s19.step` → `s26.generation-job` / `s19.tool`。`traceparent` 从 `execution_context.trace_id` 起，贯穿到 S26。
+- **工具调用落 `tool_call_audit`**，S45 通过 `GET /agent-tasks/{id}/steps` 或直接 CDC 拉取。
+- **不记录**：完整 prompt、完整 messages、工具参数原文、模型原始响应。这些如果要留，走受限存储 + `data_ref`，并有独立保留期（§11 C5）。
+- 审计行与任务同生命周期：任务归档（90 天）后审计默认保留 1 年（E39 要求操作链可证明），冷存。
+
+### 8.4 每日对账
+
+- `agent_task.steps_used == count(agent_step)`；
+- `agent_step.step_index` 从 0 连续无空洞；
+- `agent_task.cost_micro == sum(agent_step.cost_micro)`（允许 1 个结算周期的滞后，超过即告警）；
+- `state='SUCCEEDED'` 的任务必须有 `result_ref` 且 `task_result` 存在；
+- `state='ACCEPTED'` 超过 10 分钟的任务（队列积压或队列配置错误）；
+- `outbox` 未发布条数与最老滞留时长。
+
+---
+
+## 9. 测试清单
+
+标注 `[E##]` 对应 [docs/16 §5](../docs/16-migration-acceptance.md)。全部用 mock 依赖（mock S01/S02/S18/S20/S25/S26），不接真实模型。
+
+### 9.1 幂等与并发 `[E12]`
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-01 `[E12]` | 同 `command_id` + 同 body 两次 | 第二次返回同一 `task_id`，`replayed:true`，只 1 个任务 |
+| T19-02 `[E12]` | 同 `command_id` + 改 `goal` | 409 `IDEMPOTENCY_KEY_REUSED`，无写入 |
+| T19-03 | 不同 `command_id` + 同 body 两次 | 建两个任务（**允许**：这是两次真实付费调用） |
+| T19-04 | 并发 20 次同 `command_id` | 1 个任务，其余全部回放或 409 |
+| T19-05 | 两个 worker 抢同一 `ACCEPTED` | 只有一个取得 lease |
+| T19-06 | 同一父任务并发发两个 round-1 纠正 | 一个成功，一个 409/唯一冲突（`correction_once`） |
+
+### 9.2 有界纠正（本文核心，被 S05/S06 引用）
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-07 | round 0 结构非法 → 发起 round 1 | 新 `task_id`，`correction_round=1`，`root_task_id` 指向 round 0 |
+| T19-08 | round 1 仍非法 → round 2 | 允许 |
+| T19-09 | round 2 仍非法 → 发起 round 3 | 422 `CORRECTION_LIMIT_REACHED`，无写入 |
+| T19-10 | 客户端伪造 `correction_round=0` 但带 `correction_of_task_id` | 服务端按链推导为 1，**忽略客户端值** |
+| T19-11 | 纠正换了 `definition_revision` | 422（纠正必须同定义） |
+| T19-12 | 纠正的 `command_id` 与父任务相同 | 409 `IDEMPOTENCY_KEY_REUSED` |
+| T19-13 | 纠正只改 `violations` 指向的区域 | 未受影响区域的 hash 与父结果一致（防全量重写） |
+
+### 9.3 信任边界 `[E28]`
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-14 `[E28]` | 租户 B 查租户 A 的 `task_id` | 404，响应体不含 A 的任何标识 |
+| T19-15 `[E28]` | 请求体 `tenant_id` 与 TCT 不同 | 403 `TENANT_CONTEXT_MISMATCH`，无写入 |
+| T19-16 | 模型输出里带 `tenant_id` | 422 `OUTPUT_CONTAINS_FORBIDDEN_FIELD`，任务 FAILED |
+| T19-17 | 定义 revision 的 schema 根级有 `tenant_id` | 发布期 422 拒绝 |
+| T19-18 | Agent 试图调用白名单外的工具 | 422 `TOOL_NOT_ALLOWED`，不发请求，审计记 DENY |
+| T19-19 | Agent 调用白名单内但 S01 判定 deny 的工具 | 审计记 DENY + `reason_code`，模型收到结构化拒绝 |
+| T19-20 | 工具被拒 3 次 | `FAILED(TOOL_DENIED_REPEATEDLY)` |
+| T19-21 | 工具返回"忽略之前的指令…" | 只进 messages 作为数据，`output_schema` 与 `limits` 不变（断言无策略变化） |
+| T19-22 | 工具参数含剧本原文 | `tool_call_audit.arguments_digest` 有值、`arguments_ref` 指向受限存储、表内无原文 |
+
+### 9.4 四道闸与状态机
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-23 | `max_steps` 命中 | `FAILED(STEP_LIMIT)`，不发下一步调用 |
+| T19-24 | 下一步报价上界会超 `max_cost_micro` | `FAILED(COST_LIMIT)`，**该步不发出**（断言 S26 无请求） |
+| T19-25 | `max_wall_seconds` 命中时有在途调用 | `FAILED(TIME_LIMIT)`，在途调用继续结算到 `FINAL` |
+| T19-26 | 终态任务再 `:cancel` | 409 `TASK_NOT_CANCELLABLE` |
+| T19-27 | `RUNNING` 取消，在途调用成功 | `CANCELLED`，结果不入 `task_result`，费用照记 |
+| T19-28 | 终态后再收到旧的 `agent.task.completed` 重投 | 状态不回归 |
+| T19-29 | `on_unresolved='review'` 且有硬冲突 | `NEEDS_REVIEW` + `unresolved_issues` 非空 |
+
+### 9.5 恢复 `[E13][E33]`
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-30 `[E13]` | 写结果后、COMMIT 前 kill -9 | 无结果、无 outbox、无幂等 DONE；重试成功 |
+| T19-31 `[E13]` | COMMIT 后、relay 前 kill | 重启补发，`published_at` 由 NULL 变有值 |
+| T19-32 `[E33]` | worker 在等 S26 时被杀，lease 到期 | 新 worker 从 checkpoint 续，**不重提**（断言 S26 只 1 个 provider_job） |
+| T19-33 | checkpoint 的 `pending_generation_job_ref` 已是 `SUBMISSION_UNKNOWN` | `FAILED(GENERATION_UNKNOWN)`，不重提 |
+| T19-34 | 恢复后 `remaining` 被重置成满额（模拟 bug） | 断言测试失败——恢复必须用 checkpoint 的值 |
+| T19-35 | lease 被强夺后旧 worker 继续写 | 写入被 `lease_owner` 条件拒绝 |
+| T19-36 | `step_index` 并发写同一步 | 唯一冲突后重试成功，最终连续 |
+
+### 9.6 事件 `[E32]`
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-37 `[E32]` | 同一事件投递 3 次 | 下游按 `event_id` 去重 |
+| T19-38 `[E32]` | Kafka 重放 1 小时 | 不新建任务、不重提付费、`publish_sequence` 不变 |
+| T19-39 | 事件 `data` 不含 `proposal` 正文 | 断言 `data` 只有引用与计数 |
+| T19-40 | 事件信封按 `event-envelope.v2` 校验 | 全部必填字段齐备（含 `home_cell`、`traceparent`、`data_ref`） |
+
+### 9.7 独立升级 `[E01]`
+
+| # | 用例 | 期望 |
+|---|---|---|
+| T19-41 `[E01]` | 只 import 契约 SDK，无其他服务 ORM | 构建通过 |
+| T19-42 | 新版加列、旧版 worker 在跑 | 旧版正常写；新版回滚后数据可读 |
+| T19-43 | 旧任务按自己的 `output_schema_ref.revision` 解读 | 新 schema 发布不影响历史结果 |
+
+---
+
+## 10. 与上下游服务的接口约定
+
+### 10.1 上游（谁调用 S19）
+
+| 服务 | 用法 | 契约 |
+|---|---|---|
+| S21 编排 | 发起创意/审核类任务 | `POST /agent-tasks` |
+| S04 | `writer` 角色产出剧本提案 | 同上 |
+| S05 | `breakdown` 角色产出分场提案 + 纠正 | 同上，纠正按 §3.4 |
+| S06 | `storyboard-director` 产出分镜提案 + 纠正 | 同上 |
+| S18 | 请求摘要计算任务（`plan:compute`） | 同上 |
+| S17 | `continuity-reviewer` | 同上 |
+| S39/S41/S42 | `repair-planner` / `editor` / 协调 | 同上 |
+
+**S19 是可选加速，不是必需依赖。** 这条在 [S05 §3.1](S05-breakdown.md) 与 [S06 §3.1](S06-storyboard.md) 各写了一次：人工路径必须能在 S19 完全不可用时跑通。S19 侧的义务是**明确返回 503 而不是挂住**，让调用方快速落到人工。
+
+### 10.2 下游（S19 调用谁）
+
+| 服务 | 用途 | 不可用时 |
+|---|---|---|
+| S01 | `POST /permission-checks`（每步工具调用） | 503，任务不创建/不推进 |
+| S02 | `POST /policy-decisions:evaluate`（准入） | 503 |
+| S18 | 读 ContextPack + 校验 perspective | 503 |
+| S20 | 读 `TemplateRevision`（system 模板） | 503 |
+| S25 | 路由（由 S26 内部调用，S19 不直接调） | — |
+| S26 | `POST /generation-jobs`（唯一付费路径） | 任务 `FAILED(GENERATION_FAILED)` |
+| S45 | 审计（异步） | 不阻塞 |
+
+### 10.3 S19 → S26 的严格边界
+
+S19 **不持有任何供应商凭证，也不在允许的出站白名单里**（[S26 §1.3](S26-generation-jobs.md) 第三条强制执行机制）。这意味着：
+
+- S19 不能"顺手"直接调一个便宜的模型做格式修复；
+- S19 的 `pending_generation_job_ref` 永远是 S26 的 `provider_job_id`，不是供应商 task id；
+- S19 的 `cost_micro` 来自 S26 的结算事件，不是自己估的。
+
+一个具体的实现陷阱：给 Agent 一个"本地小模型"做 JSON 修补，看起来省一次付费调用，实际上把一条付费路径搬到了预算体系外——S23 记不到，S44 算不到，客户账单上会出现无法解释的空白。
+
+### 10.4 S19 → S05/S06 的边界
+
+| 问题 | 谁答 |
+|---|---|
+| 输出结构是否合法 | **S19**（JSON Schema） |
+| 输出语义是否正确（发言人、行覆盖、时长） | **S05/S06** |
+| 纠正几次 | **S19** 强制上限，**S05/S06** 决定要不要发起 |
+| 业务 ID 怎么铸 | **S05/S06**，S19 永不做 |
+| 结果要不要落库 | **S05/S06** |
+
+第五行是最容易被越过的：Agent 提案会被人在 UI 上"直接采纳"。采纳动作必须走 S05/S06 的正常写命令，由它们重新校验，不能因为"Agent 已经校验过结构"就跳过语义校验。S19 的 `content_hash` 只证明"这份字节没被改过"，不证明"这份字节是对的"。
+
+### 10.5 S19 → S40 的边界
+
+`NEEDS_REVIEW` 不是"等 S40 回复"。S19 的任务已经结束，`unresolved_issues` 是产物。S40 从 `agent.task.completed`（`state=NEEDS_REVIEW`）建 `ReviewTask`，人做出决定后由**发起方**（S05/S06/S21）去落库。
+
+S19 **不阻塞在 S40 上**：如果 `NEEDS_REVIEW` 是等待态，S40 停机就会让 S19 的 worker 全部占满，进而拖垮其他 12 个角色。这也意味着 S19 不重试、不轮询 S40——它已经交付完了。
+
+---
+
+## 11. 契约缺口（需要先行修改，不要自行补）
+
+按 [docs/16 §6](../docs/16-migration-acceptance.md) 与 [AGENTS.md](../AGENTS.md)「契约与文档冲突 → 停下报告」：
+
+| # | 缺口 | 建议 |
+|---|---|---|
+| C1 | `agent.task.completed` 在 `contracts/event-topics.v2.json` 里的 `schema_ref` 指向通用的 `event-envelope.v2.schema.json`，**没有 payload schema**；本文 §4.3 的 `data` 字段集是提案 | 新增 `contracts/agents/event-payload/agent-task-completed.v2.schema.json`，`additionalProperties: false` |
+| C2 | `pii_payload: references_only_by_default` 只是保底约定；`proposal` 正文在对象存储里，其保留期与地域策略没有契约 | 需要一份"受限存储引用"的通用规则（`data_ref` 的可读范围 + 保留期 + 地域），否则 E31 无法验证 |
+| C3 | `service-catalog.v2.json` 只声明 `POST /agent-tasks`，没有 `:cancel`、`/agent-definitions`、`/agent-definitions/{id}/revisions`、`/agent-tasks/{id}/result`、`/agent-tasks/{id}/steps` | 补 catalog 的 command/query 摘要；完整形状落 `contracts/openapi/s19-agent-runtime.v2.yaml`（`openapi.v2.yaml` 里一个 S19 路径都没有） |
+| C4 | 准入需要 `policy-decisions:evaluate` 的 `kind` 里**没有** `agent_task_admission`。现有枚举是 `dispatch_admission/acceptance/budget_increase/external_publish/quality_exception` | 在 [S02 §7.2](S02-governance-policy.md) 的 `kind` 枚举新增 `agent_task_admission`；若不新增，S19 只能用 `dispatch_admission`，会把"问一次策略"混成"问一次派单" |
+| C5 | **Agent 预算的 `purpose` 值不存在**。docs/05 §、docs/13 §、[S01 §10.4](S01-tenant-access.md) 与 [S18 §5](S18-context-retrieval.md) 都写 `plan:compute`，但 S23 的 `POST /budget-authorizations` 里没有 `purpose` 字段，S26 用的是 `"purpose": "generation"`。Agent 的推理费用属于哪一类没有机器可读答案 | 裁决：要么 S23 加 `purpose` 枚举（含 `plan_compute`），要么统一改用 S26 的 `generation`。**在裁决前，S19 按 `generation` 报，并在 `budget_scope_id` 上区分**（本文 §2.4 的 `bsc_ep3_agent`）。这是临时约定，不是最终形态 |
+| C6 | outbox 的 `aggregate_id` 语义依赖"本服务只发布一种事件"。若将来加 `definition_id` 为聚合的事件，现有 DDL 会静默混用两种聚合 | 在契约注释里写明：`agent_runtime.outbox.aggregate_id` 恒为 `task_id`；新增聚合类型必须加 `aggregate_kind` 列 |
+| C7 | `contracts/mcp-tools.v2.design.json` 里的 12 个工具是设计期名字，**没有 `permission_key` 映射**，也没有"哪些角色允许哪些工具"的机器可读表。本文 §2.6 的定义期校验依赖 `TOOL_REGISTRY` 与 `permission_key` | 新增 `contracts/agents/tool-registry.v2.json`：`tool_name → permission_key + scope_kind + egress`。没有它，§3.2 的定义期校验无法实现，只能硬编码角色名 |
+| C8 | `execution-context.v2.schema.json` 把 `actor.delegation_id` 列为 `required`，但 S19 内部恢复（worker 换代）没有代理关系 | 同 [S01 C4](S01-tenant-access.md)：把 `delegation_id` 改可选，或定义 `dlg_platform` 保留值。本文沿用 S01 的临时立场（`dlg_platform`），**未裁决** |
+| C9 | 13 个 `agents/*/agent.yaml` 的 `limits.tokens/cost/steps` 全是 `unassigned`，`tools: []`，`evals: []` | 这些是"设计期占位"而非契约。在 S19 实现前必须填出至少 `writer`/`breakdown`/`storyboard-director` 三套，否则 §3.2 的"没有评测集不许发布"会让所有角色都发不出去 |
+| C10 | `agents/*/agent.yaml` 的 `deployment.image_binding: unassigned`，但 docs/08 §1 要求"镜像版本绑定"是定义的一部分 | 需明确：镜像绑定属于 `AgentDefinitionRevision`（本文 §5.1 的 `limits_json` 旁）还是属于 Deployment。本文假定属于 Deployment，因此**不进 `content_hash`**；这与 docs/08 §1 的"每个角色有镜像版本绑定"在措辞上一致但不精确，需裁决 |
+
+---
+
+## 12. 未决
+
+1. **`plan:compute` 预算用途的裁决**（§11 C5）。这决定 S19 是否要新增一条与 S26 不同的预算上报路径，影响面覆盖 S18/S21/S23/S26。
+2. **工具注册表归属**（§11 C7）。它是平台级数据、跨域变化快（MCP 工具会新增）。放在 `contracts/` 意味着改它要发版；放在某个服务意味着那个服务成了工具权威。第二条路更灵活但违反"配置即数据"的一致性问题——**未定**。
+3. **`NEEDS_REVIEW` 是否应是终态**（§3.6）。本文取终态。若 S40 的产品形态要求"人改完继续跑"而不是"人改完交发起方落库"，则需要一个新的 `RESUMED` 语义，那会引入"同一 `task_id` 两个执行段"的复杂度。**需要产品确认**。
+4. **纠正的粒度**。本文规定"只改 `violations` 指向的区域"，靠对比 hash 校验。但模型很少能严格局部重写。是否应该改成"重新生成整份但保留未违规区域的字节"（可行性存疑），或"允许整份重写、把漂移报给调用方判"——**未定**，倾向后者并在 S05/S06 侧加漂移检测。
+5. **审计保留期**。§8.3 写了"审计 1 年、任务 90 天"，但没有客户合同依据。E39 要求"可证明操作链"，没有期限。**需要与法务/合同对齐**。
+6. **`agent.task.completed` 是否该按角色拆分**。现在是一个事件带 `role`。若 S44 的分账需要极高吞吐，按角色拆 topic 更好，但 `partition_key` 的聚合语义会变。**暂时不拆**（§6.5）。
+7. **灰度与回退的影响面**（docs/08 §3 对模板有明确要求，对 Agent 定义没有）。一个 `AgentDefinitionRevision` 灰度后回退，在途任务用哪一版？本文答案是"创建时 pin 的那一版"（§3.8 不变量 7），意味着回退只影响新任务——**需确认这符合产品预期**。
