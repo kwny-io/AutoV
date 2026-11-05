@@ -1,28 +1,62 @@
 {
   "specversion": "1.0",
   "schema_version": "2.0",
-  "id": "event_demo",
-  "source": "/cells/cell_a1/services/S16",
+  "id": "evt_01JBE3C8E0G2J4L6N8Q0S2U4W6",
+  "source": "S16",
   "type": "memory.canon.committed",
-  "subject": "series_demo/canon",
-  "time": "2026-10-29T20:00:00+08:00",
-  "tenant_id": "tenant_demo",
+  "subject": "series/ser_01J9Z5M2P4R6T8V0X2Z4B6D8/ser_01J9Z5M2P4R6T8V0X2Z4B6D8",
+  "time": "2026-11-06T18:22:05Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
   "home_cell": "cell_a1",
   "aggregate_id": "series_demo:canon",
   "aggregate_sequence": 27,
-  "correlation_id": "cmd_accept_ep2",
-  "causation_id": "event_manifest_ep2_8",
-  "traceparent": "00-00000000000000000000000000000001-0000000000000001-01",
+  "correlation_id": "cmd_01JBE3B7D9F1H3J5L7N9P1R3T5",
+  "causation_id": "evt_01JBE3A6C8E0G2J4L6N8Q0S2U4",
+  "traceparent": "00-2c4e6a8b0d2f4a6c8e0f1a3b5c7d9e0f-2c4e6a8b0d2f4a6c-01",
   "data": {
+    "schema_version": "2.0",
     "commit_sequence": 27,
+    "checkpoint_hash": "b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6",
+    "commit_kind": "extract",
+    "previous_sequence": 26,
     "changed_claim_refs": [
       {
         "service_id": "S16",
         "id": "claim_key_owner",
         "revision": 2,
-        "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "content_hash": "7e1a9c5f2b8d4e6a0c3f7b1d9e5a2c8f406b3d7e1a9c5f2b8d4e6a0c3f7b1d9e"
       }
-    ]
+    ],
+    "superseded_claim_refs": [
+      {
+        "service_id": "S16",
+        "id": "claim_key_owner",
+        "revision": 1,
+        "content_hash": "0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f"
+      }
+    ],
+    "changed_subject_ids": [
+      "prop_key",
+      "char_linwen"
+    ],
+    "affected_story_window": {
+      "clock_id": "story_main",
+      "from_tick": 2000,
+      "to_tick": 2200
+    },
+    "source_manifest_ref": {
+      "id": "manifest_ep2",
+      "revision": 8,
+      "content_hash": "4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c"
+    },
+    "episode_id": "ep002",
+    "episode_order": 2,
+    "branch_id": "canon"
   },
-  "data_ref": null
+  "data_ref": {
+    "service_id": "S16",
+    "id": "claim_key_owner",
+    "revision": 2,
+    "content_hash": "7e1a9c5f2b8d4e6a0c3f7b1d9e5a2c8f406b3d7e1a9c5f2b8d4e6a0c3f7b1d9e"
+  }
 }

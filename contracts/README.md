@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 25 个 topic 带**（30 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 26 个 topic 带**（29 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -90,6 +90,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `context.pack.created` | `context.pack-created.v2.schema.json` | S18 §6.3 |
 | `agent.task.completed` | `agent.task-completed.v2.schema.json` | S19 §4.3 |
 | `prompt.compiled` | `prompt.compiled.v2.schema.json` | S20 §4.3 |
+| `memory.canon.committed` | `memory.canon-committed.v2.schema.json` | S16 §3.7 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -257,6 +258,36 @@ inbox 前全拒，S09 的依赖边一条也建不起来。所以这份 schema �
 表达不了「两处必须相等」，两个字段由不同代码路径填，任一处漂移都会让下游按不同字段读到
 不同 manifest（PCM-5，实测两处 hash 改成不同值时 envelope 与 payload 两层校验都通过）。
 
+`memory.canon.committed` 的缺口和上面三类都不一样：**它有四个真消费者，是「发了一半」**。
+S09 §4.3 行 596 拿它当闭包种子、S18 §6.4 行 487 更新 `claim_index` 与 watermark、S07 行 912
+标 `stale_memory`、S08 行 680 刷新 `max_checkpoint_sequence` 投影——grep 全部命中，不是空转。
+问题是 DDL 有 18 列，§3.7 的事件只发 12 个，而缺的恰好是消费方判别的依据。最尖锐的是
+`commit_kind`（六值只在列注释里，无 `CHECK`）：`merge` 与 `revert` 两种提交必须带
+`merge_source_refs` / `revert_of_sequence` 才能解释自己做了什么，而事件里两个都没有——于是
+**一条回滚事件与一条普通修改事件在 payload 上完全同形**（实测：只把 `commit_kind` 从
+`extract` 改成 `revert`，两层校验都通过，键集完全相同）。回滚本是为了撤掉一次错误的改稿，
+S09 却会照 `changed_claim_refs` 再跑一遍同样的重生成，代价正好相反（MSC-4）。
+
+两处字段名对不上，且都是静默失效。`affected_story_window` 的区间字段：S16 §3.7 行 518 写
+`from_tick`/`to_tick`，S09 §4.3 行 601 写 `tick_start`/`tick_end`，而 **S16 自己的
+`commit_manifest_binding` DDL 行 148–149 也写 `tick_start`/`tick_end`**——DDL 站在消费方那边。
+S09 读不到窗口就被当成「覆盖 0 集」，两个空集求差集为空，连它自己的 `DEGRADED` gap 都不会
+记（MSC-1）。`branch_id` 则**根本不在 payload 里**：而序列号是按 `(series, branch)` 单调的
+（DDL 行 98）、`checkpoint_hash` 的哈希输入含 `branch_id`（行 126）、S18 的水位是按分支推进
+的（§6.4 行 493 + §6.5 行 500 的「只增不减」）。没有它，一个 `experiment` 分支跑到 seq 50
+会把 `canon` 的水位顶到 50，此后 canon 真缺的 seq 30 永远不会被回源补——乱序保护反过来成了
+丢数据机制；S09 §4.3 行 600 的示例却写着 `"branch_id": "main"`（S16 DDL 行 61 说默认分支叫
+`canon`），两边对不上（MSC-2 / MSC-7）。schema 里加了 `branch_id`，**这是唯一一处超出 §3.7
+的字段**，理由是缺了它 S18 的水位必然错——但加字段是替 S16 做决定，所以标了冲突而非静默补。
+
+还有三处「送了个可推导的、缺了个有用的」：`previous_sequence` 恒等于 `commit_sequence - 1`
+（`seq = head+1` + 分支内无洞 + 主键），真正能证明「中间没丢提交」的
+`previous_checkpoint_hash` 却不在事件里，于是缺事件只能等 60 秒超时（MSC-5）；
+`commit_manifest_binding` 的主键含 `episode_id`，说明一个提交可绑多集，而事件的 `episode_id`
+是单值，跨集改稿这个 E08 主场景装不下（MSC-6）；`source_manifest_ref` 在 DDL 可空（`branch_init`
+/ `merge` / `revert` 本来就无 manifest），事件把它画成必填，照 DDL 发的合法事件会被本契约拒
+（MSC-3）。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -358,8 +389,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 25 个 payload schema
-                                                              （见上表；其余 30 个 envelope-only）
+                                        └──data_schema_ref──▶ 26 个 payload schema
+                                                              （见上表；其余 29 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -373,7 +404,7 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 25 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 26 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（42 个示例对

@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/memory.canon-committed.v2.schema.json",
+  "title": "memory.canon.committed payload v2",
+  "description": "event `memory.canon.committed` 的 data 部分。权威定义在 plans/S16-story-memory.md §3.7（行 507–524，12 个字段的示例）、§1.2（行 94–119，`memory_commit` DDL 18 列）、§1.4（行 179–205，`claim_revision` DDL 与 `content_hash`）、§3.4（行 470–490，提交事务十步）、§3.6（行 494–503，提交前实时复查）、§4.2（行 542–559，合并）、§4.3（行 562–570，回滚）。**这条事件和 `agent.task.completed`（ATC）与 `prompt.compiled`（PCM）不属于同一类缺口**：它有四个真实消费者——S09 §4.3 行 596 把它当闭包种子、S18 §6.4 行 487 更新 `claim_index` 与 watermark、S07 §10 行 912 标 `stale_memory`、S08 §行 680 刷新 `max_checkpoint_sequence` 投影——所以它不是「发了没人收」。它的缺口是**发了一半**：DDL 18 列，事件只发 12 个，而缺的恰好是消费方判别的依据。最尖锐的一处是 `commit_kind` 有六种取值（`extract|supersede|revert|merge|branch_init|repair`，DDL 行 102 的注释），其中 `merge` 与 `revert` 两种提交**必须**带 `merge_source_refs` / `revert_of_sequence` 才能解释「这次提交合并了什么、回滚了哪一条」，而事件里两个字段都没有——于是四种消费方收到一条 `commit_kind=revert` 的事件，看到 `changed_claim_refs` 里一堆 claim 的 revision 变新，**无法区分「旧事实被修正」和「错误被撤销」**。见 MSC-4。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§3.7 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "commit_sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§3.7 行 512（示例 `27`）+ §1.2 DDL 行 98（`commit_sequence bigint NOT NULL,  -- 每 series+branch 单调递增`）+ §3.4 行 475（`seq = head+1`）。**它也兼任 envelope 的 `aggregate_sequence`**：示例里两处都是 27（`aggregate_sequence: 27` 与 `data.commit_sequence: 27`），§3.4 的「序列号从业务表取」是 S16 与 S06 的同类做法。本文件两处都收，因为删掉 `data.commit_sequence` 会让 payload 不自足。`minimum: 0` 而不是 1：§1.2 行 132 明写「genesis：`commit_sequence = 0`」，而 §4.1 行 537 说分叉会写一条 `commit_kind='branch_init'` 的提交——genesis 与 `branch_init` 是否发这条事件，全文没有一处说。允许 0 是照 DDL 的事实收，不是判断它们会发。**`previous_sequence` 恒等于 `commit_sequence - 1`**（§3.4 行 475 的 `seq = head+1`，且序列按 series+branch 无洞递增），所以它与 `commit_sequence` 是同一个信息写两遍；真正能验链的是 `previous_checkpoint_hash`，而事件里没有它——见 MSC-5。"
+    },
+    "checkpoint_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§3.7 行 513（示例 `\"hex...\"`）+ §1.2 DDL 行 101（`checkpoint_hash bytea NOT NULL`）+ §1.2 行 122–130（`checkpoint_hash(seq) = sha256(\"memcp/v2\\n\" || series_id || \"\\n\" || branch_id || \"\\n\" || seq || \"\\n\" || hex(previous_checkpoint_hash) || \"\\n\" || join(\"\\n\", sorted([claim_id, revision, hex(content_hash)])))`）。**契约取裸 64 位小写 hex**：DDL 是 `bytea`（32 字节），示例写 `\"hex...\"` 是占位。§4.2 行 552 与 §9 runbook 的 `verify-checkpoint-chain` 都靠它做离线重算，所以格式必须定死——带 `sha256:` 前缀会直接算不出。哈希算法的输入含 `branch_id`（行 126），而 `branch_id` **不在事件里**——见 MSC-2，这条链在消费侧无法重算。"
+    },
+    "commit_kind": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§3.7 行 514（示例 `\"extract\"`）+ §1.2 DDL 行 102（`commit_kind text NOT NULL,  -- extract|supersede|revert|merge|branch_init|repair`——**注释里的六个值，没有 `CHECK`**）+ §4.1 行 537（`branch_init`）+ §4.2 行 542（`merge`）+ §4.3 行 568（`revert`）。**不收 enum**：DDL 只有列注释，没有 `CHECK (... IN (...))`，按本仓库的既定口径（`generation.job-state-changed.v2.schema.json` 的 `state` 同样有 16 值注释、同样留成字符串 + `x-needs-owner`）不收窄。**但它是这条事件里语义负载最重的字段**：四个消费者都用它决定「这条提交要不要当真」。S07 在 `merge` 时要看冲突裁决、S40 是 `merge` 的决定者、S09 在 `revert` 时不该把恢复当成新事实、S18 在 `branch_init` 时 `claim_count=0`（§4.1 行 537）等于没有 claim 要更新。而事件只发 `commit_kind`，不发配套的 `merge_source_refs` / `revert_of_sequence`——见 MSC-4。"
+    },
+    "previous_sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§3.7 行 513（示例 `26`）+ §1.2 DDL 行 99（`previous_sequence bigint NOT NULL`）。**这一项是可推导的**：§3.4 行 475 的 `seq = head+1` 与行 98 的「每 series+branch 单调递增」合起来固定了 `previous_sequence = commit_sequence - 1`，没有洞也没有跳号（跳过会被 `PRIMARY KEY (tenant_id, series_id, branch_id, commit_sequence)` 与 head 的 `FOR UPDATE` 串行化挡住）。留它是照 §3.7 收，不是因为它有信息量。真正需要却缺席的是 `previous_checkpoint_hash`（行 100），见 MSC-5。"
+    },
+    "changed_claim_refs": {
+      "type": "array",
+      "description": "来源：§3.7 行 515（示例一条 4 键 ref）+ §1.4 DDL 行 182–199（`claim_id` / `revision` / `content_hash bytea NOT NULL`）+ §3.4 行 478（步骤 4「插入 claim_revision，把被 supersede 的旧 revision 置 'superseded'」）。**四键 ref，带 `service_id`**（示例 `\"S16\"`），与 `prompt.compiled` 的 `manifest_ref` 三键不同、与 `shot_ref` 四键相同。**这是 S09 与 S18 的主输入**：S09 §4.3 行 592 用它补 `PACK_USES_CLAIM` 边，S18 §6.4 行 492 用它 upsert `claim_index`。`content_hash` 是 `claim_revision` 的行级 `sha256(canonical_json(本行业务字段))`（DDL 行 198），不是 checkpoint 链的哈希——两者不可混用。`minimum: 0` 不设下限：`branch_init` 提交的 `claim_count=0`（§4.1 行 537），所以空数组合法且是常态。**`revision` 必须 ≥1**（DDL 行 183 是 `integer NOT NULL`，且 revision 从 1 起算——§3.7 行 516 的 superseded 示例是 rev 1 被 rev 2 取代）。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^S[0-9]{2}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "service_id",
+          "id",
+          "revision",
+          "content_hash"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "superseded_claim_refs": {
+      "type": "array",
+      "description": "来源：§3.7 行 516（示例 rev 1）+ §3.4 行 478 + §5 行 581（「S16 发布 `changed_subject_ids` + `affected_story_window` + `superseded_claim_refs`」）。形状与 `changed_claim_refs` 相同，语义互补：被新 revision 顶掉的旧 revision。**S09 §4.3 行 592 把它和 `changed_claim_refs` 一起当种子**，并明确「S16 算的是记忆侧失效边界，S09 算的是依赖闭包」——所以两个数组都必须在，只发 `changed` 会让 S09 漏掉需要关边的那一侧。**它不一定与 `changed_claim_refs` 等长**：一次提交可能新建 claim（无 superseded）、也可能一次改一条 claim 顶掉两条（§4.2 的 `HOLDER_CONFLICT` 场景）。两个数组之间没有任何一处写了配对关系。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^S[0-9]{2}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "service_id",
+          "id",
+          "revision",
+          "content_hash"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "changed_subject_ids": {
+      "type": "array",
+      "description": "来源：§3.7 行 517（示例 `[\"prop_key\", \"char_linwen\"]`）+ §5 行 581 + §5 行 594（闭包判据 `E.clock_id = C.clock_id`）+ §1.4 行 166（`claim.subject_id text NOT NULL`）。**元素是 `subject_id`，不是 `claim_id`**——示例两个值 `prop_key` / `char_linwen` 与 §4.2 行 548 的「同 `(subject,predicate)` 基数=1」口径一致。这个区别要紧：`claim` 表的主键是 `claim_id`，而 `(kind, subject_id, predicate)` 上有 UNIQUE（DDL 行 172），所以一个 subject 对应多条 claim（一个角色有 `age`、`held_by`、`location` 等）。S09 §4.3 行 599 的示例也写 `[\"char_linlan\"]`，同样是 subject。**但它是否包含被 supersede 的那些旧 revision 的 subject 却没写**：一条 claim 改了值，subject 不变，所以两种口径在「改名不同」时得到同一集合——真正分叉的是「supersede 之后 subject 变了」的情形，而 `claim` 表的 `(kind, subject_id, predicate)` UNIQUE 恰恰禁止这种变更（换 subject 等于换 claim_id）。所以两个口径实际等价，不需要 owner 裁决。`minimum` 不设下限：`branch_init` 提交没有 claim。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "affected_story_window": {
+      "type": "object",
+      "description": "来源：§3.7 行 518（示例 `{\"clock_id\":\"story_main\",\"from_tick\":2000,\"to_tick\":2200}`）+ §1.5 行 147（`clock_id text NOT NULL`，见 `story_clock` DDL）+ §1.2 行 147–151（`commit_manifest_binding` 同时存 `clock_id` / `tick_start` / `tick_end`）+ §5 行 594（闭包判据用 `E.clock_id = C.clock_id` 与区间重叠）。**字段名与 S09 的读法不一致，这是本批最硬的一处冲突**：S16 §3.7 行 518 写 `from_tick` / `to_tick`，S09 §4.3 行 601 的同一份事件写 `tick_start` / `tick_end`，而 S16 自己的 `commit_manifest_binding` DDL 行 148–149 又叫 `tick_start` / `tick_end`。本文件照 S16 §3.7（生产方）收 `from_tick` / `to_tick`，理由见 MSC-1。**区间语义未定**：`[from, to)` 还是闭区间、`to_tick` 是否可为 null（`valid_to_tick` 在 `claim_revision` 里是 `NULL = 至今有效`，DDL 行 188 与 204 的 `interval_sane` 约束明确支持开区间），而这里 `to_tick` 若为 null 是否合法没写。本文件收两个整数、不收 null——因为 §3.7 的示例是两个数，且 S09 拿它做「并集」运算需要一个有界区间。",
+      "properties": {
+        "clock_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_tick": {
+          "type": "integer"
+        },
+        "to_tick": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "clock_id",
+        "from_tick",
+        "to_tick"
+      ],
+      "additionalProperties": false
+    },
+    "source_manifest_ref": {
+      "type": "object",
+      "description": "来源：§3.7 行 519（示例 `{\"id\":\"manifest_ep2\",\"revision\":8,\"content_hash\":\"...\"}`）+ §1.2 DDL 行 103（`source_manifest_ref jsonb,  -- {id, revision, content_hash}`——**可空**）+ §3.6 行 498（提交前回源复查「manifest 在 S08 仍是 accepted pointer」）+ §1.2 行 115–119（`memory_commit_manifest_once` 唯一索引就建在 `source_manifest_ref->>'id'` 与 `->>'revision'` 上，`WHERE commit_kind = 'extract'`）。**三键、无 `service_id`**：DDL 注释逐字给出三键。它指向 S08 的 manifest，但 `service_id` 没写——本文件照注释收三键（补 `service_id` 是替 S16 加字段）。**DDL 可空而事件示例必填**：`branch_init`（§4.1 行 537）与 `revert`（§4.3 行 564）两种提交的产生路径都不经过 manifest 事件，`merge` 同理——它们的 `source_manifest_ref` 必然是 NULL，而事件里这个字段是否有值、还是整个不出现，全文没说。本文件收必填（照 §3.7 示例），并把三种无 manifest 的提交留给 MSC-3 处理。**它同时是幂等键**：同一 manifest 的重复事件落在 `memory_commit_manifest_once` 上直接冲突、返回「已处理」（§3.5 行 492）。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§3.7 行 520（示例 `\"ep002\"`）+ §1.2 行 145–146（`commit_manifest_binding` 的 `episode_id text NOT NULL` / `episode_order integer NOT NULL`）+ 主键行 150（`PRIMARY KEY (..., episode_id)`——**一个提交可以绑多集**）。**这是本 payload 结构上装不下的一个字段**：`commit_manifest_binding` 的主键含 `episode_id`，意味着一次提交可以涉及多个 episode（同一次改稿跨越第 2、3 集的剧情窗口），而事件里 `episode_id` 是单值。若真有多集绑定，这条事件只能报其中一集——报哪一集、其余怎么办，全文没说。见 MSC-6。"
+    },
+    "episode_order": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§3.7 行 521（示例 `2`）+ §1.2 DDL 行 146（`episode_order integer NOT NULL`）+ §1.1 行 53（「闪回集不改变 `episode_order`，只改变 `clock_id + tick`」）。**它与 `episode_id` 成对**，同样受 `commit_manifest_binding` 的多行问题影响（MSC-6）。`minimum: 1`：§1.1 行 53 的口径是播出顺序，从 1 起算。**注意它不是排序依据**：§1.1 行 53 明写「只靠 `episode_order` 排序的实现在这里必然出错」——故事时间由 `affected_story_window.clock_id + tick` 决定，`episode_order` 只是播出序。两者都发正是为了让消费方能分辨，而事件里没有任何一处说明消费方该用哪个做闭包判断（S09 §4.3 行 592 用的是 `affected_story_window`）。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "**未在 §3.7 出现，按 S09 的读法与 DDL 的事实补入——这是本文件唯一一处超出 S16 §3.7 的字段，理由是缺了它事件无法被正确消费。** 见 MSC-2。来源：§1.2 DDL 行 97（`memory_commit.branch_id text NOT NULL`，在主键里）+ 行 61（`canon_branch.branch_id text NOT NULL,  -- 'canon' 为默认正史分支`）+ §1.2 行 122–130（`checkpoint_hash` 的输入含 `branch_id`）+ S09 §4.3 行 600（S09 的示例里 `\"branch_id\": \"main\"`）。**没有它，三个事实无法确定**：(1) 哪个分支的 head 推进了——`aggregate_id` 是 `series_demo:canon`（示例），看起来是 series 级，而提交是按 `(series, branch)` 编号的；(2) `checkpoint_hash` 算不出来（行 126 把 `branch_id` 写进哈希输入），于是 §9 的 `verify-checkpoint-chain` 在消费侧无法执行；(3) S18 §6.4 行 493 的 `watermark.applied_commit_sequence` 是**按分支**推进的水位（`memory_commit` 的序列号本身就是分支级的），而事件不带分支名就不知道推进哪个水位。**`'canon'` 与 `'main'` 两处写法不一致**：S16 DDL 行 61 说默认分支叫 `canon`，S09 §4.3 行 600 的示例写 `main`——同一条事件的两个来源对不上，见 MSC-2。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "commit_sequence",
+    "checkpoint_hash",
+    "commit_kind",
+    "previous_sequence",
+    "changed_claim_refs",
+    "superseded_claim_refs",
+    "changed_subject_ids",
+    "affected_story_window",
+    "source_manifest_ref",
+    "episode_id",
+    "episode_order",
+    "branch_id"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`commit_kind` 的取值域（六个值只存在于列注释里）",
+      "demanded_by": "plans/S16-story-memory.md §1.2 行 102（`commit_kind text NOT NULL,  -- extract|supersede|revert|merge|branch_init|repair`）、§4.1 行 537、§4.2 行 542、§4.3 行 568、§3.7 行 514",
+      "s16_status": "六个值写在 DDL 列注释里，没有 `CHECK`。按本仓库口径不收窄（同 `generation.job-state-changed.v2.schema.json` 的 `state`：16 值注释、留字符串、登记为缺口）。要补需要 owner 定两件事：把注释升成真 `CHECK`，还是让 catalog 登记闭集；以及 `repair` 与其他五个的关系——§3.4/§4.1/§4.2/§4.3 分别给出 `extract` / `branch_init` / `merge` / `revert` 的产生路径，`supersede` 与 `repair` 全文**没有任何一处说明何时产生**。"
+    },
+    {
+      "field": "`commit_kind=merge` 与 `commit_kind=revert` 时 `changed_claim_refs` 的语义",
+      "demanded_by": "plans/S16-story-memory.md §4.2 行 542–559（合并产出 `commit_kind='merge'`）、§4.3 行 567（回滚「为被改变的所有 claim 生成新 revision，值恢复成 N 之前生效的值」）、§3.7 行 515（`changed_claim_refs` 是唯一表达变更的字段）",
+      "s16_status": "两种非 `extract` 提交都会改 claim revision，因此都会填 `changed_claim_refs`，而消费方只能靠 `commit_kind` 区分「新事实」与「恢复旧值」。S18 §6.4 行 492 的处理是「按 `changed_claim_refs` 更新 `claim_index`（upsert 到新 revision）」——对 `revert` 来说这样做是对的（索引该回到旧值），但 §6.4 没有 `commit_kind` 分支，说明它把三种提交当一种处理；S09 §4.3 行 592 拿两个数组当闭包种子，对 `revert` 会把「撤销」算成「有新的记忆变化」从而重算一批下游。**这是否真会出问题取决于 S16 对 `revert` 的期望**，而期望没有写下。要补需要 owner 定：`revert` / `merge` 时 `changed_claim_refs` 是全填还是只填净变化，以及消费方是否必须按 `commit_kind` 分流。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "MSC-1",
+      "summary": "`affected_story_window` 的两个 tick 字段在三处有三个名字：S16 §3.7 叫 `from_tick`/`to_tick`，S09 §4.3 叫 `tick_start`/`tick_end`，S16 自己的 DDL 也叫 `tick_start`/`tick_end`",
+      "s16_event": "plans/S16-story-memory.md §3.7 行 518：`\"affected_story_window\": {\"clock_id\":\"story_main\",\"from_tick\":2000,\"to_tick\":2200}`",
+      "s09_event": "plans/S09-lineage-impact.md §4.3 行 601：`\"affected_story_window\": {\"clock_id\":\"story\",\"tick_start\":120,\"tick_end\":480}`——同一个事件名、同一个字段名、两个子字段名全不同",
+      "s16_ddl": "plans/S16-story-memory.md §1.2 行 147–149：`commit_manifest_binding` 的列是 `clock_id` / `tick_start bigint NOT NULL` / `tick_end bigint NOT NULL`——**DDL 站在 S09 那边**",
+      "why_it_matters": "这不是命名口味问题：S09 §4.3 行 605 的跨集规则是「`affected_episode_ids` 必须**同时**包含 S16 给出的 `affected_story_window` 覆盖的集，与图上算出的集。两者的并集是最终答案。差集非空 → 记 `DEGRADED` gap」。也就是说 S09 **必然**读这两个字段，而且读不到就会被当成「窗口不存在/覆盖 0 集」，进而让并集退化成纯图上结果——**那正是 E08 要证明的东西失效**。按 S09 的拼写去读，`from_tick`/`to_tick` 取到 undefined，区间退化为空；而 `DEGRADED` gap 只在「差集非空」时记，两个空集相减差集为空，**所以连告警都不会出**——静默失效。本文件照生产方 §3.7 收 `from_tick`/`to_tick`，但 DDL 与消费方都指向另一套拼写，所以这是一个必须由 owner 裁定的冲突，不是我能选的边。要定的是：事件与 DDL 统一到哪一套（改事件小、改 DDL 要动已写的迁移），以及区间是 `[from, to)` 还是闭区间。"
+    },
+    {
+      "id": "MSC-2",
+      "summary": "事件不带 `branch_id`，而 branch 是提交的编号维度、checkpoint 哈希的输入、水位推进的作用域；S16 DDL 叫默认分支 `canon`，S09 的示例叫 `main`",
+      "ddl": "plans/S16-story-memory.md §1.2 行 97（`memory_commit.branch_id text NOT NULL`，在主键里）+ 行 61（`canon_branch.branch_id text NOT NULL,  -- 'canon' 为默认正史分支`）+ 行 98（`-- 每 series+branch 单调递增`）",
+      "hash_input": "§1.2 行 126：`checkpoint_hash` 的哈希输入第二个分量就是 `branch_id`",
+      "event_absence": "§3.7 行 511–523 的 12 个字段里**没有 `branch_id`**；`aggregate_id` 示例是 `series_demo:canon`（行 511），看起来 series 级",
+      "s09_reading": "plans/S09-lineage-impact.md §4.3 行 600：`\"branch_id\": \"main\"`——S09 认为事件里有这个字段，且默认分支叫 `main`",
+      "why_it_matters": "三个消费动作都依赖它，且失效方式各不相同。(1) **S18 的 watermark 推错**：§6.4 行 493 的 `watermark.applied_commit_sequence` 与 §6.5 行 500 的「只增不减」保护都是按序列号比较的，而序列号是**每 branch** 单调的（DDL 行 98）。若事件不带分支，S18 只能把所有分支的 seq 混在一个水位里：一个 `experiment` 分支跑到 seq 50 会把 `canon` 的水位推到 50，此后 canon 的 seq 51 到达时被「只增不减」判为正常、而 canon 真实缺的 seq 30 永远不会被回源补——§6.5 行的乱序保护反过来成了丢数据机制。(2) **链无法离线重算**：§9 的 `verify-checkpoint-chain` runbook 要把链从头算一遍，输入含 `branch_id`；事件里没有，消费方只能回源。（3) **`aggregate_id` 冒充了分支维度**：示例写 `series_demo:canon`，把分支名拼进了聚合 id，所以「分支」信息其实在——但它是一种**未约定的编码**，没有任何一处说 `aggregate_id` 的格式是 `<series_id>:<branch_id>`，而 S09 偏偏又从 payload 里读 `branch_id`。两处并存时，若 S16 改了聚合 id 的拼法，`data.branch_id`（不存在）和 `aggregate_id`（解析失败）会同时失效。本文件加了 `branch_id` 字段（唯一的超出 §3.7 的字段），因为缺了它 S18 的水位逻辑必然错；但**新增字段是替 S16 做决定**，所以必须 owner 确认。要定的是：`branch_id` 进 payload（并统一 `canon` vs `main`），还是明确 `aggregate_id` 的 `:<branch>` 编码为契约并在 S09 侧改读法。"
+    },
+    {
+      "id": "MSC-3",
+      "summary": "`source_manifest_ref` 在 DDL 可空，而 `branch_init` / `merge` / `revert` 三种提交本来就无 manifest，事件却把它画成必填",
+      "ddl": "plans/S16-story-memory.md §1.2 行 103：`source_manifest_ref jsonb,  -- {id, revision, content_hash}`——**没有 NOT NULL**，而相邻的 `command_id` / `actor_principal` 都有",
+      "event": "§3.7 行 519：`\"source_manifest_ref\": {\"id\":\"manifest_ep2\",\"revision\":8,\"content_hash\":\"...\"}`——示例只画了 `extract` 这一天",
+      "no_manifest_kinds": "§4.1 行 537（`branch_init`：写一行 `canon_branch` + `branch_ancestry` + 一条 `claim_count=0` 的提交，产生路径不经 manifest 事件）、§4.2 行 542（`merge`：由 `POST /merge-decisions` 触发）、§4.3 行 564（`revert`：由 `POST /memory-commits` 触发）",
+      "why_it_matters": "五种提交里只有 `extract` 有 manifest（`memory_commit_manifest_once` 唯一索引干脆 `WHERE commit_kind = 'extract'`，DDL 行 119，说明其余四种不参与这个幂等约束——也就意味着它们没有 manifest 可去重）。所以事件里这个字段**要么可空、要么该按 `commit_kind` 条件出现**。本文件收必填是照 §3.7 的示例，代价是：若 S16 照 DDL 发 `branch_init` 且不带这个字段，事件在本契约下被拒——拒是好事（可观测），但**拒的是合法事件**，因为 DDL 明确允许空。反向更糟：实现者为了过校验塞一个占位 manifest（例如复用上一份），S07 行 912 的「若与某 `PLANNED` plan 的 `memory_checkpoint` 相关 → 标 `stale_memory`」就会拿一份错 manifest 去比对，把无关的 plan 标脏。要定的是：`source_manifest_ref` 是可空、还是按 `commit_kind` 用 `if/then` 条件必填。"
+    },
+    {
+      "id": "MSC-4",
+      "summary": "事件送 `commit_kind` 却不送它的配套字段：`merge` 没有 `merge_source_refs`，`revert` 没有 `revert_of_sequence`",
+      "ddl": "plans/S16-story-memory.md §1.2 行 104–106：`merge_source_refs jsonb,  -- merge 时：[{branch_id, commit_sequence, checkpoint_hash}]` / `revert_of_sequence bigint,  -- revert 时：被回滚的 commit` / `extraction_batch_id text`——三列都是条件性有值",
+      "event_absence": "§3.7 行 511–523 的 12 个字段里三个都没有",
+      "semantics": "§4.3 行 567–568：「为 `revert_of_sequence = N` 中被改变的所有 claim，生成**新 revision**……新增一条 `commit_kind='revert'` 的提交，`checkpoint_hash` 正常链下去」；§4.2 行 542：「合并 = 在目标分支上生成一个 `commit_kind='merge'` 的提交，`merge_source_refs` 记录源分支与序列」",
+      "why_it_matters": "这是本批最实质的一条：**`revert` 与普通修改在事件上完全同形**。两者都是「一批 claim 的 revision 变新、`changed_claim_refs` 非空、`checkpoint_hash` 正常链下去」。区别只在 `commit_kind` 与 `revert_of_sequence`，而后者不在事件里。后果按消费方逐个看：(1) **S09**（§4.3 行 592）拿 `changed_claim_refs` 当闭包种子去重算下游——回滚一次错误的事实会触发**同样的重生成**，而正确行为是「撤销先前那次重生成」，代价相反（回滚本来是为了省钱）。(2) **S18**（§6.4 行 492）把 `claim_index` upsert 到新 revision、并按 §6.4 行 495 把受影响的 pack 标 `pack_stale`——回滚时这是对的，但它无法区分「这是回滚」与「这是新发现」，而在「已交付集」的规则下（S09 行 607：「已交付集只出现在 `affected_episode_ids` 里，其节点一律 `RECHECK`，永不 `REGENERATE`」）这个区分决定要不要动成片。(3) **S07**（行 912）标 `stale_memory` 用的是 plan 里的 `memory_checkpoint`，不看 `commit_kind`——但 §4.3 的回滚会**新建**一个 seq 而不是回退 head（行 566「不回退 head，不删除任何行」），所以回滚之后所有引用旧 checkpoint 的 plan 都还是「指向已存在的序列号」，`MEMORY_CHECKPOINT_BEHIND` 类的校验（S08 行 680）不会触发，回滚在 S07/S08 侧等于不可见。**`merge` 的问题更直接**：§4.2 行 559 说合并提交要「把每条裁决写进 `commit_kind='merge'` 的 `actor_principal` 与审计」，而消费者要知道「这次合并采纳了谁的裁决」只能回源 `merge_decision` 表——事件里既没有 `merge_source_refs` 也没有 `conflict_id` 或裁决引用。要定的是：`merge_source_refs` / `revert_of_sequence` 是否进 payload（以及是否按 `commit_kind` 条件必填）。"
+    },
+    {
+      "id": "MSC-5",
+      "summary": "事件送了可推导的 `previous_sequence`，却没送验链真正需要的 `previous_checkpoint_hash`",
+      "derivable": "plans/S16-story-memory.md §3.4 行 475（`seq = head+1`）+ §1.2 行 98（`-- 每 series+branch 单调递增`）+ 主键行 111（`PRIMARY KEY (tenant_id, series_id, branch_id, commit_sequence)`）合起来固定 `previous_sequence = commit_sequence - 1`",
+      "missing": "§1.2 行 100：`previous_checkpoint_hash bytea NOT NULL`——**不在事件里**",
+      "chain_rule": "§1.2 行 122–130：`checkpoint_hash(seq)` 的输入含 `hex(previous_checkpoint_hash)`；§1.2 行 134：「链式的好处：任意两个 checkpoint 之间可以证明『没有中间提交被跳过』，而且可以离线重算校验（见 §9 runbook `verify-checkpoint-chain`）」",
+      "why_it_matters": "`previous_sequence` 是一个恒等于 `commit_sequence - 1` 的字段——它占了一个字段位却没有提供任何信息，因为序列号在分支内无洞（head 的 `FOR UPDATE` 串行化 + 主键 + `seq = head+1` 三者合起来排除了跳号）。真正让「缺一条事件」可被检测的是 `previous_checkpoint_hash`：收到 seq 27 时比对它的 `previous_checkpoint_hash` 与本地已存的 seq 26 的 `checkpoint_hash`，不等就是中间有提交没收到。**事件里没有这个字段，于是「乱序/缺失事件」这条 E 系列验收（docs/16 与 AGENTS.md 都列为必证项）在消费侧只能等超时**——S18 §6.5 行 499 的做法就是「`aggregate_sequence` 缺口 → 缓冲，等待补齐。超时（默认 60s）→ 回源」，即用时间换信息。如果 `previous_checkpoint_hash` 在事件里，缺口可以在收到下一条的瞬间确定，而不是等 60 秒。要定的是：把 `previous_sequence` 换成 `previous_checkpoint_hash`（或两者并存）。本文件照 §3.7 收 `previous_sequence`、不收 `previous_checkpoint_hash`，因为在没定之前加字段是替 S16 做决定。"
+    },
+    {
+      "id": "MSC-6",
+      "summary": "`commit_manifest_binding` 一个提交可以绑多集，而事件的 `episode_id` / `episode_order` 是单值",
+      "ddl": "plans/S16-story-memory.md §1.2 行 139–150：`commit_manifest_binding (... commit_sequence bigint NOT NULL, manifest_ref jsonb NOT NULL, episode_id text NOT NULL, episode_order integer NOT NULL, clock_id text NOT NULL, tick_start bigint NOT NULL, tick_end bigint NOT NULL, PRIMARY KEY (tenant_id, series_id, branch_id, commit_sequence, episode_id))`——**主键的最后一个分量是 `episode_id`，即一个 commit 可对应多行**",
+      "transaction": "§3.4 行 486：「8) 插入 commit_manifest_binding」——单数的一步，但表允许多行",
+      "event": "§3.7 行 520–521：`\"episode_id\": \"ep002\"` / `\"episode_order\": 2`——单值",
+      "why_it_matters": "一次改稿跨集是 E08 的核心场景（S09 §4.3 行 607 的整节都在讲「跨集」），而跨集改稿最自然的实现就是一个 commit 绑定两个 episode 的 manifest——DDL 明确允许（主键含 `episode_id`）。事件却只有一个 `episode_id`。三种可能的实际行为都不好：(1) 发 N 条事件（每集一条），但 `aggregate_id` 与 `commit_sequence` 相同，违反 envelope 的 `aggregate_sequence` 单调语义（同一聚合同序号两条不同事件）；(2) 只发第一条，其余集在事件上丢失，消费方要从 `changed_claim_refs` 反推集——而 S16 §5 行 581 明确说「S16 不输出闭包本身（E08-6 断言事件 payload 无下游集列表）」，所以反推正是被禁止的；(3) 一个 commit 只绑一集，那么多集改稿要拆成多个 commit——但那样「同一次改稿」在历史里就没有单一锚点，§4.3 的回滚（`revert_of_sequence: N`）只能滚其中一集，而用户按下「撤销这次改稿」时预期的是整次。要定的是：`commit_manifest_binding` 是否真允许多行（若允许，事件需要 `episode_refs[]`；若不允许，DDL 主键该去掉 `episode_id`）。"
+    },
+    {
+      "id": "MSC-7",
+      "summary": "`aggregate_id` 的格式是 `<series_id>:<branch_id>` 只出现在示例里，没有任何一处写下来，而它同时兼任「分支维度」的载体",
+      "example": "contracts/examples/memory-committed-event.json：`\"aggregate_id\": \"series_demo:canon\"`；S16 §3.7 行 511 的示例用的是 `\"aggregate_id\":\"cpm...\"` 之外的写法——该节未单独给出 aggregate_id，句首行 505 只写 `aggregate_id = manifest_id`（那是 S20 的）",
+      "partition": "contracts/event-topics.v2.json：该 topic 的 `partition_key` 是 `tenant_id:aggregate_id`，即分区键由聚合 id 拼成",
+      "consequence": "§1.2 行 98 的序列号是 `每 series+branch` 单调；`aggregate_sequence` 要与之对应，就必须逐 (series, branch) 单调",
+      "why_it_matters": "`aggregate_id` 在这条事件里承担了双重角色：既是 Kafka 分区键的一半（`tenant_id:aggregate_id`），又是「分支」这个编号维度的唯一载体（因为 payload 里没有 `branch_id`，见 MSC-2）。这个双重角色只在示例里体现（`series_demo:canon`），**S16 的 §3.7 正文没有一句话说明 `aggregate_id` 的构成**——而它是契约里最有约束力的字段之一：改了它，既改分区（影响所有历史消息的消费顺序假设）又改「哪些提交属于同一序列」。风险是具体的：若某实现把 `aggregate_id` 写成纯 `series_id`（不带分支），则两个分支的提交落进同一聚合、`aggregate_sequence` 出现重复序号，而 envelope 只校验 `aggregate_sequence >= 1`、不校验唯一性（实测：把它改成与前一条相同不会被拒），于是 S18 §6.5 的「只增不减」水位会静默吞掉另一个分支的提交。要定的是：`aggregate_id` 的构成写进契约（`<series_id>:<branch_id>`）并作为 `branch_id` 缺失时的兜底，还是把 `branch_id` 独立发出来（MSC-2）让 `aggregate_id` 回到纯聚合语义。"
+    }
+  ]
+}
