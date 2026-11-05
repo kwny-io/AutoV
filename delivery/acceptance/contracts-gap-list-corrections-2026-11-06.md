@@ -170,3 +170,52 @@ print('topics', len(t), 'schema_ref', s, 'data_schema_ref', d, 'payloads', s + d
 `examples` 的语义是「通过 schema 校验的示例数」，不是 `contracts/examples/` 下的文件数：
 目录里共 56 个文件，其中 54 个 `.json`、2 个 `.yaml`（`runtime-safety.yaml`、
 `service-interactions.yaml`）不参与校验，`.json` 里又有 1 个（`capacity-plan.json`）没有对应 schema。
+
+## 6. README 里三处一直对不上的数：`json` 112 → 116、`data_schema_ref` 37 → 38（当时）、图里 19 → 17（当时）
+
+第 5 节复核 `payloads` 与 `examples` 时，顺手把同一节其余的数字也回源数了一遍。
+发现**三个在我这轮动手之前就已经是错的**，不是这轮新引入的。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` L962，`json` 检查项 | 112 个 JSON 解析 | **116 个** | 每轮新增 schema/示例后没有回填这一句。`git show HEAD:contracts/README.md`、`HEAD~1`、`HEAD~2` 三版都写 112，说明它不是某次改动引入的偏差，而是**从某轮起就再没跟过**。实测 `python tools/check_all.py` 这一行一直是活的：本轮之前是 114，本轮加两个文件后是 116。 |
+| 2 | `contracts/README.md` L948–949，三层文件关系图 | `data_schema_ref──▶ 37 个 payload schema` / 「其余 19 个 envelope-only」 | **当时应为 38 / 17** | 同一句话在 L61 已经写对了（「38 个 topic 带，17 个仍是 envelope-only」），图里那份是**另一处独立抄写的数**，改一处不会连带改另一处。37 + 19 = 56 ≠ 55 这个恒等式本来就在报错：`schema_ref` 恒定 55 条，两类引用不该拆出比 topic 总数还多的数。 |
+| 3 | 同上一格 | 同上 | 同上 | 与第 2 条同源：图把「带 payload 的 topic 数」和「envelope-only 的 topic 数」当成两个可独立维护的量写了两遍，而它们其实互补（39 + 16 = 55）。**本轮的修法是把两处各自的数都回源重算，不是只改一处让它们相等。** |
+
+三条的错因是同一类，和第 5 节那两条一样：**同一事实在文件里写了两遍，改动只落到其中一遍**。
+L61 与 L948–949 讲的是同一件事（多少个 topic 带 payload），却没有任何机制保证两者一致。
+
+复核口径（本节所有数字都回这张表数，不沿用第 5 节的中间结果）：
+
+```python
+import json, glob
+reg = json.load(open('contracts/event-topics.v2.json', encoding='utf-8'))
+
+def walk(o):
+    if isinstance(o, dict):
+        if 'event_type' in o:
+            yield o
+        for v in o.values():
+            yield from walk(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from walk(v)
+
+t = list(walk(reg))
+s = sum(1 for x in t if 'schema_ref' in x)
+d = sum(1 for x in t if 'data_schema_ref' in x)
+print('topics', len(t), 'schema_ref', s, 'data_schema_ref', d,
+      'payloads', s + d, 'envelope-only', len(t) - d)
+print('schema files', len(glob.glob('contracts/*.schema.json')))
+print('example json', len(glob.glob('contracts/examples/*.json')))
+```
+
+写这份更正时输出 `topics 55 schema_ref 55 data_schema_ref 39 payloads 94 envelope-only 16`、
+`schema files 48`、`example json 56`；`python tools/check_all.py` 打印
+`ok json 116 file(s)`、`ok payloads 94 schema ref(s), 39 topic(s) with a payload schema`、
+`55 example(s) valid, 0 failing, 1 without a schema`、`9 check(s) passed`。
+
+`json` 的 116 与 `schema files` 的 48 相差很大，是正常的：`json` 数的是**全仓**能解析的 JSON
+（含 `contracts/examples/*.json`、`contracts/service-catalog.v2.json`、`docs/design-package/` 下
+的存档、生成物等），不是 `contracts/*.schema.json`。这两个数不能互相校验，这也是 L962 那句话
+容易失守的原因——它没有对应的恒等式，只能靠每轮重跑 `check_all` 时顺手回填。

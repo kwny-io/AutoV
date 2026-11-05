@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 38 个 topic 带**（17 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 39 个 topic 带**（16 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -103,6 +103,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `breakdown.revision.created` | `breakdown.revision-created.v2.schema.json` | S05 §4.2 / §11 C3 |
 | `adaptation.training.completed` | `adaptation.training-completed.v2.schema.json` | S48 §4.3 / §11 C48-4 |
 | `project.episode.created` | `project.episode-created.v2.schema.json` | S03 §5.3 |
+| `audit.export.ready` | `audit.export-ready.v2.schema.json` | S45 §4.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -849,6 +850,65 @@ PEC-6 是这批里唯一需要往外补的：S03 §5.3 行 654–658 列了三�
 `causation_id: null` 拒、`aggregate_sequence: 0` 拒。正向探针 3 例如预期通过：`release_ordinal: null`
 （行 507 的纯草稿集）、`data_ref: null`、`source` 不被信封钉死在 `S03`。
 
+### `audit.export-ready.v2.schema.json`：事件名只有一个态，状态机有六个
+
+S45 只有一条发布事件（§4.3 行 443「只有一条」），而它的状态机有两条终点出口不产生任何信号。
+这份 schema 的每一个字段都有出处——七字段列表加完整示例（§4.3 行 445–466），是剩下 16 个
+envelope-only topic 里证据最全的一条——**问题不在字段，在字段背后的那台状态机**。
+
+§3.6 行 305–310 的六个态是 `REQUESTED → BUILDING → SEALED → READY`，另有 `FAILED`（不可重试
+错误直接终止，可恢复错误重试后仍失败）和 `EXPIRED`（`expires_at` 到点）。事件名是 `ready`，
+行 326 说「完成时发」，所以**实际流里 `state` 恒为 `READY`**；`FAILED` 与 `EXPIRED` 都是终点，
+却永远不会被通知。`POST /audit-exports` 只回 `202 + export_id`，`GET /audit-exports/{id}` 能查——
+于是失败和过期**只能轮询**（AEX-2）。这与 S03 的 reorder 缺口同一类：有变化、有消费方、没有信号。
+不对称更明显的是 `EXPIRED`：消费方收到「可以下载」之后，没有任何事件告诉它「窗口关了」。
+`expires_at` 写在 payload 里，所以能自己算——但那要求消费方持久化这个时刻，而事件
+`normal_retention_days` 是 14 天、示例的下载窗口是 24 小时，**事件还在、导出物已经没了**是常态。
+
+AEX-1 是同一个字段名下的两个形状。`bundle_ref` 在计划示例里是信封 `data_ref` 那种四键引用
+（`service_id` / `id` / `revision` / `content_hash`，行 461），在 DDL 注释里是对象存储三元组
+（`{storage_ref, sha256, size_bytes}`，行 718）。两组键**无一重合**，所以不是同一形状的两种写法。
+两个都不是笔误样式：四键那组与信封逐键同构，三键那组与对象存储实际产物一致（`storage_ref`
+是 `s3://…` 路径，见行 613 对分段 `storage_ref` 的注法）。实现时二选一都说得通，消费方解出来的
+东西却不同——四键只能拿 `content_hash` 比对，三键能直接去取文件。schema 按示例收四键（示例是
+唯一给出取值的地方，且能与信封对齐）。
+
+同一条里 `chain_continuous` 是**可为 NULL 的布尔**（DDL 行 719 只写 `boolean`），而 §3.6 行 324
+说 `manifest.json` 里**必须有** `true|false`，§8 行 910 还说 `strict_audit` 租户「不允许
+`chain_continuous=false`」。事件发在 manifest 写完之后，所以 `null` 在正确实现里取不到——但
+DDL 允许它，而 E39 的「不伪造完整性」正靠这个字段做判定。schema 收 `boolean|null`（照 DDL，
+不替 S45 收紧），三值布尔对「导出是否完整」无法当依据这件事登记在 `x-needs-owner`。
+
+`segment_count` 在 DDL 里**没有列**，只有 `segment_ids text[]`（行 716）——它是数组长度，不是独立
+事实。而它是数「参与本次导出的分段」还是「成功读完的分段」，计划没说：行 324 允许某段因
+`INTEGRITY_FAILED` 被跳过并记进 `gaps`，被跳过的段仍可能在 `segment_ids` 里。全文 `segment_count`
+只出现一次（行 459）。schema 只收非负整数，不解释分母。
+
+AEX-3 是另一个方向的问题：`audit_export` / `audit_segment` / `audit_access_log` 三张表的 id
+是**裸主键**（行 710、594、733），即全局唯一。本服务 §10 的 T45-34（行 1084）要求「租户 B 查
+租户 A 的 record/stream/**导出** → 404，不泄漏存在性」（E28）。同仓至少八个服务在数据模型开头
+写着同一句「所有主键/唯一约束含 `tenant_id`（E28：跨租户不得通过唯一冲突探测存在性）」——
+`git grep -F '主键/唯一约束含' -- plans/` 命中的就是这些，**S45 不在其中**。读取路径有 RLS 兜着，
+但 E28 要的是「不泄漏存在性」，而唯一冲突发生在写入路径。导出是最可能跨租户泄露的 id 类型
+（会出现在客户工单、SIEM 规则、下载脚本里），所以这条值得裁。
+
+AEX-5 是示例层的适配：计划示例的 `data_ref` 写裸字符串 `"audit-export/exp_01J.../manifest.json"`
+（行 464），信封的 `data_ref` 是 `oneOf` [四键对象 | `null`]，没有字符串分支；`causation_id` 写
+`null`（行 453），而信封要求非空字符串且在 16 个必备键里。前者想表达的信息本身有用（对象存储
+路径），只是信封的 `data_ref` 不是放路径的地方——`bundle_ref` 三键那一支就有 `storage_ref`。
+后者在计划里写 `null` 的共三篇（S45 行 453、S46 行 379、S48 行 431），动机都是「没有上游命令」，
+信封一致拒绝。
+
+负向探针 25 例、正向 5 例，结果与预期一致：八个必填键缺一各拒、`state` 小写与未知值拒
+（`READY` / `FAILED` 通过）、两个计数 `-1` 拒（`0` 通过）、`chain_continuous` 收 `"true"` 字符串拒
+（`null` 通过）、`bundle_ref` 多 `storage_ref` 键拒 / 缺 `revision` 拒 / `service_id` 非 `S\\d{2}` 拒 /
+`sha256:` 前缀拒 / 写成字符串拒、`expires_at` 收 `null` 拒、payload 顶层多 `gaps` 或
+`failure_reason` 拒、空 `export_id` 拒、`schema_version` 不等于 `"2.0"` 拒。
+唯一一条**预期外**的是 `expires_at: "tomorrow"` 通过了：`format: date-time` 在本仓库只是注解，
+`tools/validate/validate_examples.py` 用 `Draft202012Validator(target, registry=reg)` 且不传
+`format_checker`。这个行为与全仓其余带 `format` 的字段一致，已在 schema 描述里写明，免得
+被当成强约束。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -945,8 +1005,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 37 个 payload schema
-                                                              （见上表；其余 19 个 envelope-only）
+                                        └──data_schema_ref──▶ 39 个 payload schema
+                                                              （见上表；其余 16 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -959,11 +1019,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（112 个 JSON 解析）、`payloads`（93 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 38 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（116 个 JSON 解析）、`payloads`（94 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 39 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（54 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（55 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
