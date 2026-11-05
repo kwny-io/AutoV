@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 27 个 topic 带**（28 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 28 个 topic 带**（27 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -92,6 +92,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `prompt.compiled` | `prompt.compiled.v2.schema.json` | S20 §4.3 |
 | `memory.canon.committed` | `memory.canon-committed.v2.schema.json` | S16 §3.7 |
 | `snapshot.manifest.committed` | `snapshot.manifest-committed.v2.schema.json` | S08 §6.1 |
+| `lineage.impact.computed` | `lineage.impact-computed.v2.schema.json` | S09 §5.4 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -332,6 +333,46 @@ fence 影响了哪些集」都聚不起来（SMC-6）。
 `parent_revision` 整数——`id` 与 `content_hash` 必须回查 `manifest_revision` 才拿得到，全文没
 说要做这一步（SMC-4 后半）。
 
+`lineage.impact.computed` 是**第四种缺口形状：字段是全的，消费者是零**。S09 自己就在 §9 的
+C09-3 里登记了「注册了但无 payload schema」，所以补 schema 这件事是兑现它自己的待办。但补完之后
+暴露出更难的问题——**这条事件没有消费者**。S09 §5.4 行 779 点名两家：S07「组装 ChangePlan、
+校验 `analysis_hash`」、S47「影响面板」。S07 §5.6 行 914 的标题就是「**S07 不消费
+`lineage.impact.computed`**」，理由是「影响分析是 S07 自己同步调用的（`POST /impact-queries`），
+响应直接进 plan。消费事件会导致『用别人算的闭包做自己的计划』」；S47 §2.1 行 73–86 的订阅表列了
+10 条事件，**没有这一条**，全文 grep `lineage` 零命中。catalog 里也没有任何服务的 `consumes`
+含它。于是它 `aggregate_sequence` 恒为 1（§5.4 行 754「每次分析只发一次」）、`replay_side_effects:
+false`、字段与 §5.2 的同步响应几乎完全重叠（`analysis_hash` / `mode` / `lineage_watermark` /
+`expires_at` 四处都有）——**加它的成本是真实的，收益是零**（LNI-1）。但这不能靠删解决：
+`services/lineage-impact/service.yaml` 已声明它，删要改 catalog。
+
+字段层面还有两处「事件比源头少」。`analysis_hash` 是 `sha256(JCS(result))`（§2.3 行 297），
+`result` 有 7 个键（行 324–339），事件只带其中 5 个——**缺 `reuse_artifact_refs` 与
+`derived_adjustments`**，所以消费方**无法重算哈希**，`analysis_hash` 退化成不透明令牌；
+而唯一能拿来比对的 `GET /impact-analyses/{id}` 在 `openapi.v2.yaml` 里还不存在（C09-1）。
+`watermark_source`（DDL 行 294）也不在 payload 里，而 `lineage_watermark` 的定义就是「那几路各自
+`applied_sequence` 的 min」（§1.5 行 118）——**不给组成，这个 min 无法验证**，也看不出哪一路
+`degraded`（行 125）（LNI-2）。
+
+§2.3 行 342 说 `result` 与 `enterprise-change-plan.v2` 的 `impact`「逐字对齐」「不需要二次映射」，
+但既有契约的 `impact` 只有 6 键且 `additionalProperties: false`，`derived_adjustments` 在**顶层**。
+照字面直接赋值会校验失败（探针确认：给事件加 `derived_adjustments` 被拒）——这不是措辞不精确，
+§2.3 明说「不需要二次映射」，实现者会真去这么写（LNI-3）。S09 §9 的 C09-5 讨论了同一片区域但
+方向不同：它说的是 disposition/reason 无处安放，**没提键位错配**，所以它与 §2.3 行 342 互相矛盾。
+
+两处失效通知的缺失也记在这里。`COMPUTED → STALE_FENCE`（§3.1 行 504）「不带副作用」，即**不发
+事件**——而 S08 的 `:fence` 是故障切换的正常路径，一次就能让分支上所有在途 analysis 作废，每个的
+`expires_at` 都还在未来。于是「还新鲜」「fence 提前作废」「自然到期」三种处境对消费方完全同形，
+只能靠时间判断（LNI-6）。另外 `base_manifest_ref` 与 S08 事件的 `manifest_ref` 同形却无关联，且
+`impact_analysis` 没有按 `base_manifest_ref` 建的索引（DDL 行 314–319 只有 by_plan 与 by_branch），
+反向找「哪些 analysis 基于这一版」要全表扫 jsonb（LNI-4）。
+
+`seed_kind` 三值只在行尾注释、**无 `CHECK`**，却出现在部分索引谓词里（`WHERE seed_kind =
+'CHANGE_SEED'`，行 316）——写错大小写不会报错，只是索引静默失效。同一建表语句里 `mode` 与
+`status` 都有 `CHECK`，唯独它没有，这更像遗漏而非刻意开放的集合。而 `seed_ref` 连形状注释都没有
+（紧邻的 `base_manifest_ref` 有），三个 `seed_kind` 只有 `CHANGE_SEED` 的 `{plan_id}` 有出处
+（LNI-7）。`superseded_claim_refs` 则与 S16 同名数组同形同 `content_hash` 语义，可复用，但 revision
+的所指不同、且 S09 的分析最多滞后 30 分钟（LNI-8）。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -433,8 +474,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 27 个 payload schema
-                                                              （见上表；其余 28 个 envelope-only）
+                                        └──data_schema_ref──▶ 28 个 payload schema
+                                                              （见上表；其余 27 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -448,10 +489,10 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 27 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 28 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（43 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（44 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -503,7 +544,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：43 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：44 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

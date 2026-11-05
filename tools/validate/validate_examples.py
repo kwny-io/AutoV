@@ -47,6 +47,7 @@ SCHEMA_OF = {
     "finance-ledger-entry-posted": "event-envelope.v2.schema.json",
     "generation-command": "generation-command.v2.schema.json",
     "generation-job-state-changed": "event-envelope.v2.schema.json",
+    "lineage-impact-computed": "event-envelope.v2.schema.json",
     "memory-claim": "memory-claim.v2.schema.json",
     "memory-committed-event": "event-envelope.v2.schema.json",
     "orchestration-run-state-changed": "event-envelope.v2.schema.json",

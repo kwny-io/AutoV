@@ -1,0 +1,47 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBE5A2B4D6F8H0J2L4N6P8R0",
+  "source": "S09",
+  "type": "lineage.impact.computed",
+  "subject": "impact/ia_01JBE59G1H3J5K7M9N1P3Q5R7S",
+  "time": "2026-11-06T10:04:11Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "ia_01JBE59G1H3J5K7M9N1P3Q5R7S",
+  "aggregate_sequence": 1,
+  "correlation_id": "cmd_01JBE58F0G2H4J6K8L0M2N4P6Q8",
+  "causation_id": "plan_01JBE57E9F1G3H5J7K9L1M3N5P7",
+  "traceparent": "00-6e8a0c2d4f6b8d0f2a4c6e8b0d2f4a6c-6e8a0c2d4f6b8d0f-01",
+  "data": {
+    "schema_version": "2.0",
+    "analysis_id": "ia_01JBE59G1H3J5K7M9N1P3Q5R7S",
+    "analysis_hash": "2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d",
+    "mode": "EXACT",
+    "base_manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 13,
+      "content_hash": "c1e3a5b7d9f1c3e5a7b9d1f3c5e7a9b1d3f5c7e9a1b3d5f7c9e1a3b5d7f9c1e3"
+    },
+    "execution_fence": 2,
+    "lineage_watermark": 220,
+    "seed_kind": "CHANGE_SEED",
+    "seed_ref": {
+      "plan_id": "plan_01JBE57E9F1G3H5J7K9L1M3N5P7"
+    },
+    "regenerate_node_ids": [
+      "shot_3_2.video",
+      "shot_3_2.keyframe",
+      "ep3.master"
+    ],
+    "recheck_node_ids": [
+      "ep3.continuity_report"
+    ],
+    "affected_episode_ids": [
+      "ep003"
+    ],
+    "superseded_claim_refs": [],
+    "expires_at": "2026-11-06T10:34:11Z"
+  },
+  "data_ref": null
+}
