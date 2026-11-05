@@ -122,6 +122,36 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
 
+## 一个入口跑完所有仓库级检查
+
+```bash
+python tools/check_all.py
+python tools/check_all.py --list
+python tools/check_all.py --only links,examples
+```
+
+七项检查：`json`（41 个 JSON 解析）、`links`（1317 条相对链接全部可达）、
+`catalog`（服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`
+（动作族文件自己声明的 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、
+`examples`（17 个示例对 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
+
+退出码 0 = 全过，1 = 有真问题，2 = 某项没跑成。**后两者要分开**：一个没跑成的检查
+不能读成绿灯，这和上面 `jsonschema` 缺失返回 2 是同一条原则。
+
+写这个入口之前，这些检查是五条各自为政的命令，没人一起跑，也就等于「族校验必须在加载期
+自动执行」这句话没有执行入口——校验器只有在被调用时才约束任何东西。
+`registry` 这一项现在报「还没有文件」而不是失败，因为 99 条 check 的字段确实还没补齐
+（缺口 4）；文件一落地，加载期校验立刻生效，不需要再接线。
+
+两处实现细节容易踩：
+
+- **生成物比对不是覆盖写。** 生成器总是写盘，所以检查把 `ROOT` 重定向到临时目录渲染，
+  再逐个比对。这样它可以在别的会话正在写 `services/` 时安全运行。已验证注入一行漂移
+  会报 FAIL、还原后干净。
+- **比对前必须归一化换行。** 仓库是 `core.autocrlf=true` 且没有 `.gitattributes`，
+  生成器写 `\n`，检出回来是 `\r\n`——直接比字节会让每一个生成物在任何一次新检出上
+  都报漂移。已验证：只把某个文件转成 CRLF 不会报，再加一行内容会报。
+
 ## 设计时留下的缺口
 
 实现前需要先补齐，否则代码生成或归属会出问题：
