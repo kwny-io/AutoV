@@ -116,17 +116,31 @@ S42 / S43 / S41 这三条是又一种缺口，值得单说：**生产方宣布�
 `target_count` / `action_count` / `top_action` / `estimated_cost_band` 四个——这四个没有
 任何 DDL 列，是「折叠值」，可从 `snapshot` 与 `action` 表重算出发出时刻的数值。其中
 `top_action` 的「top」按什么排序全文没有定义（动作数 / 成本 / `sequence` 最前，三种口径
-在多动作计划上答案不同），见 x-needs-owner 与 RPP-1。
+在多动作计划上答案不同），见 x-needs-owner。**取值域还是收窄了**（`action_enum` 12 值）：
+枚举约束的是「哪个名字合法」，与「哪个是 top」是两个问题，前者有 S39 §11 C5b 自己要求的
+机器可读闭集作依据。
+
+另外三处是**主动收窄，不是照抄 DDL**，所以和上面六个 `production.*` 的口径不同，值得说明：
+`artifact_sha256` 收 `^[0-9a-f]{64}$`（DDL 是裸 `text`），因为 S39 §4.2 步骤 2c 要拿它和
+三份 QC payload 的 `artifact_sha256` 做相等比对，而那三份全是裸 hex——不收窄，schema 就
+拦不住一个会让整条 ingest 永久 quarantine 的写法；`estimated_cost_band` 收 `low|medium|high`
+（取自 §4.5 行 320 的竖线枚举，本仓库既有写法），且注明它只是档位词表、不是预算结论。
+`recheck_scope` 则**不收** enum 也不设 `minItems`：三套语法互不兼容（见下），且 target 为空
+时并集就是空数组。
 
 更硬的缺口在 `shot_lineage_id` 与 `recheck_scope` 两个名字上。`shot_lineage_id` 事件里
 只有一个，可 plan 表根本没有这一列（它只在 per-attempt 的 `attempt_ledger` /
 `attempt_reservation` 上），而一条计划可以覆盖多个镜头——`target_count: 2` 的两个 target
-未必同一个血缘（RPP-3）。`recheck_scope` 则是同一个名字在三个地方三个域：事件是
-`text[]` 用 `layer:aspect` 冒号语法，`check-registry.v2.schema.json` 是**单字符串**用
-`+` 连接，S39 §6.3 自己的枚举列表里又漏了它下一行示例用的 `hash` 与 §4.5 用的
+未必同一个血缘（RPP-3）。顺带记一笔：§11 C4 说它「在任何契约里都没有定义」**前半句已过时**
+（四份契约都有这个字段），但**后半句仍然成立**——四份都只收非空字符串，没有一份写生成规则
+或不可变性，而它是 E26 跨 Run 累计唯一的锚点。`recheck_scope` 则是同一个名字在三个地方三个
+域：事件是 `text[]` 用 `layer:aspect` 冒号语法，`check-registry.v2.schema.json` 是**单字符
+串**用 `+` 连接，S39 §6.3 自己的枚举列表里又漏了它下一行示例用的 `hash` 与 §4.5 用的
 `identity`。S39 §6.3 明说要「取所有 target 的并集」才算复检范围，也就是说它必须把注册表
 的 `+` 串翻译成自己的 `:` 数组——而**翻译规则不存在**。拆错一层，少跑的那层恰好是
-「修复是否引入新缺陷」的证据，所以这是 RPP-4 而不是排版问题。
+「修复是否引入新缺陷」的证据，所以这是 RPP-4 而不是排版问题。还有一处名字级别的错：
+§7.1 行 744 把这个事件叫 `repair.plan.created`，而目录里只有 `quality.repair.planned`
+（RPP-6）——照着写会产出一条无 topic 的事件，而「与计划落库同事务」看起来仍然满足。
 
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
