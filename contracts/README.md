@@ -117,6 +117,14 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
+   **但形状是全的**：17 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
+
+   注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用
+   （今天只有 `execution-context.v2.schema.json` 被引用 3 次），`jsonschema` 遇到未知
+   `$id` 会去联网拉，而那个域名不存在——于是直接在第一个跨文件引用处崩掉，而不是报告
+   示例本身的问题。设计包写着「解析使用本地注册表；不允许联网拉取未知 schema」，
+   仓库里此前没有这个注册表，`tools/validate/validate_examples.py` 就是它。
 4. **`quality/check-registry.v2.json` 数据文件还没有，且方案里的表不足以生成它。**
    schema 与校验器已在，但 99 条 check（TECH 23 / VIS 32 / AUD 20 / SUB 24）只存在于四份
    QC 方案的表里，缺的不是"抄一遍"，是 schema 的必填字段本来就没写：
