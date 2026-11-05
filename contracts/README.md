@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 35 个 topic 带**（20 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 36 个 topic 带**（19 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -100,6 +100,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `model.route.selected` | `model.route-selected.v2.schema.json` | S25 §7.1 |
 | `change.plan.applied` | `change.plan-applied.v2.schema.json` | S07 §5.5 |
 | `storyboard.shot.revision.created` | `storyboard.shot-revision-created.v2.schema.json` | S06 §4.3 / §11 C3 |
+| `breakdown.revision.created` | `breakdown.revision-created.v2.schema.json` | S05 §4.2 / §11 C3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -628,7 +629,7 @@ S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力
 `outbox` 也没有，全仓库没有对应的 `CHECK`。本文件照 `contracts/README.md` 的原则收 `minLength: 1`
 而不枚举，词表归属记在 `x-needs-owner`。
 
-`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 51 份示例是 `tnt_` 前缀或 `tenant_demo`）。它有据：
+`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 52 份示例是 `tnt_` 前缀或 `tenant_demo`）。它有据：
 §2.1 行 46 与 §2.2 行 105 都写「共享目录行 `tenant_id = '*'`」。envelope 只要求 `minLength: 1`，
 所以 schema 不拦也不推。另外 `subject` 在这里恒等于 `aggregate_id`，是全仓库唯一这么做的生产者。
 
@@ -700,6 +701,36 @@ revision 自己的列（§5.5 行 704–705）。
 括号里就是它自己的名字，目录里也登记着；真正缺席的是上一节 §4.2 的 `storyboard.revision.created`
 （`drama.storyboard.v2` 上只登记了本事件一个类型）。§11 C3 记录了这个缺口，但给的路径
 `contracts/events/...` 在本仓库不存在——payload schema 一律平铺在 `contracts/` 下。
+
+### `breakdown.revision-created.v2.schema.json`：事件带了分支，表却不把分支当身份
+
+这份和上一条正好互补。S06 的表键含 `branch_id` 而事件漏了它，S05 反过来——
+payload 第十个字段就是 `branch_id`，而 `breakdown` / `breakdown_revision` / `scene`
+三张表的主键都没有它（§5.1 行 543、§5.2 行 578、§5.3 行 609）。`branch_id` 只出现在二级索引里，
+说明它被当成查询维度而不是身份维度。于是事件里那个值区分不了任何东西：同一
+`(tenant_id, breakdown_id)` 只有一行、一个 `head_revision`，分支 B 改自己的第 5 版
+会直接写掉分支 A 的第 5 版（BRK-1）。
+
+`retired_scene_ids` 这条更绕。§4.2 称它是本服务唯一的「删除类」信号，而它对应的
+三种库内操作在语义上是删、是重指向、是拆（§5.3 的 `retire_reason` 三值），
+`merged_into_scene_id` 有列有 CHECK 却没进事件。S09 的 `SCENE_DERIVED_FROM_SCRIPT`
+边由本事件自报产生、按 `(tenant_id, edge_id)` 唯一，所以 S05 **指不出**该关哪条边；
+S09 能靠自检查出漏关（「`valid_to IS NULL` 但 `target_revision` 已不是最新」），
+但关边需要按 `edge_id`，而它已经不知道最新 revision 是什么了（BRK-2）。
+
+`state` 的四值枚举有真 DDL `CHECK` 撑腰，但 §6.3 规定只有 `SEALED` 发事件，而
+「旧 revision 变 SUPERSEDED」发生在写 outbox 之后、不发事件——所以 §6.5 那条
+「已 SUPERSEDED 的 revision 收到更早事件不得恢复」在事件流上无法执行（BRK-3）。
+`aggregate_sequence = revision` 会跳号（草稿不发），而 §6.5 把跳号当丢事件，
+两者对同一个观测给出相反诊断，消费方分不出「这版是草稿」和「这版丢了」（BRK-6）。
+
+打包的示例有个优点值得记：**信封是完整的**，16 个键一个不缺，`data_ref` 也在——和 S06 §4.3
+那条相反。剩下的偏差都在取值层（`home_cell` 用连字符、`source` 用点号前缀、时间戳带毫秒），
+只有 `data_ref.content_hash` 的 `sha256:` 前缀会真的校验失败，与 S06 的 SRC-4 同一根因（BRK-4、BRK-8）。
+
+另外 `content_hash` 的输入含 `revision`（§4.1 行 467），而它同时是
+`UNIQUE (tenant_id, breakdown_id, content_hash)` 的一部分——「同一内容不能出现两版」
+这条约束因此在跨 revision 时挡不住重复提交，而重复提交恰恰会产生新 revision（BRK-9）。
 
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
@@ -797,8 +828,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 35 个 payload schema
-                                                              （见上表；其余 20 个 envelope-only）
+                                        └──data_schema_ref──▶ 36 个 payload schema
+                                                              （见上表；其余 19 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -811,11 +842,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（108 个 JSON 解析）、`payloads`（89 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 35 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（110 个 JSON 解析）、`payloads`（91 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 36 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（51 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（52 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

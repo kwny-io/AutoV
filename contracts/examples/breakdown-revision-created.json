@@ -1,0 +1,46 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCHD2N4Q6S8U0W2Y4A6C8E1",
+  "source": "S05",
+  "type": "breakdown.revision.created",
+  "subject": "ep_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "time": "2026-11-05T09:00:00Z",
+  "tenant_id": "tnt_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "home_cell": "cell_a1",
+  "aggregate_id": "bkd_01JCHD0A2C4E6G8J0L2N4P6R8",
+  "aggregate_sequence": 4,
+  "correlation_id": "cmd_01JCHD4B6D8F0H2K4M6P8R0T2",
+  "causation_id": "cmd_01JCHD4B6D8F0H2K4M6P8R0T2",
+  "traceparent": "00-5a9c3e1b7d0f2a4c6e8b0d2f4a6c8e0b-5a9c3e1b7d0f2a4c-01",
+  "data": {
+    "schema_version": "2.0",
+    "breakdown_id": "bkd_01JCHD0A2C4E6G8J0L2N4P6R8",
+    "revision": 4,
+    "state": "SEALED",
+    "episode_id": "ep_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "branch_id": "br_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+    "source_script": {
+      "script_id": "scr_01JCFY7W3A5C7E9G1J3L5N7P9",
+      "revision": 7,
+      "content_hash": "b8d4f0a2c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0"
+    },
+    "scene_ids": [
+      "scn_01JCG01A3C5E7G9J1L3N5P7R9",
+      "scn_01JCG01B4D6F8H0K2M4P6R8T0",
+      "scn_01JCG01C5E7G9J1L3N5P7R9T1"
+    ],
+    "retired_scene_ids": [
+      "scn_01JCG01D6F8H0K2M4P6R8T0V2"
+    ],
+    "requirement_count": 12,
+    "content_hash": "d1e5a9b3c7f0e4a8b2d6f0c4e8a2b6d0f4c8e2a6b0d4f8c2e6a0b4d8f2c6e0a5",
+    "occurred_at": "2026-11-05T09:00:00Z"
+  },
+  "data_ref": {
+    "service_id": "S05",
+    "id": "bkd_01JCHD0A2C4E6G8J0L2N4P6R8",
+    "revision": 4,
+    "content_hash": "d1e5a9b3c7f0e4a8b2d6f0c4e8a2b6d0f4c8e2a6b0d4f8c2e6a0b4d8f2c6e0a5"
+  }
+}

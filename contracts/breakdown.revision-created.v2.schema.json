@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/breakdown.revision-created.v2.schema.json",
+  "title": "breakdown.revision.created payload v2",
+  "description": "event `breakdown.revision.created` 的 data 部分。权威定义在 plans/S05-breakdown.md §4.2（行 473–508，事件体）、§5.2 `breakdown_revision`（行 555–591）、§5.1 `breakdown`（行 528–549）、§5.3 `scene`（行 595–617）、§3.4（行 326–336，重排不推进 revision）、§6.3（行 827–833，只有 SEALED 发事件）、§11 C3/C4（行 1099–1100）。这份 schema 与同批的 S06 那条正好互补：S06 的表键含 `branch_id` 而事件不带，S05 反过来——**事件带了 `branch_id`，但库里的 `breakdown` / `breakdown_revision` / `scene` 三张表的主键都不含它**。九条 `x-conflicts` 里最要紧的是 BRK-2：`retired_scene_ids` 是本服务唯一的删除信号，可它发出来的时候，S09 侧那条边**谁都没有权限去关**。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§4.2 的示例同样没有这个键——它是本仓库 35 份 payload schema 的统一约定。"
+    },
+    "breakdown_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.2 行 488（`\"breakdown_id\": \"bkd_...\"`）+ §5.1 行 531（`breakdown_id text NOT NULL, -- 'bkd_01J...'`）+ §4.2 行 475（`aggregate_id = breakdown_id`）。形态只有前缀无契约（与 S06 的 `shot_id` 同一缺口）。主键是 `(tenant_id, breakdown_id)`（行 543）——**不含 `branch_id`**，见 BRK-1。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.2 行 488（`\"revision\": 4`）+ §5.2 行 559 与主键 `(tenant_id, breakdown_id, revision)`（行 578）+ §4.2 行 475 / §6.3 行 831（`aggregate_sequence = revision`）。`minimum: 1` 无 DDL 依据（`revision integer NOT NULL` 无 CHECK），与 envelope 的 `aggregate_sequence` 一致。**`aggregate_sequence` 会跳号**：§6.3 行 831 明确 DRAFT 不发事件，所以 rev 3 可能整个缺席——消费侧按 §6.5 行 848 缓冲 30s 后回源，不能把跳号当丢事件。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "DRAFT",
+        "SEALED",
+        "SUPERSEDED",
+        "WITHDRAWN"
+      ],
+      "description": "来源：§4.2 行 488（`\"state\": \"SEALED\"`）+ §5.2 行 560–561 的真 DDL `CHECK (state IN ('DRAFT','SEALED','SUPERSEDED','WITHDRAWN'))`。这是本文件少数几个有真 CHECK 撑腰的枚举。**但按 §6.3 行 827–829「每一版 `SEALED` revision 发一条事件。`DRAFT` revision 不发事件」，这条事件在实际流里恒为 `SEALED`**——四值枚举里有两个取不到：`DRAFT` 被发送规则排除，`SUPERSEDED` 是**别的事件之后**才发生的状态迁移（新一代 SEALED 产生时把上一代标 SUPERSEDED，§5 行 812「标记旧 revision SUPERSEDED」），而那条迁移不发事件。所以消费方永远收不到「rev 4 已被 rev 5 取代」这件事，见 BRK-3。本文件不把枚举收成常量：DDL 是权威，发送规则是另一层，收紧哪一层都会掩盖另一层。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.2 行 489 + §5.2 行 562（`episode_id text NOT NULL`）+ §5.1 行 534。**它是 envelope `subject` 的唯一可能来源**：§4.2 行 481 写 `\"subject\": \"ep_...\"`，而 payload 里带 `ep_` 前缀的只有这一个字段，所以 subject 与 episode_id 在这里是一致的（与 S06 §4.3 那条不同——S25 的 MRT-1 与 S06 的 SRC-1 都记过 subject 与 payload 脱节的情形）。本文件不强制二者相等（envelope 只要求 `minLength: 1`），但把这条一致性记在这里供消费方核对。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.2 行 489（`\"branch_id\": \"br_...\"`）+ §5.2 行 563 + §5.1 行 535。**本仓库里第一个把 `branch_id` 放进 payload 的 S06 相邻事件**——S06 那条没有它，导致 S09 建不出 `lineage_edge`（SRC-3）。这里带了，所以 S09 能建边。但代价在别处：§5.1/§5.2/§5.3 三张表的主键都不含 `branch_id`（见 BRK-1），于是同一 `breakdown_id` 在多个分支下**指向同一行**，而事件里却声称有个分支——两者对「分支」的承诺不一致。"
+    },
+    "source_script": {
+      "type": "object",
+      "description": "来源：§4.2 行 490（`\"source_script\": {\"script_id\": \"scr_...\", \"revision\": 7, \"content_hash\": \"sha256:...\"}`）。**注意与 §4.1 的 `source_script` 不是同一个形状**：§4.1 行 399–404 的那个有四个键（多一个 `line_set_hash`），本节的只有三个。这不是笔误——§4.1 是查询响应（正文级），§4.2 是事件（只够下游决定要不要去读，行 506）。本文件照 §4.2 收三键，`additionalProperties: false`，所以带 `line_set_hash` 的 §4.1 形状过不了这里。",
+      "properties": {
+        "script_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§4.2 行 490 + §5.2 行 564（`script_id text NOT NULL`）。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：§4.2 行 490（`7`）+ §5.2 行 565（`script_revision integer NOT NULL`）。`minimum: 1` 无 CHECK，语义推断（剧本 revision 从 1 起，§4.1 行 401 的示例也正是 7）。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§4.2 行 490 与 §5.2 行 566（`script_content_hash char(64) NOT NULL`）。**这里与 DDL 一致（裸 hex、64 位），而示例写的是 `sha256:...`**——与 S06 的 SRC-4 同一分歧，见 BRK-4。§6.1 行 816 说明它为什么重要：「`breakdown_revision` 里存下读到的 `script_content_hash`，S08 在提交 manifest 时会再校验一次」——**这个字段是跨服务校验的唯一凭据**，所以它的编码不一致不是风格问题。"
+        }
+      },
+      "required": [
+        "script_id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "scene_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "来源：§4.2 行 491（`\"scene_ids\": [\"scn_...\", \"scn_...\"]`）+ §5.4 `scene_revision` 主键 `(tenant_id, breakdown_id, revision, scene_id)`（行 641）+ §5.3 `scene` 主键 `(tenant_id, scene_id)`（行 609）。语义是「这一版分场包含哪些场」，`uniqueItems: true` 有主键依据（同一 revision 内 `scene_id` 唯一）。**数组的次序没有语义**——叙事顺序在 `scene_revision.scene_order`（行 627），而本事件不携带它；见 BRK-5。本仓库的示例按 `scene_order` 升序排，但契约不保证，消费方不应依赖。",
+      "minItems": 0
+    },
+    "retired_scene_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "来源：§4.2 行 492 + §4.2 行 507（「`retired_scene_ids` 必须发出来。消费方（S06/S09）需要知道哪些场没了，否则它们会保留已经失效的引用。这是本服务唯一一个『删除类』信号」）+ §5.3 行 605–606（`retired_at` / `retire_reason`：`merged_into` / `removed` / `split`）+ §5.3 行 612（`scene_merged_chk`）。**三个语义完全不同的操作被压进了一个数组**：`removed` 是「这个场不存在了」，`merged_into` 是「它并进了另一个场」、`split` 是「它被拆成了几场」——后两者在 S06/S09 侧的正确响应是**重指向**而不是删边。事件没有 `retire_reason`，也没有 `merged_into_scene_id`，所以消费方拿到 `retired_scene_ids` 时无法区分这三种情形，只能一律当作「没了的」。§4.2 给的两条消费方恰好是受影响最深的两个（S06 有 `shot_revision.scene_id` 外键、S09 有 `SCENE_DERIVED_FROM_SCRIPT` 边），见 BRK-2。",
+      "minItems": 0
+    },
+    "requirement_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§4.2 行 493（`\"requirement_count\": 12`）+ §5.2 行 574（`requirement_count integer NOT NULL`，无 CHECK）+ §5.6 `requirement` 主键含 revision（行 698）。**这是整条事件里唯一一个「有 DDL 列、却在 DDL 里也没有下界」的数**，本文件按「计数」语义收 `minimum: 0`（与 S25 的 `eligible_count` / `rejected_count` 同一处理）。它替代了什么：§4.1 的正文里 `requirements` 是完整数组（行 444–451），而事件只给个数——这是 §4.2 行 506「`data` 里只放足以让下游决定要不要去读的字段」的体现。`scene_count` 在 §5.2 行 573 有列，**但事件里没有**，而 `scene_ids` 的长度就等于它，所以不构成缺口。"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§4.2 行 494 + §5.2 行 575（`content_hash char(64) NOT NULL`）+ §5.2 行 579（`UNIQUE (tenant_id, breakdown_id, content_hash)`）+ §4.1 行 464–471（组成：`sha256( JCS({breakdown_id, revision, source_script, scenes, requirements}) || \"\\n\" || line_set_hash_of_span )`，且「不含 `created_at`、`produced_by`、`context`」）。本文件收裸 hex（DDL 是 `char(64)`），见 BRK-4。**这里有一个本仓库其他哈希没有的用法**：它同时是唯一键的一部分（行 579「同一份内容不能出现两版」）。而哈希输入里含 `revision`（行 467）——于是同一份内容在 rev 4 与 rev 6 得到**不同的** `content_hash`，「同一份内容不能出现两版」这句话只在同一 revision 内成立，跨 revision 挡不住。行 591 给的动机却是「用户重复点了一次重新分场」——那种情况恰恰会产生新的 revision。这不影响本事件，但影响 `UNIQUE` 的实际作用，记在这里。"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§4.2 行 495（`\"occurred_at\": \"2026-11-05T09:00:00.000Z\"`）+ §5.2 行 576（`sealed_at timestamptz`）+ 行 582–583（`br_state_sealed_chk CHECK ((state = 'DRAFT') = (sealed_at IS NULL))`）。**DDL 的列叫 `sealed_at`，事件里叫 `occurred_at`**——与 S06 的 `previous_revision` / `parent_revision`（SRC-7）同一类改名。按 `br_state_sealed_chk`，非 DRAFT 的行 `sealed_at` 必须非空，而本事件只发 SEALED，所以 `occurred_at` 就等于 `sealed_at` 且必有值。本文件收必填字符串。`format: date-time` 在本仓库是**声明性的**：没有任何 `FormatChecker` 被安装，所以它不会被真正校验（全仓库既有状态，不是本文件引入）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "breakdown_id",
+    "revision",
+    "state",
+    "episode_id",
+    "branch_id",
+    "source_script",
+    "scene_ids",
+    "retired_scene_ids",
+    "requirement_count",
+    "content_hash",
+    "occurred_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`scene_ids` / `retired_scene_ids` 的次序与元素身份",
+      "demanded_by": "plans/S05-breakdown.md §4.2 行 491–492（两个数组）、§5.4 `scene_revision.scene_order`（行 627）、§3.4 行 334（「重排不推进 `revision`」）",
+      "s05_status": "叙事顺序存在 `scene_revision.scene_order` 里，是 `DEFERRABLE` 的唯一约束（行 642–644），**而事件不携带 `scene_order`**。所以消费方拿到 `scene_ids` 时无法还原顺序：数组次序在 JSON 里存在，但 §4.2 从没说过它按什么排。S03 的 `episode_scene_projection` 有 `scene_ordinal integer NOT NULL`（S03 §2.9 行 394），它必须从某处得到序——而这条事件给不了，只能回源 `GET /episodes/{id}/scenes`。若 owner 决定「数组次序即 `scene_order` 升序」，那要写明它在一版 revision 内是稳定的（重排不推进 revision，所以同一 revision 的两次读取可能给出不同次序——§3.4 行 334 明确允许）。要补需要 owner 定：数组是否有序、按什么排、重排后同一 revision 的事件是否可重发。"
+    },
+    {
+      "field": "`retired_scene_ids` 三种 `retire_reason` 与 `merged_into_scene_id` 是否该进事件",
+      "demanded_by": "plans/S05-breakdown.md §4.2 行 492 与 507、§5.3 行 605–606（`retire_reason text, -- 'merged_into' / 'removed' / 'split'`）、§5.3 行 612（`scene_merged_chk CHECK ((retire_reason = 'merged_into') = (merged_into_scene_id IS NOT NULL))`）",
+      "s05_status": "§4.2 行 507 把 `retired_scene_ids` 称为「本服务唯一一个『删除类』信号」，但库里它对应三种互不相同的操作，其中两种（`merged_into`、`split`）的下游正确响应是**重指向**，不是删除。事件只有一个扁平数组，消费方只能一律当删除处理。`merged_into_scene_id` 在 DDL 里有列、有 CHECK、有自引用外键（行 610–611），却没有进事件。后果见 BRK-2：S06 与 S09 都会因此丢掉本应保留的引用。要补需要 owner 定：是否把 `retired` 从数组改成对象数组（带 `reason` 与可选 `merged_into_scene_id`），若维持数组则要写明「一律当删除」并在两处消费方落地补偿查询。"
+    },
+    {
+      "field": "`content_hash` 与 `state` 在发送规则下的可达取值（枚举该不该收紧）",
+      "demanded_by": "plans/S05-breakdown.md §6.3 行 827–829（「每一版 `SEALED` revision 发一条事件。`DRAFT` revision 不发事件」）、§5.2 行 560–561（四值 CHECK）、§5 行 812（「标记旧 revision SUPERSEDED」发生在写 outbox 之后、不发事件）",
+      "s05_status": "DDL 的四值 CHECK 与发送规则叠在一起，使 `state` 在这条事件上恒为 `SEALED`，`DRAFT` 与 `SUPERSEDED` / `WITHDRAWN` 都取不到。本文件保留四值枚举（DDL 是权威），但这条「枚举与可达集不等」的事实需要 owner 确认是有意的：若有意，schema 可以收成 `const: \"SEALED\"` 并省掉一个永远不成立的校验面；若无意（例如计划还想在 `:withdraw` 时发事件），那 §6.3 的发送规则需要补。同一问题在 `content_hash` 上表现为：它的输入含 `revision`，所以「同一内容不能出现两版」的 `UNIQUE` 只在同一 revision 内成立，见本文件 `content_hash` 的描述。"
+    },
+    {
+      "field": "`scene_id` / `breakdown_id` / `script_id` 的词法与 S05 铸造 `scene_id` 的权威落位",
+      "demanded_by": "plans/S05-breakdown.md §5.3 行 598（`scene_id text NOT NULL, -- 'scn_01J...'，永不复用`）、§11 C4 行 1100（「本文采纳：S05 铸造 `scene_id`……**需要写进 catalog 的 `data_owner` 说明**，否则下一个人还会问」）、plans/S03-project-catalog.md C03-5 与 §2.9 行 393（`scene_id -- S05 铸造`）",
+      "s05_status": "C4 把 `scene_id` 的铸造权威判给 S05，但和 S06 的 C4（`shot_lineage_id`）一样，**结论只写在方案里，没有落进 `service-catalog.v2.json` 的 `data_owner`**，而 C4 自己就写着「否则下一个人还会问」。三个 id 都只有前缀约定（`bkd_` / `scn_` / `scr_`），没有长度或字符集契约。跨服务比对时表现为静默失败而非报错（与 S06 的 SRC-1 第四项、S25 的 MRT-6 同一类）。要补需要 owner 把 C4 落进 catalog，并给出一份共享的 id 词法约定。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "BRK-1",
+      "summary": "事件带 `branch_id`，而 `breakdown` / `breakdown_revision` / `scene` 三张表的主键都不含它——同一 `breakdown_id` 在一个分叉世界里指向一行",
+      "event": "plans/S05-breakdown.md §4.2 行 489：`\"branch_id\": \"br_...\"`——payload 第十个字段就是它",
+      "ddl": "§5.1 行 543：`PRIMARY KEY (tenant_id, breakdown_id)`；§5.2 行 578：`PRIMARY KEY (tenant_id, breakdown_id, revision)`；§5.3 行 609：`PRIMARY KEY (tenant_id, scene_id)`——**三张表，没有一张把 `branch_id` 放进主键**",
+      "indices_instead": "§5.1 行 547–548（`bkd_by_episode ON breakdown (tenant_id, episode_id, branch_id, lifecycle)`）、§5.3 行 615–616（`scene_by_episode ON scene (tenant_id, episode_id, branch_id, retired_at)`）——`branch_id` 只出现在二级索引里，说明它被当成**查询维度**而不是**身份维度**",
+      "sibling": "plans/S06-storyboard.md §5.4 行 686 是 `PRIMARY KEY (tenant_id, branch_id, shot_id)`——S06 把分支放进身份，S05 没放。两个相邻服务对「分支」的承诺不同",
+      "why_it_matters": "这是本文件与 S06 那条事件**互补的同一类缺陷**，方向相反。S06 的表把 `branch_id` 当身份、事件漏了它，于是两个分支撞 outbox 唯一键；S05 把 `branch_id` 放进了事件，但表不把它当身份，于是事件里那个值**无法区分任何东西**。(1) **同一 `(tenant_id, breakdown_id)` 只有一行、一个 `head_revision`、一个 `sealed_revision`**（§5.2 行 578 的主键里没有分支）：分支 B 想基于分支 A 的 rev 4 改出自己的 rev 5，会直接写同一个 `(tenant_id, breakdown_id, 5)` 行，两条分支的 revision 序列**共用一条数字轴**。于是同号 revision 在两条分支里是两份不同内容，而 `UNIQUE (tenant_id, breakdown_id, content_hash)`（行 579）与 `UPDATE breakdown SET head_revision = head_revision + 1 WHERE ... AND head_revision = $parent`（§6.2 行 822）都在跨分支互相干扰——后者的 409 `BREAKDOWN_REVISION_CONFLICT` 会在两条无关分支之间触发。(2) 事件里那个 `branch_id` 因而只是「这次写入时请求方声明的分支」，它既不能作聚合维度（`aggregate_id` 是 `breakdown_id`，行 475），也不能与行对上。**S06 的 SRC-3 说 S09 缺 `branch_id` 建不出边；这里 S09 拿得到 `branch_id`，但那只是事件自己声明的值，它对应的行并不按分支隔离。** 两者合起来说明这套模型里「分支」没有统一定义。要定的是：`branch_id` 是身份维度（那 S05 三张表的主键都要加它，是一次迁移）还是查询属性（那它不该进事件，否则会误导消费方以为可分）。本文件收下这个字段，因为 §4.2 的示例明确写了它；不因此假装身份已按分支隔离。"
+    },
+    {
+      "id": "BRK-2",
+      "summary": "`retired_scene_ids` 是 S05 唯一的删除信号，而 S09 的 `SCENE_DERIVED_FROM_SCRIPT` 边由它自己建、不能由 S05 关——关边的责任没有任何一处指派",
+      "signal": "plans/S05-breakdown.md §4.2 行 507：「`retired_scene_ids` 必须发出来。消费方（S06/S09）需要知道哪些场没了，否则它们会保留已经失效的引用。这是本服务唯一一个『删除类』信号」",
+      "edge": "plans/S09-lineage-impact.md §1.2 行 72：`SCENE_DERIVED_FROM_SCRIPT` | source = S04 script | target = S05 `scene_breakdown` | `field_path` = `null` | **产生方式 = 「S05 事件自报」**",
+      "edge_lifecycle": "plans/S09-lineage-impact.md 行 208（「内容的 revision 变了，旧边 `valid_to = 新水位`……关闭有效期，不改历史行」）、行 515–516（状态机：`上游 revision 前进 → SUPERSEDED`；`对象被删除/tombstone → SUPERSEDED（不物理删）`）、行 898（自检：「`lineage_edge` 中 `valid_to IS NULL` 但 `target_revision` 已不是该对象的最新 revision 的边数」，用于发现「关边漏了」）",
+      "edge_ddl": "plans/S09-lineage-impact.md 行 141–175：`target_id text NOT NULL`、`target_revision integer NOT NULL`、`valid_to bigint`、`PRIMARY KEY (tenant_id, edge_id)`——**边按 `(tenant_id, edge_id)` 唯一，不按 `(source, target)`；且有两个 NOT NULL 的 revision 列**。S05 是这条边的 target 侧",
+      "why_it_matters": "这是本文件里最不容易被 schema 校验发现、后果最长的一条。(1) **边的身份是 S09 自己铸的**（`edge_id`），产生方式是「S05 事件自报」——但 S05 的 payload 里没有任何 `edge_id`，所以 S09 只能自己派生（例如按 `origin_event_id` 或 `(source_id, target_id)`）。S05 无法在后续事件里指名道姓地关掉某条边。(2) **S09 的删除语义要求「对象被删除」这个事实到达它**（行 516），而 S05 的删除信号是**一个 `scene_id` 数组**，不含 `retire_reason`、不含 `merged_into_scene_id`（见 `x-needs-owner` 第二项）。`merged_into` 与 `split` 本该把边重指向新场，S09 收到的是一个「没了」的 id，只能关闭——**重指向的信息在跨越服务边界时被丢掉了**，而它就在 S05 的库里（`scene_merged_chk` 保证 `merged_into_scene_id` 非空当且仅当原因是被合并）。(3) **S09 能自己发现漏关**（行 898 的自检数「`valid_to IS NULL` 但 `target_revision` 已不是最新」），但发现之后它**没有权限修**：关边要按 `edge_id` 更新，而 `target_revision` 停在旧值恰恰意味着它对「最新 revision 是什么」已经没有依据——它得回查 S05 才知道那个 `scene_id` 是否还存在于最新 revision。(4) 事件本身无法缓解：payload 给了 `scene_ids` 与 `retired_scene_ids` 两个集合，**理论上** S09 可以算出「上一版的集合减去这一版」并自己推断删除——但那要求 S09 保留每个 revision 的全量 `scene_ids`，而事件是 `at_least_once` 且 `replay_side_effects: false`，重放时不重建状态。所以正确做法仍是回源，而 §6.5 行 848 把回源条件写成「缺口超时」，不含「收到退役信号」。要定的是：退役信号是否该带 `reason` 与 `merged_into_scene_id`，以及关闭下游边的责任归属（S05 通知 / S09 回源 / S03 投影触发）。"
+    },
+    {
+      "id": "BRK-3",
+      "summary": "`state` 在事件上恒为 `SEALED`，而「旧 revision 变成 SUPERSEDED」这件事从不发事件——消费方永远不知道哪一版已经作废",
+      "emit_rule": "plans/S05-breakdown.md §6.3 行 827–829：「每一版 `SEALED` revision 发一条事件。`DRAFT` revision **不发事件**——草稿不该触发下游」",
+      "supersede_order": "plans/S05-breakdown.md §5 行 806–813（写 outbox 是第 5 步，标记旧 revision `SUPERSEDED` 是第 6 步——**在写 outbox 之后**，且 §6.3 没有为这一步定义事件）",
+      "consumer_rule": "plans/S05-breakdown.md §6.5 行 849：「**终态不倒退**：已 `SUPERSEDED` 的 revision 收到更早的事件不得恢复成当前版本」",
+      "why_it_matters": "§6.5 那条规则预设了消费方**知道**某个 revision 已 `SUPERSEDED`，但按 §6.3 它无从知道：`state` 恒为 `SEALED`，迁移不发事件。于是三条后果。(1) **「终态不倒退」这条规则在事件流上无法实现**——消费方要执行它，必须自己有别的信息源；而 S05 不消费事件、也不推送。S03 的 `episode_scene_projection` 只存 `applied_seq`（S03 §2.9 行 396），配合 T03-30「`applied_seq` 只前进」，于是它靠序号而非状态防倒退——**这恰好能工作，但它是另一套机制，不是 §6.5 说的那套**。(2) **「哪一版是当前版」需要额外一条流**：`breakdown.sealed_revision`（§5.1 行 539）是权威，事件里没有它，所以消费方得按 `(aggregate_id, aggregate_sequence)` 取最大序号——这对**单调到达**成立，而 §6.5 明说不能假设连续、要缓冲 30s；乱序到达时「最大序号」与「最后到达」不同。(3) 与本文件 `state` 字段的枚举叠加：四值里两个取不到，schema 与运行时可达集不等，跨服务文档会各写一套。要定的是：`SUPERSEDED` 迁移是否需要一条事件（或是否把 `sealed_revision` 放进每个 payload），若不需要则 §6.5 那条规则要改成可用序号表达的写法。"
+    },
+    {
+      "id": "BRK-4",
+      "summary": "三个 `sha256:` 前缀哈希：DDL 是 `char(64)`，S09 的 CHECK 是裸 hex，envelope 的 `data_ref` 也是裸 hex——照示例抄，写库与过信封各拒一次",
+      "event": "plans/S05-breakdown.md §4.2 行 490 / 494 / 499：`\"content_hash\": \"sha256:...\"` 三处（`source_script.content_hash`、payload 的 `content_hash`、`data_ref.content_hash`）",
+      "ddl": "§5.2 行 566 / 567 / 575：`script_content_hash char(64) NOT NULL`、`script_line_set_hash char(64) NOT NULL`、`content_hash char(64) NOT NULL`；§5.2 行 569：`context_pack_hash char(64)`",
+      "consumer_check": "plans/S09-lineage-impact.md 行 174–175：`CONSTRAINT edge_hash_shape CHECK (source_hash ~ '^[0-9a-f]{64}$' AND target_hash ~ '^[0-9a-f]{64}$')`",
+      "envelope": "contracts/event-envelope.v2.schema.json 的 `data_ref.content_hash` pattern 是 `^[0-9a-f]{64}$`——**这一处连信封都过不了**",
+      "why_it_matters": "与 S06 的 SRC-4 同一根因，但 S05 这里更严重，因为它命中的是跨服务校验链上最关键的那个值。`char(64)` 插入 71 个字符会被 Postgres 拒绝（`value too long for type character(64)`），所以「照 §4.2 的示例写」在写库那一刻就失败。而 `script_content_hash` 是 §6.1 行 816 明写的跨服务校验凭据（「S08 在提交 manifest 时会再校验一次」）——它的编码一旦不一致，S05 与 S08 的比对要么恒假要么需要一层没人定义的规范化。本文件收裸 hex，与 DDL 及全仓库 37 份用裸 hex 的 schema 一致。**但方案内部的 `sha256:` 写法是自洽的**：§4.1 行 464 的构造式就写 `sha256(...)`，前缀是把算法名显式写出来的做法；缺的是「谁在什么时候剥掉它」。要定的是全仓库统一（裸 hex 已在 37 份 schema 里事实上统一），以及 §4.1/§4.2 的示例要不要跟着改。"
+    },
+    {
+      "id": "BRK-5",
+      "summary": "`scene_ids` 的长度被当成「这一集有多少场」，而重排与退役都不推进它的语义——事件不带 `scene_order`，S03 的投影却有一个必填的 `scene_ordinal`",
+      "event": "plans/S05-breakdown.md §4.2 行 491：`\"scene_ids\": [\"scn_...\", \"scn_...\"]`——扁平数组，无顺序语义",
+      "order_lives_elsewhere": "§5.4 行 627（`scene_order integer NOT NULL, -- 显示用序号，DEFERRABLE 支持重排`）+ 行 642–644（`scene_rev_order_uq UNIQUE (tenant_id, breakdown_id, revision, scene_order) DEFERRABLE INITIALLY DEFERRED`）+ 行 629 / 646（`display_scene` 与 `scene_rev_display_uq`）",
+      "consumer": "plans/S03-project-catalog.md §2.9 行 390–399：`episode_scene_projection(..., scene_ordinal integer NOT NULL, ..., applied_seq bigint NOT NULL)`——**表里有序、且是 NOT NULL**；S03 行 933 说明它由本事件维护",
+      "s03_guard": "plans/S03-project-catalog.md 行 401：「这张表**只用于 UI 树形导航与『这一集有多少场』的统计**。任何业务判断……都必须直接查 S05」",
+      "why_it_matters": "S03 的投影要两样本事件给不了的东西。(1) **序**：`scene_ordinal` 是 NOT NULL，而本事件的消息里唯一的候选就是 `scene_ids` 的数组次序——§4.2 没有一处说它有序。若 S03 真的按数组次序写投影，那它记录的序会在 S05 重排后**永久错误**，因为 §3.4 行 334 明写「重排**不推进 `revision`**」，也就不会有新事件来更正它；而 S03 无从得知何时该回源（§6.4 行 842 只说 S09/S41 有延迟问题，没提 S03）。(2) **退役**：`episode_scene_projection` 的主键是 `(tenant_id, episode_id, scene_id)`，没有任何删除标记列（S03 行 390–398）。收到 `retired_scene_ids` 后，S03 只能物理删行——而它是「可重建，非权威」的投影（S03 行 387），删掉在原则上是允许的，但**它同时是 UI 树形导航与「这一集有多少场」的唯一来源**，删错就直接显示给用户。本文件不改 payload，因为两样信息 S05 都没打算放进事件；要定的是：数组是否有序（见 `x-needs-owner` 第一项）、以及 S03 该不该在收到退役信号时回源而不是直接删。"
+    },
+    {
+      "id": "BRK-6",
+      "summary": "`aggregate_sequence = revision` 会跳号（DRAFT 不发），而 `partition_key` 与 outbox 唯一键都用它——重排与草稿让「序号连续」这个直觉处处不成立",
+      "event": "plans/S05-breakdown.md §4.2 行 484（`\"aggregate_sequence\": 4`）+ §4.2 行 475 与 §6.3 行 831（`aggregate_sequence = revision`，且「revision 3 是 DRAFT 不发，4 是 SEALED 发」）",
+      "outbox": "§5.9 行 763–775：`aggregate_sequence bigint NOT NULL,  -- revision`；`UNIQUE (aggregate_id, aggregate_sequence, event_type)`；`partition_key text NOT NULL  -- tenant_id || ':' || aggregate_id`",
+      "consumer_rule": "§6.5 行 848：「按 `(aggregate_id, aggregate_sequence)` 检测缺口，缓冲最多 30s，超时后回源」",
+      "why_it_matters": "§6.5 把「序号不连续」当成**丢事件**处理，而 §6.3 明说跳号是**正常**的——两者对同一个观测给出相反的诊断。消费方在 30s 缓冲后看到一个空洞（rev 3 缺席），无法区分「rev 3 是草稿，本来就不发」与「rev 3 是 SEALED 但事件丢了」。而这两种情的正确动作不同：前者什么都不用做，后者必须回源。判定需要知道 rev 3 是否存在过、且是否为 DRAFT——两者都不在事件里。S03 的 T03-31（「S05 事件缺口超时 → 回源 S05 `GET /episodes/{id}/scenes`；仍失败则投影标 `stale=true`」）等于每次都回源，代价是常态化的额外查询。**与 S06 那条的对比值得记一笔**：S06 的 `aggregate_sequence` 也是 `revision` 且同样连续（每版都发），所以它没有这个洞；S05 因为「草稿不发」而独有。要定的是：跳号是否需要一个显式标记（例如 `previous_revision` 字段，S06 有而 S05 没有），或 §6.5 的缺口判定要不要改成「按 revision 回源确认状态」。"
+    },
+    {
+      "id": "BRK-7",
+      "summary": "`source_script` 在 §4.1（查询响应）是四键，在 §4.2（本事件）是三键——同名不同形，且丢掉的 `line_set_hash` 正是 `content_hash` 的第二个输入",
+      "event": "plans/S05-breakdown.md §4.2 行 490：`\"source_script\": {\"script_id\", \"revision\", \"content_hash\"}`——**三个键**",
+      "response": "plans/S05-breakdown.md §4.1 行 399–404：`source_script: {script_id, revision, content_hash, line_set_hash}`——**四个键**",
+      "hash_recipe": "§4.1 行 464–469：`sha256( JCS({breakdown_id, revision, source_script, scenes, requirements}) || \"\\n\" || line_set_hash_of_span )`——`line_set_hash` 是独立于 JCS 的第二个拼接项",
+      "ddl": "§5.2 行 566–567：`script_content_hash char(64)` 与 `script_line_set_hash char(64)`——**两列都在，都 NOT NULL**",
+      "why_it_matters": "同一个键名在两个层次上指两个形状，而这正好是本仓库 `additionalProperties: false` 最先会撞上的那类问题：本文件照 §4.2 收三键并拒绝多余属性，所以一个照 §4.1 构造的对象过不了这里。更重要的是丢掉的是什么：`line_set_hash` 是 `content_hash` 的第二个输入（行 468 的 `line_set_hash_of_span`），所以消费方拿到事件后**无法复算** `content_hash`——它只有两个输入中的一个。§4.2 行 506 的理由是「`data` 里只放足以让下游决定要不要去读的字段」，这个理由成立；但成立之后要接受一个后果：`content_hash` 在本事件里是**不可验证的**，消费方只能信。本文件不改形状（三键是 §4.2 的定义），把「同名不同形」与「不可复算」记在这里。要定的是：两个层次的 `source_script` 是否该改名区分，以及是否需要 `line_set_hash` 才能让下游独立核对（否则 `data_ref` 那层校验的意义会降低一档）。"
+    },
+    {
+      "id": "BRK-8",
+      "summary": "§4.2 的信封是完整的（16 个键齐全，与 S06 §4.3 那条相反），偏差只在取值层：`home_cell` / `source` / 时间戳格式与全仓库约定不一致，且 `data_ref.content_hash` 会真的校验失败",
+      "event": "plans/S05-breakdown.md §4.2 行 477–501：示例有 `specversion` / `schema_version` / `id` / `source` / `type` / `subject` / `time` / `tenant_id` / `home_cell` / `aggregate_id` / `aggregate_sequence` / `correlation_id` / `causation_id` / `traceparent` / `data` / `data_ref`——**16 个键齐全**",
+      "deviations": "行 483 `\"home_cell\": \"cell-a1\"`（连字符；其余 36 份带这个键的示例一律 `cell_a1`）；行 480 `\"source\": \"s05.breakdown\"`（全仓库示例一律裸服务号 `S05`）；行 482 / 495 毫秒加 `Z`（其余示例整秒）；行 499 `data_ref.content_hash` 带 `sha256:` 前缀（见 BRK-4）",
+      "c3": "§11 C3 行 1099：「`breakdown.revision.created` 没有 `data` 最小字段集 schema | 新增 `contracts/events/breakdown-revision-created.v2.schema.json`（本文 §4.2）」",
+      "why_it_matters": "与 S06 §4.3 那条（SRC-1）不同，**S05 这份示例的信封是完整的**——16 个键一个不缺，`data_ref` 也在，且 §4.2 行 506 还专门论证了它必须非空。这是本批事件里质量最高的一份示例，值得记一笔。剩下的偏差都是取值层而非形状层：`home_cell` 用连字符、`source` 用点号前缀、时间戳带毫秒、四个哈希带 `sha256:` 前缀。**这四处都不影响 JSON Schema 校验**（`home_cell` / `source` 只有 `minLength: 1`，毫秒与整秒都合 `date-time`），只有 `data_ref.content_hash` 会真的失败（BRK-4）。本示例一律取全仓库的约定值。C3 给的路径 `contracts/events/...` 在本仓库不存在——payload schema 一律平铺在 `contracts/` 下。"
+    },
+    {
+      "id": "BRK-9",
+      "summary": "`content_hash` 的输入含 `revision`，而它同时是 `UNIQUE` 的一部分——「同一份内容不能出现两版」这条约束只在同一 revision 内成立",
+      "constraint": "plans/S05-breakdown.md §5.2 行 579：`UNIQUE (tenant_id, breakdown_id, content_hash)`",
+      "stated_purpose": "plans/S05-breakdown.md §5.2 行 591：「同一份内容不能出现两版。这条会在『用户重复点了一次重新分场、Agent 又给出相同结果』时挡住重复版本，比幂等表更耐久（幂等表 30 天清理）」",
+      "recipe": "plans/S05-breakdown.md §4.1 行 467：`JCS({breakdown_id, revision, source_script, scenes, requirements})`——**输入里第二个键就是 `revision`**",
+      "why_it_matters": "约束与它的动机互相抵消。(1) **重复提交**在 §6.2 行 822 走的是 `head_revision + 1`，所以「用户重复点了一次」产生的是**新 revision**——若其余输入相同，`content_hash` 因为含 `revision` 而不同，`UNIQUE` 挡不住；若 `content_hash` 不含 `revision`，它才挡得住。两者不能同时成立。(2) 所以这条 `UNIQUE` 实际只做一件事：同一 revision 内不允许两行不同内容——而主键 `(tenant_id, breakdown_id, revision)`（行 578）已经保证了同一 revision 只有一行。**在当前主键下这条 `UNIQUE` 是冗余的**，除非将来允许同一 revision 存多个候选（计划里没有这个打算）。(3) 这不影响本事件的可投递性，但它解释了为什么消费方不能拿 `content_hash` 作「这份分场是否见过」的判据。§4.1 行 471 明确 `content_hash` 不含 `created_at` / `produced_by` / `context`——那三个是元数据，而 `revision` 是内容，这个取舍本身合理，只是与那条 `UNIQUE` 的动机不容。要定的是：`UNIQUE` 是否改为不含 revision 的哈希（那需要第二个哈希列），或删掉并把「重复提交」交给幂等表。"
+    }
+  ]
+}
