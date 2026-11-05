@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/delivery.package-published.v2.schema.json",
+  "title": "delivery.package.published payload v2",
+  "description": "event `delivery.package.published` 的 data 部分。定义在 plans/S43-delivery.md §6.3 行 664–678（示例），字段取自 §5 的 `delivery.package` / `delivery.distribution_attempt` / `delivery.publish_authorization_ref` 三张表。**S43 一次发四条事件，本 schema 只覆盖其中一条**：`delivery.package.created` / `delivery.package.sealed` / `delivery.publish.failed` 在 §6.3 只有事件名（行 655），没有任何字段定义或示例——它们的 payload 仍然无契约（见 x-needs-owner 第 2 条）。**`PUBLISHED` 不等于「客户已收到」**（行 220）：它是「渠道已确认接收」；客户签收在 `DeliveryReceipt` 里，可能晚得多，而回执到达**没有任何事件**（见 x-conflicts PDL-3）。事件按 §6.3 行 678 刻意不含签名内容、不含下载链接、不含渠道凭据——下游要签名必须回查 API。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "package_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 668（示例 `dp_...`）与 §5 行 379。**四条发布事件的 `aggregate_id` 都是它**（行 659–660）：`DeliveryPackage` 不可变，一次修正就是新 `package_id`，所以同一个包的事件天然有序、不会被另一个包打断。"
+    },
+    "package_type": {
+      "type": "string",
+      "enum": [
+        "missing_material",
+        "preview",
+        "formal"
+      ],
+      "description": "来源：§5 DDL 行 384–385（`CHECK (package_type IN ('missing_material','preview','formal'))`）。三个值照收——这是本 schema 里唯一有 DDL `CHECK` 依据的闭集。`formal` 包缺签名会被 §3.3 行 247 拒（`SIGNATURE_REQUIRED`），所以能走到 `published` 的 `formal` 包一定签过名，但**签名本身不在事件里**（行 678）。"
+    },
+    "episode_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：§6.3 行 668（示例 `ep_3`）与 §5 行 382。**必须可 null**：DDL 的 `episode_id` 本来就可空，而 §12 未决问题 1 明确说「支持 episode_id 与 series_id 二选一（系列包为多集聚合）」。系列级包在这一条事件里**没有字段能表达 `series_id`**——示例与 §6.3 的字段清单都只画了 `episode_id`。本 schema 因此不能把它定为非空，否则合法的系列包发不出符合契约的事件。见 x-conflicts PDL-4。"
+    },
+    "master_candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 669（示例 `mc_...`）与 §5 行 387（`master_candidate_id text`，注释「S42 候选」）。**这是候选，不是被接受的 master**：「这一集当前的有效 master 是哪版」归 S08（§0 判据），S43 只引用。事件带 candidate id 而不是 accepted pointer，因此消费方不能拿它当「这是当前版本」用。"
+    },
+    "package_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§6.3 行 670（示例 `sha256:...`）与 §5 行 393（`package_hash char(64) NOT NULL`，注释「包的规范哈希（含 items 快照）」）。**用裸 64 位小写 hex，不带 `sha256:` 前缀**——与全部既有 contracts 一致；S43 的示例写作 `sha256:...`，见 x-conflicts PDL-5。**这个哈希的计算公式全文没有写过**：§4.2 只给了 `manifest_hash` 的公式（行 299），`package_hash` 只有一句「含 items 快照」。DDL 行 408 还有 `CREATE UNIQUE INDEX package_hash_uniq ON delivery.package (tenant_id, package_hash)`——同租户内内容相同的两个包会在唯一索引上撞键。"
+    },
+    "manifest_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§6.3 行 670（示例 `sha256:...`）与 §5 行 391（`manifest_hash char(64)`，**可空**）。裸 hex，同 `package_hash`。**这里必须非空**：`published` 是 `SEALED` 的下游（§3.1 行 213 的转移），而 §4.2 第 7 步在写 `SEALED` 的同一个事务里落 `manifest + signature`，所以能 `published` 的包一定已有 `manifest_hash`。公式见 §4.2 行 299：`manifest_hash = sha256(canonical_json(manifest) || canonical_version)`——**规范化版本进 hash**（行 305），换实现即换 hash。"
+    },
+    "channel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 671（示例 `ch_platform_a`）与 §5 行 482（`distribution_attempt.channel_id`）/ 行 517（`delivery.channel`）。`channel.kind` 是 DDL CHECK 的四值闭集（`partner_api` / `ftp_drop` / `object_storage` / `manual_handoff`，行 519–520），但**事件里发的是 `channel_id` 而不是 `kind`**，所以消费方要知道渠道类型得回查。`manual_handoff` 是真实渠道（行 190：人工拷贝也要 `DistributionAttempt` 与回执），不是异常路径。"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 671（示例 `da_...`）与 §5 行 480。**一次外发尝试的 ID，不是包的 ID**：§4.5 行 356「重发同一包 = 新的 `DistributionAttempt`，`package` 不变」。所以同一个 `package_id` 可能先后出现多个 `published` 事件，各自带不同 `attempt_id`——按 `package_id` 去重会丢掉重发事实，重投递去重只能靠 envelope `id`。"
+    },
+    "remote_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§6.3 行 672（示例 `partner_...`）。对应 §5 `delivery.receipt.remote_id`（行 508，**可空**）。**必须可 null**：并非所有渠道都回一个 id——`ftp_drop` 这类一次性投递只给一个落点，`manual_handoff` 给的是人 + 时间 + 去向（行 190）。消费方不能把它当成「渠道已收」的证据：真正的回执是 `DeliveryReceipt`，且在另一张表、另一次写入（见 PDL-3）。"
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§6.3 行 673（示例 `...`）与 §5 行 402（`published_at timestamptz`）。**这是「渠道确认接收」的时刻，不是「客户签收」的时刻**（行 220，见 PDL-3），也不是 envelope 的 `time`（后者是事件产生时间，outbox 重试会让两者错开）。"
+    },
+    "policy_decision_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 674（示例 `pd_...`）与 §5 行 466（`publish_authorization_ref.policy_decision_id`）。**这里只放判定 id，不放判定结论**——§2.2 行 107 的标题就是「授权是引用，不是结论」，行 468 的 `verdict` 与行 467 的 `decision_hash` 都没有进事件。消费方若要确认「当时到底允不允许」必须回查 S02/S43，不能因为收到 `published` 就推断「一定是被授权的」。这条与 S43 不缓存「允许」结论是同一条原则（§1「明确不写」表：策略判定与授权归 S02 / S01）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_id",
+    "package_type",
+    "episode_id",
+    "master_candidate_id",
+    "package_hash",
+    "manifest_hash",
+    "channel_id",
+    "attempt_id",
+    "remote_id",
+    "published_at",
+    "policy_decision_id"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "purpose 的取值域",
+      "demanded_by": "plans/S43-delivery.md §5 DDL 行 386（`purpose text, -- broadcast | archive | review | partner`）",
+      "s43_status": "**只有一句 SQL 行注释，没有 CHECK**。四个值是从注释里读到的，不是数据库约束——`purpose` 列本身是裸 `text`。本 schema **不把它收成 `enum`**，与「取值域只在 DDL 有 CHECK 时才收窄」同一条规矩；`purpose` 也没有进事件（§6.3 的字段清单里没有它），所以本 schema 根本不含这个字段。若要收窄，S43 owner 应在 DDL 加 CHECK，然后事件与 schema 一起补。"
+    },
+    {
+      "field": "`delivery.package.created` / `delivery.package.sealed` / `delivery.publish.failed` 的 payload",
+      "demanded_by": "plans/S43-delivery.md §6.3 行 655（只列事件名）与 §11 C8（已裁决四条全部登记进 `event-topics.v2.json`，但明说「**payload schema 仍缺**」）",
+      "s43_status": "四条事件只有 `delivery.package.published` 有字段清单和示例（行 664–678）。另三条在 §6.3、§4.1–§4.4、§10 的测试清单里都只以名字出现（行 302 提到 `sealed` 供 S45 审计与 S47 更新工作台，行 728 提到 `delivery_package_created_total` 指标），**没有任何一处写出字段**。本批次只做 `published`：从散文推断另外三条的字段名会让 schema 变成 S43 没同意过的契约（AGENTS.md「契约与文档冲突 → 停下」，contracts/README「不从散文推断这些值」）。要补需要 owner 先给出形状。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PDL-1",
+      "summary": "外发尝试的状态机在 DDL 里 6 态，在 §3.2 图里只有 5 态，而 §3.2 最强调的两个态没有任何事件",
+      "s43_ddl": "§5 行 483–485：`CHECK (state IN ('PENDING','IN_FLIGHT','SUCCEEDED','FAILED','UNKNOWN','FAILED_UNRESOLVED'))` —— 六个值，含 `FAILED_UNRESOLVED`",
+      "s43_machine": "§3.2 行 225–231 的图：`PENDING → IN_FLIGHT → SUCCEEDED`、可重试失败 → `IN_FLIGHT`、终态失败 → `FAILED`、未知 → `UNKNOWN`。**没有画 `FAILED_UNRESOLVED`**，它只在 §4.4 行 352 出现（「超过 TTL（如 24h）仍无法确认 → 转 `FAILED_UNRESOLVED` 并告警，不自动重发」）",
+      "s43_events": "§6.3 行 655 只发包的四个状态事件，**尝试级的 six 态一个事件都不发**",
+      "why_it_matters": "§3.2 行 233 说「`UNKNOWN` 是独立状态，不是失败。这是本服务最容易做错的地方」——但下游完全看不见它。只收到包级事件时，一个 `UNKNOWN` 的尝试与一个还在 `IN_FLIGHT` 的尝试**在事件流里长得一样：什么都没有**。S47 的交付进度看板因此会把「可能已送达、正在对账」显示成「还在发」。更要紧的是 §12 未决问题 4 明说要给 S47 加一个「待人工确认的外发」队列，而队列的输入 `FAILED_UNRESOLVED` 没有任何事件能推过来——只能靠 S47 反向轮询 S43 的 `GET /delivery-packages/{id}/attempts`（§6.2 行 649），这与 S22 为 UI 提供事件流而非高频轮询的设计取向相反。要定的是：尝试级状态是否发事件（若发，`FAILED_UNRESOLVED` 才有人能排进人工队列）。"
+    },
+    {
+      "id": "PDL-2",
+      "summary": "事件同时带 package_hash 与 manifest_hash，但只有一个写了计算公式，且两者哈希的对象不同",
+      "s43_manifest": "§4.2 行 299：`manifest_hash = sha256(canonical_json(manifest) || canonical_version)`，manifest 的内容在行 296–298 定死（按 role, ordinal 排序；每项 role / artifact_ref / content_hash / byte_size / mime / locale；**排除自身 manifest 项**）",
+      "s43_package": "§5 行 393：`package_hash char(64) NOT NULL, -- 包的规范哈希（含 items 快照）`。**全文没有给出它的算式**",
+      "why_it_matters": "两个字段名字都像「这个包的哈希」，但算的**不是同一个对象**：`manifest_hash` 是规范化后的 manifest（已排序、已排除自身），`package_hash` 按注释含 items 快照。消费方拿任一字段都无法复算：`manifest_hash` 缺 `canonical_version`（要另外取）、`package_hash` 缺公式。于是「收到事件后独立验证包没被改过」这件事在契约层做不到——而这正是交付域存在的理由（§0「可验证的交付物」，§2.3 的完整性与 E37 都落在这里）。§4.2 行 305 已经点明规范化版本必须显式版本化，「否则同一清单在不同版本服务上算出不同 hash」，但同样的要求没有施加到 `package_hash` 上。要定的是：`package_hash` 的算式，以及它是否就是 `manifest_hash` 的别名——若是别名，两个字段没有必要同时发；若不是，两个都要能复算。"
+    },
+    {
+      "id": "PDL-3",
+      "summary": "PUBLISHED 明说不是「客户已收到」，而回执到达没有任何事件",
+      "s43_state": "§3.1 行 220：「`PUBLISHED` **不是**「客户已收到」。它是「渠道已确认接收」。客户签收在 `DeliveryReceipt` 里，可能晚得多」",
+      "s43_receipt": "§5 行 502–513 `delivery.receipt` 表（`acknowledged_at` / `signature_valid` / `raw_ref`）；§4.3 行 325 `SUCCEEDED → package PUBLISHED + receipt`；§4.4 行 349「对账后确认渠道已收 | 成功 | 补登 `SUCCEEDED` + receipt」",
+      "s43_events": "§6.3 行 655 的四条发布事件里**没有回执事件**",
+      "why_it_matters": "「已发布」与「已交付」是两个事实，事件流只能表达前者。对账补登的路径尤其危险：行 349 的 receipt 是在**事后**（可能几天后）写进去的，此时包早已处于 `PUBLISHED`，**不会再发任何事件**——下游不知道状态改变了。再加上 `published_at` 是渠道确认时刻而不是签收时刻（字段说明已记），消费方唯一能拿到的时间锚点是错的量。S47 要显示「交付进度」（§6.3 行 655 的用途、plans/S47 行 84）、S45 要存「谁在什么时候发了什么」的审计链（§0），两者都需要区分「发出去了」和「对方收了」。契约层现在无法区分。要定的是：回执是否需要一条事件（additive，不改现有四条）。"
+    },
+    {
+      "id": "PDL-4",
+      "summary": "系列级交付包在 §12 里是被支持的，但这条事件只有一个 episode_id，装不下 series_id",
+      "s43_open": "§12 未决问题 1：「一次交付 24 集，是 24 个包还是 1 个系列包？本方案支持两者，但清单结构与签名对象需要明确」；§11 C7 同一条（「本方案支持 `episode_id` 与 `series_id` 二选一（系列包为多集聚合）」）",
+      "s43_ddl": "§5 行 381–382：`series_id text NOT NULL` / `episode_id text`（可空）—— 表结构确实支持系列包",
+      "s43_event": "§6.3 行 664–676 的 `data` 只有 `episode_id`，**没有 `series_id`、也没有 `branch_id`**（后者同样是 DDL 行 383 的列）",
+      "why_it_matters": "DDL 能存系列包，事件却表达不出来。一个系列级包发布时 `episode_id` 只能是 `null`，消费方看到的是「一个没有剧集的已发布包」——既不知道它属于哪个系列，也不知道它是系列包还是数据异常。本 schema 因此把 `episode_id` 定为可空（不放宽会拒掉合法数据），但这只是让事件**发得出去**，没有解决**信息缺失**。§12 这条未决问题落地时会直接决定事件形状：若系列包成立，`series_id` 必须进事件，`episode_id` 的语义（null = 系列级，还是 null = 未定）也要一并写清。"
+    },
+    {
+      "id": "PDL-5",
+      "summary": "S43 的示例把哈希写成 `sha256:...`，DDL 的列是 `char(64)`，contracts 一律用裸 hex",
+      "s43_examples": "§6.3 行 670（`\"package_hash\":\"sha256:...\"`、`\"manifest_hash\":\"sha256:...\"`）；全文 9 处 `sha256:`（行 114、587、591、602、603、620、623、670）",
+      "s43_ddl": "§5 行 391 `manifest_hash char(64)`、行 393 `package_hash char(64)`、行 420 `content_hash char(64)`、行 467 `decision_hash char(64)`、行 534 `request_hash char(64)`——**`char(64)` 装不下 `sha256:` 前缀**（71 字符）",
+      "contracts": "本批与既有全部 payload schema 都收 `^[0-9a-f]{64}$`（裸小写 hex），例如 `review.decision-recorded.v2.schema.json` 的 `pack_hash`、`artifact-ingested.v2.schema.json` 的 `content_hash`",
+      "why_it_matters": "示例里的 `sha256:` 是写给人看的占位写法，不是线上值——DDL 的 `char(64)` 已经排除了带前缀的可能。本 schema 收裸 hex，所以**照抄示例的程序会产出校验失败的数据**。这不是 S43 独有：plans/ 下 20 个文件共 90 处 `sha256:` 前缀，而 contracts 一处都没有。全局统一到裸 hex 是既有事实，S43 的示例文本需要作者自己订正（`docs/design-package/` 只读，plans/ 可改）。"
+    }
+  ]
+}

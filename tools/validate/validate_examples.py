@@ -36,6 +36,7 @@ SCHEMA_OF = {
     "artifact-ingested": "event-envelope.v2.schema.json",
     "automation-policy": "automation-policy.v2.schema.json",
     "context-pack": "context-pack.v2.schema.json",
+    "delivery-package-published": "event-envelope.v2.schema.json",
     "enterprise-change-plan": "enterprise-change-plan.v2.schema.json",
     "episode-manifest": "episode-manifest.v2.schema.json",
     "execution-context": "execution-context.v2.schema.json",

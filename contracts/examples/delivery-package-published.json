@@ -1,0 +1,31 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG5T0U1V2W3X4Y5Z6A7B8C9",
+  "source": "S43",
+  "type": "delivery.package.published",
+  "subject": "dp_01JBG5V1W2X3Y4Z5A6B7C8D9E0",
+  "time": "2026-11-06T14:20:05Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "dp_01JBG5V1W2X3Y4Z5A6B7C8D9E0",
+  "aggregate_sequence": 3,
+  "correlation_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+  "causation_id": "cmd_01JBG5W2X3Y4Z5A6B7C8D9E0F1",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "package_id": "dp_01JBG5V1W2X3Y4Z5A6B7C8D9E0",
+    "package_type": "formal",
+    "episode_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+    "master_candidate_id": "mc_01JBG5X3Y4Z5A6B7C8D9E0F1G2",
+    "package_hash": "9d2c4b8e1f70635a4c2e8d0f1b3a5c79e2d4f6081a3b5c7d9e0f2a4b6c8d1e35",
+    "manifest_hash": "4a7f1c3e9d2b5068f14a3c7e0d5b9286c3f1a4e7d0b2c5869f3a1d4e7b0c2958",
+    "channel_id": "ch_platform_a",
+    "attempt_id": "da_01JBG5Y4Z5A6B7C8D9E0F1G2H3",
+    "remote_id": "partner_9f31c4a7",
+    "published_at": "2026-11-06T14:19:58Z",
+    "policy_decision_id": "pd_01JBG5Z5A6B7C8D9E0F1G2H3J4"
+  },
+  "data_ref": null
+}
