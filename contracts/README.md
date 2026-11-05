@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 28 个 topic 带**（27 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 29 个 topic 带**（26 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -93,6 +93,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `memory.canon.committed` | `memory.canon-committed.v2.schema.json` | S16 §3.7 |
 | `snapshot.manifest.committed` | `snapshot.manifest-committed.v2.schema.json` | S08 §6.1 |
 | `lineage.impact.computed` | `lineage.impact-computed.v2.schema.json` | S09 §5.4 |
+| `asset.binding-set.created` | `asset.binding-set-created.v2.schema.json` | S10 §5.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -373,6 +374,51 @@ false`、字段与 §5.2 的同步响应几乎完全重叠（`analysis_hash` / `
 （LNI-7）。`superseded_claim_refs` 则与 S16 同名数组同形同 `content_hash` 语义，可复用，但 revision
 的所指不同、且 S09 的分析最多滞后 30 分钟（LNI-8）。
 
+`asset.binding-set.created`（S10）是**第八类的一次新变体：payload 形状是全的，但它的哈希
+没有可哈希的对象**。七个字段在 §5.3 行 609–614 全有示例值，`entry_count` 与
+`owner_service_counts` 之和还互相对得上——这份 schema 的困难不在抄形状，而在它引用了一个
+仓库里不存在的契约。`binding_set_revision.content_hash = sha256(JCS(payload))`（DDL 行 186）
+中的 `payload` 按 DDL 注释是「完整 binding-set.v1」，而 §11.1 行 816 把
+`contracts/assets/binding-set.v1.schema.json` 列为「**必须先于任何服务代码**」的产出——今天
+`contracts/assets/` 这个目录都不存在。JCS 能规范化键序和数字格式，规范化不了一个还没定义的
+字段集，所以 `content_hash` 今天是**对一份未冻结文档的哈希**，而这个 hash 要经
+`binding_set_ref` 进 `episode-manifest.v2` 当整集溯源的锚点（ABS-1）。这大概是全仓库最诚实的
+一处缺口：S10 自己写了「契约先行」，只是那个文件从未被建出来。
+
+`rights_revision_set_hash` 是同一片区域的第二个洞，形态不同：**哈希有字段，算法没出处**。
+DDL 行 190 只说 `rights_pointer_set` 是「去重后的 `[{rights_owner,rights_id,rights_revision,
+rights_hash}]`」，不说去重键是四键全等还是 `(rights_owner, rights_id)`、也不说哈希输入是
+数组整体 JCS 还是只取 `rights_hash` 排序拼接。而 §8.5 的 E30-A3 要求「`rights_revision_set_hash`
+与 S02 记录的 hash 不一致 → S02 判 `RIGHTS_REVOKED` 或重新取 binding revision」——**两方必须
+独立算出同一个值**。算法不同则这条验收项稳定判「不一致」，于是 S02 要么永远拒绝派单（安全但
+瘫痪），要么永远多一次回查（贵，且真撤销被掩盖）。方向上它和 C10-4 / C10-6 是同一片区域：
+那两条解决了「`rights_ref` 的形状」和「权利版本放进 `content_hash` 所以 manifest 间接固定」，
+**没有一条解决「怎么算」**（ABS-3）。
+
+第三个洞是消费方侧的，方向和 ATC/LNI 相反。C10-3（§10 行 804）写「`event-topics.v2.json`
+只登记 `asset.binding-set.created`……但 S07/S09 需要感知绑定变化」，而实际：S09 §5.4 行 790
+订阅的名字是 **`asset.binding.changed`**——55 个 topic 里没有这个名字；S07 §5.6 的消费表只有
+三条（S08/S02/S16），全文 `asset.binding` 零命中。于是 S09 按名字订阅会**永远收不到**绑定变化，
+`ASSET_BINDING` 边在「换素材」这条路径上不写；就算它改订 `created`，payload 里也没有条目级的
+引用细节（只有 `entry_count` 与按 owner 的计数），建不出具体的边。这和 S09 的 LNI-1 是镜像：
+那边是「发了没人收」，这边是「有人要收、收了个不存在的名字」（ABS-2）。C10-3 只提 S07/S09
+要感知，从没点名 S09 订阅的名字，所以这处不一致谁都没登记过。
+
+剩下四处较小的：`entry_count` 数的是 overlay（`binding_entry`，草稿层）还是展开结果
+（`binding_expansion`），事件里看不出来，而两者在 scope 复用下差一个量级（一条
+`scope_kind='series'` 的 entry 展开成 40 个镜头）——示例的 6 与 `owner_service_counts` 之和
+相等，恰好把两种解释都圆住了（ABS-4）；`superseded_revision` 照示例收成必填，而首次封存时
+`head_revision` 还是默认 0、事务第 6 步 `UPDATE 旧 revision SET state='SUPERSEDED'` 无事可做，
+于是**每个 binding set 的第一个 revision 都会被这份契约拒**——这是「首版状态装不下」的第四次
+出现（SMC-4 的 `parent_manifest_ref`、MSC-3 的 `branch_init`、LNI 的 `seed_ref` 之后）（ABS-5）；
+`aggregate_id` 在正文写作 `tenant_id:binding_set_id`、在 catalog 写作 `tenant_id:aggregate_id`、
+示例里叫 `bs_01J...`，三处能对齐但写法不同，而 outbox 的
+`UNIQUE (aggregate_id, aggregate_sequence, event_type)` 与 `aggregate_sequence = revision` 组合
+起来**这里反而是安全的**——`state` 只有 `SEALED`/`SUPERSEDED` 两态且后者不另发事件，所以
+S08 的 SMC-1 那个「同一 revision 发两条」的问题在 S10 不存在（ABS-6）；`episode_id` 在方案集里
+写成 `ep3`（S10）、`ep003`（S09）、`manifest_ep3`（S08），词法从没被定义过，示例层面无害、
+跨服务 join 会静默落空（ABS-7）。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -474,8 +520,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 28 个 payload schema
-                                                              （见上表；其余 27 个 envelope-only）
+                                        └──data_schema_ref──▶ 29 个 payload schema
+                                                              （见上表；其余 26 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -488,11 +534,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 28 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（96 个 JSON 解析）、`payloads`（84 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 29 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（44 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（45 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -544,7 +590,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：44 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：45 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

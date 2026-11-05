@@ -1,0 +1,39 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBE4K7M3P5R7T9V1X3Z5B7D9",
+  "source": "S10",
+  "type": "asset.binding-set.created",
+  "subject": "binding-set/bs_01JBE4H2C8F4J7M1Q5T9W3Z6B0",
+  "time": "2026-11-06T10:02:17Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "bs_01JBE4H2C8F4J7M1Q5T9W3Z6B0",
+  "aggregate_sequence": 7,
+  "correlation_id": "cmd_01JBE4G1B7E3H6K0N4R8V2Y5Z9",
+  "causation_id": "cmd_01JBE4F0A6D2G5J9M3Q7U1X4Y8",
+  "traceparent": "00-3c8e1f4a6b9d2e5c8f1a4b7d0e3c6f9a-3c8e1f4a6b9d2e5c-01",
+  "data": {
+    "schema_version": "2.0",
+    "binding_set_ref": {
+      "service_id": "S10",
+      "id": "bs_01JBE4H2C8F4J7M1Q5T9W3Z6B0",
+      "revision": 7,
+      "content_hash": "a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9"
+    },
+    "series_id": "series_demo",
+    "episode_id": "ep3",
+    "branch_id": "canon",
+    "entry_count": 6,
+    "owner_service_counts": {
+      "S11": 2,
+      "S12": 1,
+      "S13": 1,
+      "S14": 1,
+      "S15": 1
+    },
+    "rights_revision_set_hash": "f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3",
+    "superseded_revision": 6
+  },
+  "data_ref": null
+}
