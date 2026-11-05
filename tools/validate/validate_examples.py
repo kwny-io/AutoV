@@ -31,6 +31,7 @@ EXAMPLES = os.path.join(CONTRACTS, "examples")
 # Example file stem -> schema file name. None means "structure only, no schema",
 # which is a deliberate state and not a failure.
 SCHEMA_OF = {
+    "access-grant-changed": "event-envelope.v2.schema.json",
     "admission": "admission-record.v2.schema.json",
     "admission-unknown": "admission-record.v2.schema.json",
     "agent-task-completed": "event-envelope.v2.schema.json",

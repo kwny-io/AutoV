@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 30 个 topic 带**（25 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 31 个 topic 带**（24 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -88,6 +88,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `connector.observation.received` | `connector.observation-received.v2.schema.json` | S27 §6.5 |
 | `continuity.check.completed` | `continuity.check-completed.v2.schema.json` | S17 §5.2 |
 | `context.pack.created` | `context.pack-created.v2.schema.json` | S18 §6.3 |
+| `access.grant.changed` | `access.grant-changed.v2.schema.json` | S01 §4.4 / §11 C10 |
 | `agent.task.completed` | `agent.task-completed.v2.schema.json` | S19 §4.3 |
 | `prompt.compiled` | `prompt.compiled.v2.schema.json` | S20 §4.3 |
 | `memory.canon.committed` | `memory.canon-committed.v2.schema.json` | S16 §3.7 |
@@ -461,6 +462,58 @@ S08 的 `:commit` 响应里没有它（§4.4 行 615–630），S16 也不在 S0
 （CPG-8）。最后 `saga_id` 在 DDL 可空（行 134，没有 `cp_applied_has_saga`）、在事件必填——
 「`APPLIED` 时非空」是读状态机读出来的推断，与 LNI-5 同类（CPG-7）。
 
+### `access.grant-changed.v2.schema.json`：形状最扎实的一份，坏的全在「一个事件背四种语义」
+
+S01 只发这一个事件（§4.4 行 564），而它有八个消费方。14 个字段里三个闭集（`state`、
+`effect`、`scope_kind`）**每一个都有 DDL 的 `CHECK` 撑腰**（§5.6 行 752–760），是本批契约里
+形状最牢的一份——所以这次的问题不在「字段从哪来」，而在**这个形状同时承担了四种撤销**：
+grant 级 `:revoke`、principal 级 `:offboard`、IdP 组 diff、租户级 `:suspend`（§3.4 行 305–310）。
+四种语义共用一份 payload，于是每种都缺一格填不进去的字段，而消费方也分不出自己收到的是哪一种。
+
+最硬的一条是 **AGC-1**：离职广播按 §3.4 行 308 要让「该主体全部 grant 失效」，写成一个事务就是
+N 行 `role_grant` 各 `+1`、各写一行 outbox；因为 `aggregate_id = grant_id` 且 partition key 是
+`tenant_id:aggregate_id`（§5.9 行 941），这 N 条事件落在 **N 个不同分区**，跨分区无序，而
+`at_least_once` 还会重放。行 561 的设计意图是「任意一条相关事件到达就更新 epoch」，可**合并规则
+（epoch 取 max）全仓库没有写过一处**；按到达顺序覆盖的实现在乱序时会把 epoch 写回小值，而
+§3.2 第 5 道检查是 `TCT epoch ≥ 本地缓存`——本地被写小之后，一条**已被撤销**的 TCT 重新通过。
+这是 fail-open，不是「慢」。（C8 只承认了「从未有 grant 的租户挂起不发事件」这一条代价，
+没承认「从未有 grant 的 principal 离职」同样零事件，而广播的前提正是有 grant 可广播。）
+
+**AGC-2** 是同类：S19 §5.5 行 715 说「拿 `access.grant.changed` 的 grant revision 与这个
+epoch 比对」，可 `grant_revision` 是单条 grant 内 1..3 的版本号，`tenant_revocation_epoch` 是
+租户级 812 级别的计数——两套量纲，任何比较都无意义，而 E39 的「操作链可证明」压在这上面。
+**AGC-3**：事件的 `changed_by` 只有两键，DDL 的 `granted_by`/`revoked_by` 是四键，丢掉的
+`source` 恰好是 §3.1 行 253 那条不变量的判据（「手工授予的 grant 绝不被登录路径改动」的条件
+就是 `granted_by.source = 'idp_group'`），而 S45 §1 行 160 明写它不反向依赖这些服务，回源的路
+对审计是关着的。**AGC-6**：挂起与终止都 bump `tenant.revocation_epoch`，事件里**没有任何字段
+携带 `tenant.lifecycle`**，于是 S23 §6.2 行 1188 的「撤销租户 → 释放该租户全部 RESERVED」会把
+一次**挂起**当成终止——而 §3.4 行 316 恰恰要求挂起期间运营人员能查账。
+
+**AGC-4** 是同一形态的第四次（前三次：S08 SMC-4、S09 MSC-3、S10 ABS-5）：示例画的是 revision 2，
+而 §4.4 行 560 明写序列是 `1(granted) → 2(revoked)`——**revision 1 就是创建**，没有前态可填
+`previous_state`，而本契约把它收成必填。前三次的后果是「某个生命周期阶段不可表达」，这次更重：
+新建 grant 是 `POST /access-grants` 与 JIT 首次登录两条**日常热路径**，不是边界情形。
+
+**AGC-5**：`reason` 是自由文本，对应 DDL 列却叫 `revoke_reason`（名字不同、无 `CHECK`、无注释），
+而同方案的 `reason_code` 是另一套大写下划线闭集——三套形态并存。更实质的是它允许人写字，而
+catalog 对这个 topic 声明 `pii_payload: references_only_by_default`：声明说只带引用，字段却在
+带散文，14 天保留期内所有订阅方都能读到。
+
+**AGC-7** 收四处命名漂移，其中两处是空操作级的：S23 §6.3 行 1206 的 `grant.revision` 在本事件里
+不存在（payload 是扁平 `grant_revision`，没有 `grant` 子对象），按字面取值得到 `undefined`，
+「旧版本丢弃」于是在任何语言里都恒真或恒假；S22 的 T22-50 前提里那个「池定义版本」也不在本事件里
+——这条 `[E18]` 用例因此**不验证任何东西**。另外 §4.4 示例的 `source: "s01.tenant-access"`、
+`home_cell: "cell-a1"`（32/32 其余示例是 `cell_a1`）、`.000Z` 毫秒时间（30/30 其余是秒精度）
+三处都在 envelope 的裸 `minLength: 1` 下无法被拦。**C10（行 1310）要求写到
+`contracts/events/access-grant-changed.v2.schema.json`，而那个子目录不存在**，本仓库 31 份
+payload schema 全部平铺在 `contracts/` 下且用点号分隔——本文件按既有约定取名，这条偏离记在
+AGC-7 里，因为文档指定了一处与全仓库不一致的位置，按 AGENTS.md 应当报告而非默默选边。
+
+13 条负向探针复核了这个 schema 的实际约束面：`previous_state` 缺席被拒、四键 `changed_by` 被拒、
+`tenant_lifecycle` 无法外挂、`grant.revision` 路径被拒、`scope_kind: "episode"` 被拒（DDL 上界是
+`series`）、`role_revision` 无法外挂；而自由文本 `reason`、deny-撤销与 allow-撤销同形、
+`grant_revision: 1` 三者都被接受——正是上面几条缺口的形状。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -562,8 +615,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 30 个 payload schema
-                                                              （见上表；其余 25 个 envelope-only）
+                                        └──data_schema_ref──▶ 31 个 payload schema
+                                                              （见上表；其余 24 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -576,11 +629,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（98 个 JSON 解析）、`payloads`（85 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 30 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（100 个 JSON 解析）、`payloads`（86 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 31 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（46 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（47 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -632,7 +685,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：46 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：47 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

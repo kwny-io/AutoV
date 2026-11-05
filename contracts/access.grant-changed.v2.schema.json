@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/access.grant-changed.v2.schema.json",
+  "title": "access.grant.changed payload v2",
+  "description": "event `access.grant.changed` 的 data 部分。权威定义在 plans/S01-tenant-access.md §4.4（行 518–564，14 个字段的示例 + 三条设计要点）、§3.4（行 300–316，四级撤销传播）、§5.6（行 756–790，`role_grant` DDL）、§5.9（行 936–947，outbox DDL 与唯一约束）、§11（行 1298–1312，C1..C13）、§12（行 1315–1326，U1..U4）。**这条事件是 S01 唯一的事件**（§4.4 行 564：「本服务**只发这一个事件**」），却有 8 个消费方（S02 §4 行 720、S08 §5.6 行 681、S19 §5.5 行 715、S22 §5 行 793、S23 §6.2 行 1188、S28 行 833、S40 行 653、S45 行 1127、S46 行 1009）——它是整个权限体系唯一的失效通道。形状本身与 DDL 对得上（`state`/`effect`/`scope_kind` 三个闭集都有 `CHECK`），问题集中在一处：**它用「任何一个字段变化都广播同一份形状」来覆盖四种语义完全不同的撤销**（grant 撤销 / 主体离职 / IdP 组差异 / 租户挂起终止），于是有些字段在某些语义下无值（AGC-4、AGC-5）、有些字段带了却区分不出语义（AGC-6）、有些字段的合并规则没人定（AGC-1），而两个消费方对同一个字段名的理解不一致（AGC-2、AGC-7）。文件按本仓库既有约定平铺在 `contracts/` 下；S01 §11 C10（行 1310）要求的路径是 `contracts/events/access-grant-changed.v2.schema.json`——那个子目录在全仓库不存在，见 AGC-7。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§4.4 的示例未画这一项，按 contracts 既有 payload 约定补。"
+    },
+    "grant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.4 行 539（示例 `\"grn_...\"`）+ §5.6 DDL 行 749（`grant_id text NOT NULL,            -- 'grn_01J...'`）+ 主键 `(tenant_id, grant_id)`（行 773）。**与 envelope 的 `aggregate_id` 是同一个值**（§4.4 行 520：「`aggregate_id = grant_id`」），所以它在本事件里是**冗余的**——但冗余是有意的：`aggregate_id` 是 envelope 概念，消费方若把 payload 单独落库（S45 审计、S19 的 `tool_call_audit` 引用），需要一个不依赖 envelope 字段名的自足记录。§5.9 的 outbox DDL 注释（行 939）也把它写成 `aggregate_id text NOT NULL,  -- grant_id`，即发布侧本来就当同一个值用。"
+    },
+    "grant_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.4 行 540（示例 `2`）+ §5.6 DDL 行 765（`grant_revision integer NOT NULL DEFAULT 1`）+ §5.6 行 790（「`grant_revision` 每次状态变化 +1，作为 `aggregate_sequence`」）。**`minimum: 1`**：DDL 的默认值是 1，没有 `CHECK` 约束下界，但一个 revision 为 0 的 grant 无法对应 §4.4 行 560 写明的顺序「`1(granted) → 2(revoked)`」。**它与 envelope 的 `aggregate_sequence` 是同一个数**（行 520：「`aggregate_sequence = grant_revision`」），与 S08 的 `snapshot.manifest.committed`、S10 的 `asset.binding-set.created` 同一形态——这不是缺陷，envelope 的 sequence 是排序凭据、payload 的 revision 是业务版本，两者恰好相等而语义不同。**但消费方对它的用法不一致**：S23 §6.3 行 1206 写「以 `grant.revision` 为准，旧版本丢弃」（字段名是 `grant_revision`），而 S19 §5.5 行 715 拿它去和 `revocation_epoch` 比对——那是另一套计数器。见 AGC-2 与 AGC-7。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "revoked",
+        "expired"
+      ],
+      "description": "来源：§5.6 DDL 行 759–760（`state text NOT NULL CHECK (state IN ('pending','active','revoked','expired'))`）+ §4.4 行 541（示例 `\"revoked\"`）。**这是本文件里少数有 DDL `CHECK` 支撑的闭集之一**，所以照抄成 `enum` 而不是自由字符串（`contracts/README.md` 的约定：只有 DDL 有 `CHECK (... IN (...))` 才收成闭集）。四个值都有真实迁移路径：`pending` 是 JIT 建 principal 后尚未首次登录（§3.1 第 ④ 步）、`active`、`revoked` 是 `:revoke`、`expired` 是登录时 IdP 组 diff 发现组已不在（§3.1 第 ⑤ 步：「组已不在 → `state='expired'`」）或 `valid_until` 到期（`role_grant_expiry_idx`，行 786–789）。**`expired` 与 `revoked` 是两条不同的写路径**，而事件对这两者的字段填充要求完全相同——这是 AGC-3 与 AGC-5 的根源。"
+    },
+    "previous_state": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "revoked",
+        "expired"
+      ],
+      "description": "来源：§4.4 行 542（示例 `\"active\"`）。**DDL 里没有这一列**——它是从 `grant_revision - 1` 的那次状态推出来的，或者由写路径在内存里带着。**首条事件无法填它**：§4.4 行 560 明确写了顺序「`1(granted) → 2(revoked)`」，即 revision 1 就是「条目被创建」这条事件，而创建之前没有状态可填。§4.4 的示例是 revision 2（`active → revoked`），恰好又是「中间版本」，把这个情形掩掉了。本文件照示例收成必填，因此**每条 grant 的第一个事件在本契约下无法表达**——这是同一形态的第四次出现（S08 SMC-4、S09 MSC-3、S10 ABS-5，此处 AGC-4）。收必填是照 §4.4，代价是拒掉一个必然发生的事件；拒是可观测的（好），但拒错了对象。"
+    },
+    "subject_principal_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.4 行 543（示例 `\"prn_...\"`）+ §5.6 DDL 行 750（`subject_principal_id  text NOT NULL`）+ 外键 `(tenant_id, subject_principal_id) → principal`（行 774–775）。**这是本事件对 8 个消费方里至少 4 个最关键的一个字段，却只存在于 payload、不在 envelope**：S08 行 681（「撤销的 principal 立即失去写权限」）、S22 行 793（「撤销的租户/principal → 其 `WAITING` 队列项 `CANCELLED`」）、S40 行 653（「票失效」）、S45/S46 的判定缓存（按 `source_revision` 失效）都是**按 principal 索引**的，而 envelope 的 `subject` 是 `prn_...`（principal）却只是个字符串、`partition_key` 是 `tenant_id:aggregate_id`（grant）——于是按 principal 分区的消费者拿不到分区键，只能读 payload。见 AGC-2。"
+    },
+    "role_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.4 行 544（示例 `\"director\"`）+ §5.6 DDL 行 751 + 外键 `(tenant_id, role_key) → role`（行 776–777）。**这是「这个撤销拿走了什么权限」的唯一线索，而它是个引用不是展开**：§4.4 行 562 明说「大负载（例如完整角色定义）不发事件——消费侧需要时回源 `GET /roles/{role_key}`」。所以一个收到本事件的服务若要判断「这次撤销是否影响我正在做的事」，必须**同步回源**——而事件的高峰恰好是「撤销」，回源的高峰恰好也是「撤销」，这是 §3.2 第 ⑥ 道的 5s 硬上限回源之上的第二次回源。§4.4 没提这个放大，但它是设计要点 3 的直接推论，不是新缺口。**角色定义本身是可变的**（`role` 表的 `permission_keys` 可改），而事件里没有 `role_revision`——回源拿到的可能是撤销之后已经改过的版本，于是「这个 grant 当时能做什么」不可复现。这一条与 AGC-2 的 E39 诉求同源，一并记在那里。"
+    },
+    "effect": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ],
+      "description": "来源：§5.6 DDL 行 752（`effect text NOT NULL CHECK (effect IN ('allow','deny'))`）+ §4.4 行 545（示例 `\"allow\"`）。**有 `CHECK` 支撑的闭集，照抄。** 它的意义在 §3.3 的四条写死规则里：deny 优先且沿祖先链向下继承（「在 `project` 上 deny 一个 permission，`series` / `episode` 上同名 allow 不生效」）。所以**一条 `effect='deny'` 的 grant 被撤销，对消费方是「权限变宽」**——本事件不区分方向，`state` 只说变了、`effect` 只说这一条本来是 allow 还是 deny，消费方要自己组合判断。这不是缺陷（组合是确定的），但意味着任何只按 `state='revoked'` 就清缓存的实现是错的：deny 撤销后缓存必须重算而不是置空。事件不提供任何方向提示。"
+    },
+    "scope_kind": {
+      "type": "string",
+      "enum": [
+        "tenant",
+        "org_unit",
+        "project",
+        "series"
+      ],
+      "description": "来源：§5.6 DDL 行 753–754（`scope_kind text NOT NULL CHECK (scope_kind IN ('tenant','org_unit','project','series'))`）+ §4.4 行 546（示例 `\"series\"`）。**有 `CHECK` 支撑的闭集，照抄。** 注意它**不含 `episode`**：§3.3 行 749 的 scope 链写的是「`episode → series → project → org_unit → tenant`」，而 `role_grant.scope_kind` 的上界到 `series`。两者不矛盾——grant 授予到 `series`，判定时再往下继承到 `episode`——但一个按 `scope_kind` 建索引的消费方（S09 建 `ASSET_BINDING` 边、S40 判票失效）必须知道**没有 episode 级 grant**，否则会写出一个永远匹配不到的分支。触发点在这里：`contracts/permission-checks` 的请求（§4.3 行 495–500）用的是 `scope_kind: 「episode」`——**请求的 scope 与 grant 的 scope 是两个不同的集合**，而两处都用 `scope_kind` 这个名字。本文件收的是 grant 的那一个。"
+    },
+    "scope_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.4 行 547（示例 `\"ser_...\"`）+ §5.6 DDL 行 755。**它的词法取决于 `scope_kind`，而 schema 表达不了这层依赖**（JSON Schema 没有条件性的 pattern）。四个 kind 对应四类 id（tenant / org_unit / project / series），全仓库没有任何一处定义这四类 id 的形态——S01 §5 的三张表分别用了 `tnt_` / `org_` / `prj_` / `ser_` 前缀，但没有 `CHECK`、没有 pattern、没有登记表。本文件只收非空字符串（`contracts/README.md`：「不从散文推断这些值」）。这与 ABS-7 同一形态（`episode_id` 的词法无主），但后果方向相反：`scope_id` 是**用于匹配**的（§3.3 的 scope 链逐级比对），形态不一致会让 deny 继承静默失效——而 deny 失效意味着**权限变宽**，是 fail-open。"
+    },
+    "tenant_revocation_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§4.4 行 548（示例 `812`）+ §5.1 DDL 行 600（`revocation_epoch     bigint  NOT NULL DEFAULT 0`）+ `tenant_epoch_nonneg_chk`（行 607）。**DDL 里它在 `tenant` 表，不在 `role_grant`**——事件里的值是写路径读 `tenant.revocation_epoch` 得到的，不是 grant 自己的列（见 AGC-1）。§4.4 行 561 说它「必须随每个事件带出」，理由是让消费侧 5s 缓存在任意一条相关事件到达时立刻更新。**`minimum: 0` 照 DDL 的 `>= 0`**，但 §3.4 行 307 说它是一个被 `+1` 推进的单调计数——所以合法值域其实是 `>= 0` 而**语义**上「0」表示从未撤销过。本文件不把下界抬到 1，因为 `DEFAULT 0` 是明确的。`bigint` 的取值范围本文件不约束（JSON Schema 的 `integer` 无 64 位概念，Python 侧随意），这在本仓库是对 `bigint` 的一致处理。"
+    },
+    "personal_revocation_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§4.4 行 549（示例 `3`）+ §5.3 DDL 行 654（`personal_revocation_epoch bigint NOT NULL DEFAULT 0`）+ §3.4 行 308（`principal` 级撤销「`personal_revocation_epoch + 1`」）。**同样不在 `role_grant` 表**。`principal.status` 的闭集是 `('invited','active','suspended','offboarded')`（行 651–652），而撤销传播表（§3.4 行 308）把 `:offboard` 映射到「该主体全部 grant 失效 + `personal_revocation_epoch + 1` + 事件同租户范围广播」——**于是离职一个主体会产生「该主体 grant 条数」个事件，每条都带同一个递增后的 epoch**。§4.4 行 560 用 `aggregate_id = grant_id` 的理由正是「避免一个主体几十条 grant 挤在同一个 sequence 上」，所以这 N 条事件落在 **N 个不同分区**，彼此**无序**。见 AGC-1。"
+    },
+    "changed_by": {
+      "type": "object",
+      "description": "来源：§4.4 行 550（示例 `{\"principal_id\": \"prn_admin...\", \"principal_type\": \"human\"}`）。**两键，而 DDL 的 `granted_by` / `revoked_by` 是四键**：§5.6 行 766（`granted_by jsonb NOT NULL,  -- {principal_id, principal_type, source, source_ref}`）与行 770（`revoked_by jsonb`——同一形态，注释在 `granted_by` 上）。本事件丢掉了 `source` 与 `source_ref`，而 `source` 恰好是 §3.1 第 ⑤ 步那条不可侵犯不变量的判据：「手工授予的 grant 绝不被登录路径改动」（行 253，`granted_by.source = 'idp_group'` 才允许被登录路径写）。于是消费方从事件上看不出「这次撤销是管理员手工做的、IdP 组 diff 做的、还是离职广播做的」。见 AGC-3。",
+      "properties": {
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "principal_type": {
+          "type": "string",
+          "enum": [
+            "human",
+            "service",
+            "api_client",
+            "mcp_client"
+          ]
+        }
+      },
+      "required": [
+        "principal_id",
+        "principal_type"
+      ],
+      "additionalProperties": false
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.4 行 551（示例 `\"role.reassigned\"`）。**这是本事件里来源最薄弱的一个字段**：(1) DDL 的对应列叫 `revoke_reason text`（行 771），**名字不同**；(2) 该列**无 `CHECK`、无注释、无枚举**——§4.4 的示例值 `role.reassigned` 是点号小写形态，而 §4.3 的 `reason_code` 闭集（行 514：`GRANT_MATCHED` / `NO_GRANT` / `EXPLICIT_DENY` / `CONDITION_NOT_MET` / `SCOPE_OUT_OF_RANGE` / `PRINCIPAL_INACTIVE` / `TENANT_SUSPENDED`）是大写下划线形态，**两套命名风格同在一份方案里**，而 `reason` 不属于任何一套——它是一个第三种形态；(3) `revoke_reason` 只在 `state='revoked'` 时有值（`role_grant_state_chk` 只把 `revoked_at` 与 `state='revoked'` 绑起来，`revoke_reason` 无约束），而事件把它收成必填——于是 `expired`（IdP 组 diff）、`pending → active`、`active` 上的任何其它迁移都必须编一个 `reason` 出来；(4) 它是**自由文本**，而 catalog 的 `pii_payload` 声明是 `references_only_by_default`——一个管理员在那里写「张三离职」就把人名放进了事件。见 AGC-5。本文件收非空字符串、**不编一个 enum**：没有任何 `CHECK` 支撑，编一个就是把散文当契约。"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§4.4 行 552（示例 `\"2026-11-05T09:00:00.000Z\"`）。**DDL 里没有这一列**，也没有对应的 `updated_at`：`role_grant` 的时间列是 `valid_from` / `valid_until` / `granted_at` / `revoked_at`（行 762–769），全部是业务时间点，没有一个记录「这一版 revision 何时写入」。所以 `occurred_at` 的值来自写路径的 `now()`，**落在 DDL 之外**——这是规模上可接受的做法（outbox 有 `created_at`，行 946），但意味着 `occurred_at` 与 `revoked_at` / `expired` 的判定时刻**可能不等**（例如 `valid_until` 在后半夜到期、清扫器早上才发事件，此时 `occurred_at` 是清扫时刻）。本事件两者只给了一个，消费方无法区分「状态在何时生效」与「事件在何时产生」。**`format: date-time` 是声明性的**：本仓库没有装 `FormatChecker`，所以它不校验——这一点是全局既存状态，不是本文件引入的。示例的 `.000Z` 毫秒精度与仓库其它示例（秒精度）不一致，见 AGC-7。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "grant_id",
+    "grant_revision",
+    "state",
+    "previous_state",
+    "subject_principal_id",
+    "role_key",
+    "effect",
+    "scope_kind",
+    "scope_id",
+    "tenant_revocation_epoch",
+    "personal_revocation_epoch",
+    "changed_by",
+    "reason",
+    "occurred_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`previous_state` 在 grant 首条事件里的取值",
+      "demanded_by": "plans/S01-tenant-access.md §4.4 行 542（示例 `\"previous_state\": \"active\"`）与行 560（「每个聚合的 sequence 就是 `1(granted) → 2(revoked)`」）、§5.6 DDL 行 765（`grant_revision integer NOT NULL DEFAULT 1`）",
+      "s01_status": "DDL 与 §4.4 行 560 合起来说清楚了一件本方案没画的事：revision **1** 是「条目被创建」。创建之前没有任何状态，所以 `previous_state` 在 revision 1 上无值。§4.4 的示例是 revision 2（`active → revoked`），把这个情形掩掉了——而它是**每一条 grant 的必经之路**（任何 `:grant` 命令都要发一条）。本 schema 照 §4.4 把它收成必填，于是每个新建 grant 的首条事件都会被本契约拒。要 owner 定：是让 `previous_state` 可缺席（或 `oneOf [enum, null]`），还是给首条事件一个显式的「无前态」哨兵值，还是承认首条事件根本不该发（那样 S08/S22/S40 的缓存就要靠回源发现新 grant，而 §4.4 行 561 的设计前提正是「任意一条相关事件到达就更新」）。**第三条路会推翻行 560 的顺序说明**，因此不能由实现自行选择。"
+    },
+    {
+      "field": "`reason` 的词表",
+      "demanded_by": "plans/S01-tenant-access.md §4.4 行 551（示例 `\"role.reassigned\"`）、§5.6 DDL 行 771（`revoke_reason         text,`——无 `CHECK`、无注释）、§3.1 第 ⑤ 步（行 253，IdP 组 diff 写 `state='expired'`）、§4.2（`reason_code` 闭集 7 值，行 514）、§5.10 catalog 的 `pii_payload: references_only_by_default`",
+      "s01_status": "`reason` 是自由字符串，而它的三个相邻概念各有一套命名：DDL 列名 `revoke_reason`（名词）、示例值 `role.reassigned`（点号小写）、`reason_code` 闭集大写下划线。全文没有一处登记 `reason` 的合法值，也没有说明它是否该放人类可读文本。这个缺口不只是「不精确」：(a) S45 审计要靠它分类撤销原因，没有词表就只能拿自由文本做 `LIKE`，跨租户统计会漏；(b) 若它是自由文本，它承载的人名/工号会随事件进 Kafka 并保留 14 天（catalog 的 `normal_retention_days: 14`），而 `pii_payload` 声明的是 `references_only_by_default`——**声明与字段形状冲突**，且这个 schema 只能收「非空字符串」，管不住内容，更管不住「是不是 PII」。要 owner 定：词表（是否复用 `reason_code` 的形态、是否与 DDL 列名统一为 `revoke_reason`）、以及它是否被允许含自由文本。"
+    },
+    {
+      "field": "`state='expired'` 与 `active` 上的迁移如何填 `changed_by`",
+      "demanded_by": "plans/S01-tenant-access.md §4.4 行 550（`changed_by` 在示例里必填）、§3.1 第 ⑤ 步（行 253：「组已不在 → `state='expired'`，`personal_revocation_epoch + 1`」）、§5.6 DDL 行 769–770（`revoked_at timestamptz,` / `revoked_by jsonb,`——只在 `revoked` 时有值）、`role_grant_state_chk`（行 777–779：`(state = 'revoked') = (revoked_at IS NOT NULL)`）",
+      "s01_status": "`role_grant_state_chk` 把 `revoked_at` 与 `state='revoked'` 严格绑定，所以 `expired` 状态下 `revoked_at` **必须为 NULL**，`revoked_by` 自然也没有值。`valid_until` 到期（`role_grant_expiry_idx` 覆盖的清扫路径）同样如此。而本事件把 `changed_by` 列为必填。于是两条真实写路径——IdP 组 diff 的「组已不在」与 `valid_until` 到期——**在 DDL 里没有可填的 `changed_by`**。前者在逻辑上「谁做的」是 IdP，但没有一个 principal 代表它；后者是定时器，根本没有人。示例只画了 `:revoke`（管理员手工撤销），把这两条路径掩掉了。要 owner 定：是允许 `changed_by` 缺席、还是给系统行为一个保留 principal（类似 S01 §2.1 的 `dlg_platform`，那是 C4 里「未裁决的临时约定」）、还是把 `expired` 从本事件的 `state` 闭集里去掉。**第三条会与 DDL 的 `CHECK` 冲突**，因此同样不能由实现自行选择。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "AGC-1",
+      "summary": "离职广播产生 N 条落在不同分区的事件、各带同一个 epoch，而合并规则（取最大值）全仓库没写过一处",
+      "event_claim": "plans/S01-tenant-access.md §4.4 行 561：「**`tenant_revocation_epoch` 与 `personal_revocation_epoch` 必须随每个事件带出。** 这是让消费侧 5s 缓存在「任意一条相关事件到达」时就能立刻更新 epoch 的原因，不需要额外的 epoch 事件。」",
+      "aggregation": "§4.4 行 520：「`aggregate_id = grant_id`」；行 560：「用 grant 做聚合，每个聚合的 sequence 就是 `1(granted) → 2(revoked)`」；§3.4 行 308：「`principal` 级 `:offboard` → 该主体全部 grant 失效 → `personal_revocation_epoch + 1`；事件同租户范围广播」",
+      "outbox": "§5.9 DDL 行 936–947：`UNIQUE (aggregate_id, aggregate_sequence, event_type)`；`partition_key text NOT NULL,  -- tenant_id || ':' || aggregate_id`",
+      "catalog": "contracts/event-topics.v2.json 该 topic：`\"partition_key\": \"tenant_id:aggregate_id\"`、`\"delivery\": \"at_least_once\"`",
+      "ddl_epoch_columns": "§5.1 行 600（`tenant.revocation_epoch bigint NOT NULL DEFAULT 0`）与 §5.3 行 654（`principal.personal_revocation_epoch bigint NOT NULL DEFAULT 0`）——**都不在 `role_grant`（§5.6 行 749–773，21 列里没有 epoch）**，所以事件里的两个 epoch 是写路径从另两张表读来的",
+      "why_it_matters": "行 308 的离职语义是「该主体全部 grant 失效」，写到一个事务里就是更新 N 行 `role_grant`、各 `grant_revision + 1`、各写一行 outbox。因为 `partition_key = tenant_id:aggregate_id` 且 `aggregate_id = grant_id`，这 N 条事件落在 **N 个不同分区**——Kafka 只保证同分区有序，**跨分区没有任何顺序**。于是同一个 `personal_revocation_epoch = 3` 会随 N 条事件乱序到达，且 `at_least_once` 意味着还会重复到达。消费者要得到正确结果，唯一正确的合并规则是**对 epoch 取 max**（它们都是 §3.4 说的「单调递增计数」）。而这条规则**全仓库没有写过**：S01 §4.4 不说消费者该怎么合并（它只说「就能立刻更新」），S08/S22/S40/S45/S46 五处消费说明都只写「到达即失效」，S23 行 1206 的乱序规则讲的是 `grant.revision`（按聚合去旧），不是 epoch。**后果不是「慢」而是「倒退」**：一个实现若按到达顺序覆盖（最自然的写法），在乱序时会把 epoch 从 3 写回 2；而 §3.2 第 5 道检查是 `TCT 的 epoch ≥ 本地缓存`，本地被写小之后一个**已被撤销**的 TCT 会重新通过——这是 fail-open。行 561 的设计意图（「不需要额外的 epoch 事件」）本身成立，缺的是它的**合并语义**。要定的是：把「epoch 按 max 合并、按聚合 revision 去旧」写成消费侧契约（写进哪儿也是个问题——本仓库还没有一份「消费契约」的载体），还是承认每个 epoch 需要一个带序号的单分区事件（那会推翻 C8 的结论）。另注：C8（行 1308）只承认了「一个从未有 grant 的租户被挂起，不发任何事件」这一个代价，**没承认「一个从未有 grant 的 principal 离职」同样零事件**——而 `:offboard` 广播的前提是「有 grant 可广播」。"
+    },
+    {
+      "id": "AGC-2",
+      "summary": "S19 拿 `grant_revision` 与 `revocation_epoch` 比对，而那是两套量纲完全不同的计数器",
+      "s19": "plans/S19-agent-runtime.md §5.5 行 715：「`revocation_epoch` 存判定时的值。事后要证明「当时确实有权限」，拿 `access.grant.changed` 的 grant revision 与这个 epoch 比对即可——E39「操作链可证明」的落点。」",
+      "s19_column": "plans/S19-agent-runtime.md §5.x 的 `tool_call_audit` 表（行 700 附近）：`revocation_epoch` 一列，注释「存判定时的值」",
+      "epoch_source": "plans/S01-tenant-access.md §4.3 行 497：`\"revocation_epoch\": 812`——这是 `POST /permission-checks` 响应里的值，来自 `tenant.revocation_epoch`（§5.1 行 600）",
+      "revision_source": "本事件 `grant_revision`：§5.6 DDL 行 765（`grant_revision integer NOT NULL DEFAULT 1`）+ 行 790（「每次状态变化 +1」）——**单条 grant 内的计数，值域大约是 1..3**",
+      "why_it_matters": "`tenant.revocation_epoch` 是租户级单调计数（示例值 812），`grant_revision` 是单条 grant 内的版本号（示例值 2）。S19 说拿后者去和「这个 epoch」比对——**两者量纲不同、基数不同、含义不同**，任何比值都无意义：`grant_revision = 2` 与 `revocation_epoch = 812` 的比对结果恒为「2 < 812」，于是按这个规则，**每一次历史调用都会被判成「当时已被撤销」**（或永远判不成，取决于比较方向）。E39 要的是「事后证明当时确实有权限」，它需要的是**判定时刻的 `tenant_revocation_epoch`（和 `personal_revocation_epoch`）与之后事件里携带的同一个 epoch 比较**——即比较两个同量纲的值。S19 的表里存的正是前者，所以数据是够的；错的是它说要用 `grant_revision`。这有两种可能的修法，**本文件不选边**：(a) S19 改成用事件的 `tenant_revocation_epoch`（本 schema 有这个字段，但**没有任何字段标明「这条事件对应的判定纪元」与「TCT 签发纪元」的关系**——事件的 epoch 是撤销后的值，而 `:revoke` 只 bump 了 `tenant.revocation_epoch` 而**不 bump** `personal_revocation_epoch`，见 §3.4 表格的行 307 与行 308，所以 S19 要证明「仅在 tenant 维度被撤销、personal 没变」也做不到）；(b) S19 表里改成存 `grant_revision` 并改成与 `grant_revision` 比较——但 `tool_call_audit` 的主键是 `(tenant_id, task_id, step_index, tool_name)`，一次工具调用可能依赖多条 grant，没有单一的 `grant_revision` 可存。**这条与 AGC-1 是同一个根**：本事件把两种不同作用域、不同量纲的计数器塞在同一份 payload 里，且都写成裸整数、没有单位、没有作用域标记。要定的是：消费方证明「当时有权」时，比对的到底是哪个计数器的哪一侧。"
+    },
+    {
+      "id": "AGC-3",
+      "summary": "`changed_by` 丢掉了 DDL 的 `source`，而那正是「登录不得覆盖手工授权」这条不变量的判据",
+      "event": "plans/S01-tenant-access.md §4.4 行 550：`\"changed_by\": {\"principal_id\": \"prn_admin...\", \"principal_type\": \"human\"}`——**两键**",
+      "ddl": "§5.6 DDL 行 766：`granted_by            jsonb NOT NULL,           -- {principal_id, principal_type, source, source_ref}` 与行 770：`revoked_by            jsonb,`——**四键**（注释在 `granted_by` 上，`revoked_by` 无独立注释，按同一形态理解）",
+      "invariant": "§3.1 第 ⑤ 步（行 251–253）：「**第 ⑤ 步是唯一允许在认证路径上写 grant 表的地方**，且只写「来自 IdP 组映射」的那部分 grant（`granted_by.source = 'idp_group'`）。手工授予的 grant 绝不被登录路径改动——否则一次登录会把管理员手工加的临时权限冲掉。」",
+      "why_it_matters": "`source` 在这份方案里不是元数据，它是**一条安全不变量的执行判据**：登录路径在写 grant 之前必须判断 `granted_by.source = 'idp_group'`，否则不能动。同一个字段在撤销侧承载同样重要的信息——「这次撤销是管理员手工做的、IdP 组 diff 自动做的、还是离职广播做的」。事件的 `changed_by` 把 `source` 与 `source_ref` 一起丢掉了，于是：(a) S45 审计收到事件后**无法分类撤销来源**，只能回源 `GET /access-grants/{grant_id}`——若 `:revoke` 之后 grant 行仍保留 `revoked_by`（DDL 行 770 保留，行 790 也说「撤销不会删行」），回源是可行的；但 S45 §1 行 160 明写「**S45 不反向依赖这些服务**」，它只消费事件、不调用 S01 的 API，所以**回源这条路对 S45 是关闭的**——它只能看到两键；(b) S08 行 681 与 S22 行 793 需要区分「租户级/主体级广播」与「单条 grant 撤销」（前者要批量处理、后者只动一条），而 `source='idp_group'` 与 `source='manual'` 恰好是这个区分的现有载体，事件里没有；(c) `source_ref` 是幂等与去重的锚点（同一 IdP 组两次 diff 不得重复写），事件不携带它，消费方就无法判断两条 `expired` 事件是不是同一次 diff 扇出的。**这不是「少两个字段」的洁癖**：本仓库对「payload 完整但消费方需要的信息不在里面」已经有一整套先例（LNI-2 的 `plan_hash` 不可复算、CPG-3 的 `patches` 缺席），而这条更尖锐——丢掉的字段是**本服务自己写进 DDL 的**，不是外部服务的概念。要定的是：事件是否携带完整四键（体积代价可忽略）、还是携带一个 `source` 枚举（那又需要词表，与本文件 AGC-5 的 `reason` 是同一种缺），还是明确「S45 必须回源」并推翻它 §1 的架构声明（那属于跨方案裁决，不在本文件能定的范围）。"
+    },
+    {
+      "id": "AGC-4",
+      "summary": "`previous_state` 画成必填，而 grant 的首条事件（revision 1 = 创建）没有前态——同一形态第四次",
+      "event": "plans/S01-tenant-access.md §4.4 行 542：`\"previous_state\": \"active\"`——示例是 revision 2",
+      "sequence": "§4.4 行 560：「每个聚合的 sequence 就是 `1(granted) → 2(revoked)`」——**revision 1 就是「被创建」这条事件**",
+      "ddl": "§5.6 行 765：`grant_revision integer NOT NULL DEFAULT 1`；行 759–760：`state ... CHECK (state IN ('pending','active','revoked','expired'))`——**没有任何列存前态**，所以 `previous_state` 是写路径在内存里带着的",
+      "precedent": "S08 的 SMC-4（`parent_manifest_ref` / `accepted_revision` 首版为空）、S09 的 MSC-3（`source_manifest_ref` 的 `branch_init` 无 manifest）、S10 的 ABS-5（`superseded_revision` 首版封存无旧版）",
+      "why_it_matters": "四条方案、同一形态：示例只画「中间版本」，DDL 允许的首版被掩掉，而首版恰好是**每个对象都必经一次**的那条。本文件照 §4.4 收必填，于是「新建任何一条 grant」都会产生一条本契约拒收的事件——而新建 grant 是 §2 的 `POST /access-grants` 与 §3.1 第 ⑤ 步（JIT 首次登录）两条**热路径**。前面三条的后果是「某个生命周期阶段不可表达」（首版 manifest、init 分支、首版 binding），本条更重：**它是日常路径，不是边界情形**。前面三条我都在记录里写「拒是可观测的（好），但拒错了对象」；本条要进一步说清代价——一条被拒的事件不是静默丢弃的，它会走死信（catalog 的 `replay_side_effects: false`），而死信堆积恰好发生在「新员工入职批量授权」这种高峰上。要定的是与 AGC-1 的 x-needs-owner 第 1 条同一件事：`previous_state` 的可缺席语义。**这两条我刻意不合并**——x-needs-owner 记的是「值从哪来」，本条记的是「这个形状与文档的冲突面有多大」，两者的裁决人可能不同。"
+    },
+    {
+      "id": "AGC-5",
+      "summary": "`reason` 在三种命名风格之外，还可能是自由文本，而 catalog 声明这个 topic 只带引用",
+      "event": "plans/S01-tenant-access.md §4.4 行 551：`\"reason\": \"role.reassigned\"`",
+      "ddl": "§5.6 行 771：`revoke_reason         text,`——无 `CHECK`、无注释、无长度上限",
+      "sibling_vocabulary": "§4.3 行 514：`reason_code` 枚举 `GRANT_MATCHED`、`NO_GRANT`、`EXPLICIT_DENY`、`CONDITION_NOT_MET`、`SCOPE_OUT_OF_RANGE`、`PRINCIPAL_INACTIVE`、`TENANT_SUSPENDED`——**大写下划线**",
+      "catalog": "contracts/event-topics.v2.json 该 topic：`\"pii_payload\": \"references_only_by_default\"`、`\"normal_retention_days\": 14`",
+      "why_it_matters": "同一份方案里出现了三套命名：DDL 列名 `revoke_reason`、示例值 `role.reassigned`、判定码 `GRANT_MATCHED`。前者是名词、中者是点号小写、后者是大写下划线，没有一处说明它们是否该统一。更实质的是**内容**：`revoke_reason` 是 `text` 无约束，而它是撤销流程里唯一一个「人会写字」的字段——管理员在 UI 上填「张三离职，权限交接给李四」是完全自然的行为，而这些字会随事件进 Kafka、在 14 天保留期内可被所有订阅方读取。catalog 的 `pii_payload: references_only_by_default` 是**这个 topic 的对外声明**，它与「`reason` 自由文本」直接冲突：声明说只带引用，字段却在带散文。这不是本 schema 能拦的（JSON Schema 没有 PII 检查），能拦的地方只有 S01 的写路径与 S45 的脱敏策略——而 S45 §2.5 的脱敏是按**字段路径**配的（它消费的是 `audit.record.intent`，见 CPG-2），本事件的 `reason` 是否在名单里无人说过。要定的是：`reason` 的词表（见 x-needs-owner 第 2 条）**以及**它在 `pii_payload` 声明下是否必须被脱敏或截断。前者是 S01 的事，后者是 S45 的事，**本文件只能把两者摆在一起**。"
+    },
+    {
+      "id": "AGC-6",
+      "summary": "挂起与终止都 bump `tenant_revocation_epoch`，事件分不出来，而 S23 收到就要释放全部预留",
+      "s01_semantics": "plans/S01-tenant-access.md §3.5.1（行 332–334）：`suspended`「能签发 TCT：否；能读：是（只读，由 S02 判）；能写业务：否」；`terminated`「否 / 否 / 否」。§3.4 行 316：「租户挂起时**不能**把已有 TCT 立刻作废到「连读都不行」的程度——否则运营人员在挂起期间无法查账、无法导出……第 5 道检查只对 `tenant.lifecycle='terminated'` 强制作废」",
+      "s01_epoch": "§3.4 撤销传播表第 4 行（行 310）：`tenant` 级 | `:suspend` | 全租户停止签发 | **`tenant.revocation_epoch + 1`**——**挂起就 bump**",
+      "s23": "plans/S23-budget-ledger.md §6.2 行 1188：`| access.grant.changed | S01 | 撤销租户 → 该租户所有 RESERVED reservation release(OPERATOR)；已 INFLIGHT 的不动 |`",
+      "event_shape": "本事件只有 `tenant_revocation_epoch` 一个租户级信号；`state` / `previous_state` / `effect` / `scope_kind` / `scope_id` 全是**单条 grant** 的属性；**没有任何字段携带 `tenant.lifecycle`**（§5.1 行 592–593 的 `CHECK (lifecycle IN ('provisioning','active','suspended','terminated'))` 里的值一个都不在 payload 里）",
+      "c8": "§11 C8（行 1308）：「`event-topics.v2.json` 只有 `access.grant.changed`，没有租户挂起/终止、主体离职的独立事件……若要求推送，需新增 `tenant.lifecycle.changed`」",
+      "why_it_matters": "挂起时 S01 bump `tenant.revocation_epoch`，于是它会发事件——但它发的是 `access.grant.changed`，即**按 grant 的**事件。一个只有 3 条 grant 的租户被挂起，S23 会收到 3 条（该主体/该租户范围内）`access.grant.changed`，每条带 `tenant_revocation_epoch = 813`。S23 的规则是「撤销租户 → 该租户所有 RESERVED reservation release(OPERATOR)」，于是**一次挂起会释放该租户全部预算预留**。而 §3.4 行 316 明确说挂起期间运营人员要能查账导出——预留被释放掉，后续查账看到的是「预算全部可用」，与真实在途占用不符；更糟的是 `release(OPERATOR)` 若不可逆（S23 的 release 语义不明确），挂起期间的正常业务恢复后预算记录已经错了。反过来，`terminated`（真正该释放）与 `suspended` 在事件上**完全同形**：唯一区别是 `tenant.lifecycle` 的值，而它在 payload 里不存在，S23 也无权查 S01 的表（AGENTS.md：「跨服务数据库写入、跨库 JOIN」禁止）。**S23 因此只能靠猜或靠回源**——回源要调用 S01 的 API，而 S23 §6.2 的消费规则是基于事件的、没有提到任何回源。另一处同源问题：C8 只说「一个从未有 grant 的租户被挂起，不发任何事件」，它没提「有 grant 的租户被挂起会发 N 条按 grant 的事件，每条都暗示租户级撤销」——**C8 的诊断方向是对的，但它把代价说小了**。要定的是：事件是否携带 `tenant_lifecycle`（体积可忽略、语义明确）；还是 C8 建议的 `tenant.lifecycle.changed` 真的建出来；还是 S23 的规则区分挂起与终止（但那需要它先能区分，闭环回第一个选项）。本文件不选边——三个方向在文档里分别有 §3.4、C8、S23 §6.2 各自主张。"
+    },
+    {
+      "id": "AGC-7",
+      "summary": "四处命名/形态漂移：`grant.revision` vs `grant_revision`、S22 的一条测试前提自相矛盾、envelope 三字段不符仓库约定、C10 指定的目录不存在",
+      "field_name": "本事件连字符化字段是 `grant_revision`（§4.4 行 540）；plans/S23-budget-ledger.md §6.3 行 1206 写「`access.grant.changed` 的乱序：以 `grant.revision` 为准，旧版本丢弃」——**`grant.revision` 这个路径在本事件里不存在**（payload 是扁平的 `grant_revision`，没有 `grant` 子对象）。按字面实现，取值会得到 `undefined`，而「旧版本丢弃」在 `undefined` 上恒为真或恒为假，取决于语言——两种都是错的",
+      "s22_test": "plans/S22-scheduler-quota.md 行 898 的 T22-50：`| access.grant.changed 到达但池定义版本更旧 | 按 revision 丢弃，池不倒退（§6 乱序规则） |`——**这条测试的前提混淆了两份版本**：事件携带的是 `grant_revision`（单条授权的版本）与两个 epoch，**不携带任何池定义版本**。要判「池不倒退」，S22 需要池自己的 revision（来自 `scheduler.pool.revision` 之类的自有状态或 S02 的 `policy.revision.published`），而不是本事件的任何字段。这条测试要么是笔误（想说「按 grant_revision 丢弃」），要么是它其实在测另一条事件",
+      "envelope_drift": "§4.4 的示例（行 527 / 532 / 530）：`\"source\": \"s01.tenant-access\"`、`\"home_cell\": \"cell-a1\"`、`\"time\": \"2026-11-05T09:00:00.000Z\"`。仓库 32 个带 envelope 的示例里：`home_cell` **全部**是 `cell_a1`（无连字符，32/32），`time` **全部**是秒精度（无小数位，30/30 带 `time` 者），而 `source` 是混合的——绝大多数是 catalog 的 `producer` 值（`\"S01\"`…`\"S48\"`），一个例外是 `\"artifact-ingested.json\"` 的 `\"/cells/cell_a1/services/S28\"`，**即 `source` 本身已经是漂移的**，S01 的 `s01.tenant-access` 不是唯一越轨者。这三处**都不会被 schema 拦**——`source` / `home_cell` 在 event-envelope.v2 里都是裸 `{\"type\":\"string\",\"minLength\":1}`，全仓库没有 pattern；`format: date-time` 也没有 `FormatChecker`。于是任意写法都能通过校验，而按 `source` 做订阅过滤或按 `home_cell` 做就近路由的实现会静默漏掉 S01 的事件",
+      "subject_drift": "§4.4 行 529：`\"subject\": \"prn_01J8ZQ...\"`——一个裸 principal id。仓库其余示例的 `subject` 有两种形态：`type/id`（`\"binding-set/bs_...\"`、`\"change-plan/change_...\"`、`\"manifest/manifest_ep3\"`、`\"impact/ia_...\"`、`\"agent-task/agt_...\"`）与裸 id（`\"art_01J...\"`、`\"dp_01J...\"`、`\"shot_3_2\"`、`\"tl_ep3\"`），所以「裸 id」本身不违规。**漂移在于 `subject` 指向的对象换了一层**：`subject` 是 principal、`aggregate_id` 是 grant。于是「按 subject 索引」与「按 aggregate 索引」得到的是两种不同的分组，而两者都是 envelope 一等字段——按 subject 分组会把同一主体的 N 条 grant 变更聚在一起（S08/S22/S40/S45/S46 要的），按 aggregate 分组才是每 grant 一条（去重与乱序判断要的，S23 §6.3 要的）。**本文件的示例照 §4.4 原样用裸 principal id，不做改动**：改成 `access-grant/grn_...` 会抹掉本条要记的那个事实。要定的是：`subject` 是否该在本 topic 上承载「受影响主体」这一层语义（那它就该有 `type/id` 形态并明确写出类型名），还是永远标识聚合并另加一个 principal 字段。",
+      "c10_path": "§11 C10（行 1310）：`| access.grant.changed 没有 data 最小字段集的 schema | 按本方案 §4.4 新增 contracts/events/access-grant-changed.v2.schema.json |`。**`contracts/events/` 目录不存在**——本仓库全部 30 份 payload schema 都平铺在 `contracts/` 下（`contracts/asset.binding-set-created.v2.schema.json`、`contracts/change.plan-applied.v2.schema.json`、`contracts/event-envelope.v2.schema.json` …），文件名分隔符也是点号（`asset.binding-set-created`）而非连字符（`access-grant-changed`）。本文件按既有约定取 `contracts/access.grant-changed.v2.schema.json`，**因此没有严格履行 C10 写的路径**。这是刻意的：按 C10 的字面建一个只有一份文件的 `contracts/events/` 子目录，会让下一个实现者不知道该把新 schema 放哪——而这个不确定性本身就是成本。**但这条属于「文档指定了一处与全仓库不一致的位置」，按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」，我把它记在这里而不是默默选边**",
+      "why_it_matters": "六处独立的小漂移，合起来是一件事：本事件的**字段名与字段位置**在四个消费方的文档里各被引用过一次，而其中两处引用的是不存在的路径（`grant.revision`、池定义版本）。这些都不是「形状不对」——payload 的 14 个字段在 §4.4 里写得很清楚，而且三个闭集都有 DDL 的 `CHECK` 撑腰，是本批契约里形状最扎实的一份。坏的全在**名字**：`grant.revision` 这个写法会让 S23 的去旧规则变成空操作（旧版本不被丢弃，乱序时状态倒退）；T22-50 的测试前提不成立，它会永远通过或永远失败（取决于 `undefined` 的比较），于是这条 `[E18]` 验收用例**不验证任何东西**；envelope 的三处形态漂移让订阅过滤与分区路由静默失效；`subject` 的语义漂移让「按主体索引」和「按聚合索引」变成两个不同的问题。要定的是：这四个消费方文档是否要与本事件对齐（改文档）、还是本事件要加字段/改形态去迎合它们（改契约）——**两边的改动成本不同，而我不知道哪边是对的，所以不选**。"
+    }
+  ]
+}
