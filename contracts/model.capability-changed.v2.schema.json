@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/model.capability-changed.v2.schema.json",
+  "title": "model.capability.changed payload v2",
+  "description": "event `model.capability.changed` 的 data 部分。权威定义在 plans/S24-model-registry.md §3.5（行 594–622，7 个字段的示例）、§2.2（行 100–131，`model_capability_snapshot` 六元组 DDL）、§2.3（行 135–174，`capability_mode` 的 16 个模式与两张无 CHECK 的表）、§2.4（行 224–270，组合探测）、§2.5（行 277–330，`price_snapshot`）、§2.7（行 364–392，outbox）、§4.1（行 628–647，生命周期迁移）、§4.2（行 649–662，证据过期扫描）、§4.3（行 664–675，探测调度）、§6（行 735–760，幂等与缓存）、§7（行 779，不可变声明）、§8（行 783–806，T24-01..T24-20）、§10。**这条事件的 7 个字段都有示例值，形状是清楚的，问题在于它把五件事塞进了一个信封**：`change_kind` 的 5 个取值里有 3 个说的不是 `aggregate_id` 指的那个东西（池健康、价格行、生命周期），而 payload 里既没有 `pool_id` 也没有 `price_snapshot_id`。S25 §1 行 24 说它「只消费本事件建投影」，可它建投影要的 `candidate_key`（S25 §7 行 433 与 §3.2 行 503：`{provider}/{channel}/{model_id}@{model_snapshot}#{region}#{account_pool_id}`）有三个分量本事件一个都不发。见 MCG-2 / MCG-4 / MCG-5。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§3.5 行 600 已包含此项（与 S15 §5.3 不同，那边漏了）。"
+    },
+    "snapshot_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§3.5 行 610（示例 `9f2c...e1`）+ §2.2 DDL 行 104（`snapshot_id text PRIMARY KEY,  -- = sha256(规范化后的整个 claim 集)`）。**内容寻址的主键**，也是本事件里唯一能无歧义地指向一行 `model_capability_snapshot` 的值。它是 `sha256`，所以按本仓库既有约定（PDL-5 / PRD-4：不用 `sha256:` 前缀）收成裸 64 位 hex——**但 §3.5 自己的示例写的是 `9f2c...e1`，12 个字符加省略号，在它自己的 DDL 下不是一个合法的 `snapshot_id`**。这条属于「方案的示例不能照抄」，不是我们非要更严：若按示例的写法放宽成任意字符串，`sha256` 这个性质就无处表达，而 §6.1 行 740 的全部幂等论证都建立在「同一份内容 → 同一个 id」上。见 MCG-7。 **同一条事件里 `snapshot_id` 与 envelope 的 `aggregate_id` 是两个不同的身份**：前者是内容哈希，后者是 `{provider}/{channel}/{model_id}/{model_snapshot}`（行 596）。见 MCG-2。"
+    },
+    "capability_bundle_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§3.5 行 611（示例 `42`）+ §2.2 DDL 行 112（`capability_bundle_rev bigint NOT NULL,  -- 单调，S25 投影水位`）+ §6.1 行 740（「`capability_bundle_revision` 是全局单调计数器，由 `outbox` 的序列驱动」）+ §6.2 行 744（在 `registry_counter` 单行上 `SELECT ... FOR UPDATE` 取值）。**它与 envelope 的 `aggregate_sequence` 是同一个数**：§3.5 行 596 明写 `aggregate_sequence = capability_bundle_revision`。所以这 7 个字段里有一个是信封字段的副本，本文件照 §3.5 收成必填，但两个载体若不一致没有任何规则说以谁为准。**`minimum: 1` 是照 envelope 的 `aggregate_sequence`（`minimum: 1`）推的**，全文没有写这个计数器的起点。它的**全局**性质是本事件最反直觉的一点：别的 topic 的 `aggregate_sequence` 是「这条流上的第 N 版」，这里是「整个注册表的第 N 次变更」，于是同一个 `aggregate_id` 的事件序号是稀疏的（42、57、63……）。稀疏本身合法（`minimum: 1` 不要求连续），但 S25 §6.2 行 600 用 `WHERE revision < EXCLUDED.revision` 推进投影，稀疏的全局水位会把「某条流自己落后」这件事吃掉——见 MCG-1。"
+    },
+    "change_kind": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§3.5 行 612–613（`\"change_kind\": \"snapshot_published\",   // snapshot_published|lifecycle_changed|` 与续行 `// combination_probe_added|price_published|pool_health_changed`）+ §4.3 行 671（「探测失败连续 3 次 → 池 health='suspect'，发 model.capability.changed(change_kind=pool_health_changed)」）。**这五个值只存在于 §3.5 的 JSONC 注释里**：`model_capability_snapshot` 的 18 列（行 103–127）没有 `change_kind`，`outbox`（行 378–390）也没有，全文没有一处 `CHECK (change_kind IN ...)`。所以它不是一个数据库事实，而是发布方在写 outbox 时**临时合成**的字段——这意味着它的取值集合同样没有权威来源。本文件收 `minLength: 1` 而**不枚举**那五个值：`contracts/README.md` 的原则是「不从散文推断这些值」，而一段示例注释就是散文。把它固化成 enum 会把一个没有 DDL 依据的词表变成契约，反过来锁死发布方。**但下游确实需要它**（见 MCG-4 / MCG-8）；词表该由谁定记在 `x-needs-owner`。"
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "validating",
+        "active",
+        "degraded",
+        "retired"
+      ],
+      "description": "来源：§3.5 行 614（示例 `\"lifecycle\": \"active\"`）+ §2.2 DDL 行 113（`lifecycle text NOT NULL,  -- 模型+地区+池粒度的生命周期`）+ **行 125（`CHECK (lifecycle IN ('disabled','validating','active','degraded','retired'))`）**。**这是本事件里唯一一个取值集合有 DDL 依据的字段**：真的 CHECK 就在它该在的列上，五种状态与 §4.1 行 631–636 的迁移图完全对应（`retired` 是终态、没有出边）。对照 S15 的 VAC-3：那边四值 CHECK 装在**驱动事件的那张表之外的**表上，这边 CHECK 与事件字段同名同表，消费方可以信任这五个值。**但示例值本身有问题**：§3.5 这条事件的 `change_kind` 是 `snapshot_published`，而 `snapshot_published` 来自 §3.1 的 `POST /capability-snapshots`，那条路径的 201 响应（行 468–470）写的是 `\"lifecycle\": \"validating\"`，且 §4.1 行 643 规定 `validating → active` 必须有 `probe_verified` 证据（否则 422 `ACTIVE_REQUIRES_PROBE_EVIDENCE`）、§3.1 行 414 明说 `lifecycle` 参数「不接受直接写 active」。**所以 §3.5 的示例画了一条一次写入不可能产生的状态**——回复里给 `validating` 才是对的。见 MCG-6。"
+    },
+    "effective_from": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§3.5 行 615（示例 `2026-10-30T03:11:00Z`）+ §2.2 DDL 行 119（`effective_from timestamptz NOT NULL`）+ 行 124（`UNIQUE (provider, channel, model_id, model_snapshot, region, account_pool_id, effective_from)`）。**`effective_from` 是自然键的第七个分量**，所以它不只是个时间戳：同一个六元组可以有**多行**、靠 `effective_from` 区分（换版时旧行写 `effective_to`，行 120）。这意味着 `aggregate_id` 指向的是一族行而不是一行，`snapshot_id` 才指向其中一行。**注意 `format: date-time` 在本仓库是纯声明式的**——`tools/validate/validate_examples.py` 没有装 `FormatChecker`，全仓库没有任何一处按 `format` 校验过，这条约束今天不产生任何拒绝。见 MCG-5 关于它在 `price_published` 下指哪一个 `effective_from` 的歧义。"
+    },
+    "changed_modes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "来源：§3.5 行 616（示例 `[\"image_to_video\"]`）。**名字说的是「变了的模式」，而 5 个 `change_kind` 里有 3 个没有任何模式变**：`lifecycle_changed` 变的是快照的生命周期、`price_published` 变的是 `price_snapshot` 的一行、`pool_health_changed` 变的是 `provider_account_pool.health`——三者都与 `capability_mode` 的行无关。所以这个数组在两种情形下都该是空的（无变化 vs 无此概念），而事件不区分。本文件**不设 `minItems`**（允许 `[]`），因为 §3.5 只画了非空的情形，而「哪些 kind 允许空」没有任何依据；**`uniqueItems: true` 是唯一能确定的约束**：同一个模式在一个事件里出现两次没有意义（`capability_mode` 的主键是 `(snapshot_id, mode)`，行 159，一个模式一行）。**元素取值没有 CHECK**：`capability_mode.mode` 是 `mode text NOT NULL`（行 151），没有 IN 列表，16 个模式只出现在行 141–146 的 ```text``` 块里——所以数据库会接受任何字符串作为 mode，包括拼错的。见 MCG-8 与 `x-needs-owner`。"
+    },
+    "evidence_valid_until": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "来源：§3.5 行 617（示例 `2026-11-29T00:00:00Z`）+ §2.2 DDL 行 118（`evidence_valid_until timestamptz,  -- 到期即视为未验证`）+ §2.6 DDL 行 348（`capability_evidence.valid_until timestamptz NOT NULL`）+ §4.2 行 653–658（扫描器用它判过期）。**收成可空是因为 DDL 可空**（行 118 没有 `NOT NULL`）：没有证据的快照（`evidence_state='documented'`，行 117）这一列就是 NULL，而 `documented` 是合法的初始证据态。§3.5 只画了有值的情形，本文件照 DDL 放宽——这与 S15 的 `expires_at` 同一种取舍（VAC-4）：照 DDL 收，代价是比示例宽，好处是不拒合法事件。**三个问题**：(1) 它是**当前行快照**不是增量，消费方拿不到「原来是多少、现在变成多少」，而 `change_kind=lifecycle_changed` 的全部意义就是这次变化；(2) 它在一行快照上是**单个值**，而证据是每行一条、各有各的 `valid_until`（行 348 `NOT NULL`），快照级这一列是这些值的什么聚合（min？max？最后写入的那条？）全文没写；(3) **`EVIDENCE_EXPIRED` 这条最常见的迁移里它按定义已经过去**——§4.2 行 656–657 的条件是 `evidence_valid_until <= now()` 才把 `active` 改成 `degraded`，于是事件里这个字段永远指着过去，而它是 payload 里唯一看起来像「有效期」的东西。见 MCG-3 与 `x-needs-owner`。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "capability_bundle_revision",
+    "change_kind",
+    "lifecycle",
+    "effective_from",
+    "changed_modes",
+    "evidence_valid_until"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`change_kind` 的取值集合",
+      "demanded_by": "plans/S24-model-registry.md §3.5 行 612–613（JSONC 注释里的五个值）、§4.3 行 671（`change_kind=pool_health_changed`，一个只在正文出现、不在示例里的用法）",
+      "s24_status": "五个值只出现在一条示例的注释里。`model_capability_snapshot` 的 18 列没有 `change_kind`，`outbox` 的 9 列也没有，全仓库没有 `CHECK (change_kind ...)`。于是发布方在写 outbox 时必须自己决定这次算哪一种，而消费方（S25）必须接受它没见过的新值。要补需要 owner 定：这五个值是不是闭集、由哪个 schemas 承载（`event-envelope` 显然不合适，只能进本文件）、以及是否要为此在 `model_capability_snapshot` 或 `outbox` 上加列——若不加列，这个字段在审计上就不可回放（S45 收到事件时，数据库里没有任何一列能对上它）。"
+    },
+    {
+      "field": "`changed_modes` 的元素词表与「哪种 `change_kind` 可以带空数组」",
+      "demanded_by": "plans/S24-model-registry.md §2.3 行 139–146（16 个模式，```text``` 块）+ 行 151（`mode text NOT NULL`，**无 CHECK**）+ §3.5 行 616（`changed_modes` 示例）",
+      "s24_status": "16 个模式是 ``text`` 块里的散文，`capability_mode.mode` 无 CHECK，所以数据库层面任何字符串都是合法 mode。本文件的 `changed_modes` 因此只能收 `minLength: 1` 的字符串数组——它能拦住空串，拦不住 `image_to_vdieo`。这不是吹毛求疵：S25 的硬过滤 #7（`MODE_UNSUPPORTED`）与 #8（`CAPABILITY_MISSING:{key}`）都按 mode 匹配，拼错的 mode 会在投影里静默地不匹配任何路由需求，表现成「这个模型不支持这个模式」而不是「事件里的 mode 拼错了」。要补需要 owner 定：16 个模式是否闭集（`mode_reference_rule.role` 的 8 个角色词、`capability_claim.capability_key` 的词表同理，行 168–169 与 197–198，也都没有 CHECK）、以及是否给 `capability_mode.mode` 加 CHECK 或把词表挪进一份 schema。"
+    },
+    {
+      "field": "快照级 `evidence_valid_until` 与逐条 `capability_evidence.valid_until` 的聚合规则",
+      "demanded_by": "plans/S24-model-registry.md §2.2 DDL 行 118（`evidence_valid_until timestamptz`，单列）+ §2.6 DDL 行 348（`capability_evidence.valid_until timestamptz NOT NULL`，每证据一行）+ §4.2 行 651–658（扫描器按快照级的这一列判过期）",
+      "s24_status": "一行快照可以有多条证据（§3.1 行 445–450 的请求里 `evidence` 是数组），每条有自己的 `valid_until`；而 `model_capability_snapshot` 只有一列 `evidence_valid_until`。取最小值（最保守）还是最大值（最后一条）还是「最近写入那条」决定了两件不同的事：前者会让一条短效证据把整个快照判过期（安全但可能把 `active` 拉成 `degraded`），后者会让一条长效证据掩盖一条已失效的关键证据（危险）。§4.2 的扫描器与 T24-05（行 791「证据 `valid_until` 到期 1 秒 → 候选消失」）都依赖这个规则，而它没有写。要补需要 owner 定：聚合函数、以及证据删除/替换时这一列是否重算。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "MCG-1",
+      "summary": "一个全局计数器同时充三种用途，而 S25 用它推进投影时会把「某条流自己落后」吃掉",
+      "counter": "plans/S24-model-registry.md §6.1 行 740：「`capability_bundle_revision` 是全局单调计数器，由 `outbox` 的序列驱动，不是时间戳」；§6.2 行 744：「用 `SELECT ... FOR UPDATE` 在 `registry_counter` 单行上取，串行化」",
+      "three_uses": "(1) 每个快照行自己的版本：§2.2 行 112 `capability_bundle_rev bigint NOT NULL,  -- 单调，S25 投影水位`；(2) 事件的 `aggregate_sequence`：§3.5 行 596 `aggregate_sequence = capability_bundle_revision`；(3) 整页候选的水位：§3.2 行 499 `\"capability_bundle_revision\": 42` 与 `\"projection_watermark\"`；(4) 缓存键：§6.3 行 758 `key 为 bundle:{revision}`",
+      "consumer": "plans/S25-model-routing.md §6.2 行 600：「仅在 S24 投影更新时用 `capability_bundle_revision` 单调推进（`WHERE revision < EXCLUDED.revision`）。乱序事件不倒退投影。」§4.1 行 610：「S24 投影落后（`bundle_revision` 比事件序列小）| 仍可出决策 … 响应带 `projection_lag=true`」",
+      "why_it_matters": "全局计数器在这个设计里不算错——S24 明确要的是「一份完整能力包一个版本」，所以一个快照变更就让所有人的水位前进。但它与 `aggregate_sequence` 是同一个数这件事有代价：**同一个 `aggregate_id` 的事件序号是稀疏的**（快照 A 拿到 42，之后 B 拿到 43，A 再变拿到 44）。在 envelope 层面合法（`minimum: 1` 不要求连续），在 outbox 层面**反而更安全**：`UNIQUE (aggregate_id, aggregate_seq, event_type)`（§2.7 行 389）在全局计数器下永远不会冲突，于是 S15 的 VAC-1 那种「同一 aggregate 的两次变更产生同一个 seq、约束报错、事务回滚」在这里不可能发生。**真正的风险在 S25 那一侧**：`WHERE revision < EXCLUDED.revision` 是一条**按全局水位丢弃**的规则。若快照 A 的 rev 42 因重试晚到、而 B 的 rev 43 已经写入，A 的那条事件会被这条 WHERE 丢掉——S25 的投影里 A 还是旧的能力数据，可 `projection_lag` 按水位算是 `false`（43 已经收到）。于是 `projection_lag=true` 触发不了，S26 拿到的是一个「相信自己的投影已经最新」的陈旧候选。§4.1 行 610 的兜底是「S26 签发 grant 时必须实时复查」，所以不会真正派错单——但**这条兜底被 S25 的 lag 标志掩盖掉了**，而 lag 标志正是为了让 S26 知道「该不该信投影」而存在的。要定的是：按快照维度保留 `snapshot_id → 最后 revision` 的水位（而不是一条全局水位），或者 S25 的推进条件换成「同一 `snapshot_id` 的 revision 单调」。两个方向都在文档里有交代，但没有一条说 S25 那行 SQL 该怎么改。"
+    },
+    {
+      "id": "MCG-2",
+      "summary": "`aggregate_id` 漏掉自然键的两个分量，而 S25 声称只靠本事件建投影、却拼不出自己的 `candidate_key`",
+      "event_header": "plans/S24-model-registry.md §3.5 行 596：「`aggregate_id = {provider}/{channel}/{model_id}/{model_snapshot}`」；行 602 / 605 示例 `seedance/volcengine/seedance-1-0-pro/250528`",
+      "table_identity": "§2.2 行 124：`UNIQUE (provider, channel, model_id, model_snapshot, region, account_pool_id, effective_from)`；行 128–130：`CREATE INDEX ix_snapshot_lookup ON model_capability_snapshot (provider, channel, model_id, model_snapshot, region) WHERE effective_to IS NULL`；行 113 注释「模型+地区+池粒度」",
+      "consumer_key": "plans/S25-model-routing.md §3.2 行 503：`\"candidate_key\": \"seedance/volcengine/seedance-1-0-pro@250528#cn-beijing#pool_seedance_volc_cn_shared\"`；§7 行 433：`candidate_key text NOT NULL`",
+      "consumer_claim": "plans/S25-model-routing.md §1 行 24：「**不写能力事实**（S24）。S25 只消费 S24 的 `model.capability.changed` 建投影，并在估价时用 `GET /capability-validity` 复核。」",
+      "why_it_matters": "三处身份互不相同：DDL 的不可变自然键是**七**元组（含 `region`、`account_pool_id`、`effective_from`），`aggregate_id` 是**四**元组（漏了后三个），`candidate_key` 是**六**元组但用 `@` 与 `#` 而非 `/` 分隔（含 `region`、`account_pool_id`，不含 `effective_from`）。payload 的 7 个字段里**没有 `region`、没有 `account_pool_id`、没有 `provider`/`channel`/`model_id`/`model_snapshot` 的单独字段**——它们只能从 `aggregate_id` 里按 `/` 切开，而后三个分量谁都拿不到。后果是直接的功能缺口：S25 §1 行 24 说它只消费本事件建投影，可它的投影主键 `candidate_key` 有三个分量来自事件之外；同一个 `(provider, channel, model_id, model_snapshot)` 在 `cn-beijing` 与 `us-east` 各有一行时，事件流把这两行压进同一个 `aggregate_id`，而 `snapshot_id` 是哈希、看不出版本与地区。**S25 因此必须回查 S24 才能把 `snapshot_id` 映射到 `candidate_key`**，而它声明自己不做这件事（`/capability-validity` 是**按 `snapshot_id` + `pool_id` 查询**的，行 719，所以它得先知道 `pool_id` 才能问）。同一条漂移在 S10 的 ABS-6 出现过一次（partition key 用列名还是 envelope 名），这次是**语义层面的**：不是命名不一致，是 `aggregate_id` 少了两维。要定的是：`aggregate_id` 是否该扩成六元组（那它会变长且与 `subject` 不再相同），还是 payload 补 `region` 与 `account_pool_id` 两个字段（那 §3.5 的 7 个字段变成 9 个）。**本条不选边**——两种改法都在文档里有理由，但它们互相排斥。"
+    },
+    {
+      "id": "MCG-3",
+      "summary": "§7 说能力快照不可变，§4.2 的扫描器却在原地 UPDATE 它——于是 `snapshot_id`（内容哈希）会指向内容已经变了的行",
+      "immutability_claim": "plans/S24-model-registry.md §7 行 779：「审计：`lifecycle_transition` 全量进 S45；`price_snapshot` 与 `capability_snapshot` **不可变**，证据原文按 `raw_ref` 归档。」",
+      "in_place_update": "§4.2 行 653–659：`UPDATE model_capability_snapshot s SET lifecycle = 'degraded', lifecycle_reason = 'EVIDENCE_EXPIRED' WHERE s.lifecycle = 'active' AND s.evidence_valid_until <= now() RETURNING ...;`——**改的正是 `model_capability_snapshot` 这一行**。§4.1 行 634–635 的双向迁移（`degraded → active`、`active|degraded|validating → retired`）同样要改这一列",
+      "content_addressing": "§2.2 行 104：`snapshot_id text PRIMARY KEY,  -- = sha256(规范化后的整个 claim 集)`；行 133：「`snapshot_id` 内容寻址：相同 claim 集永远得到相同 id，重复投递天然幂等，也便于 S25 在事件里只引用 id」",
+      "dedupe_claim": "§4.2 行 662：「一次成功的迁移只发一次事件（`lifecycle_transition` 主键挡住重复）」；§2.6 行 357：`PRIMARY KEY (snapshot_id, occurred_at, to_state)`",
+      "why_it_matters": "「内容寻址」与「原地可变」不能同时为真。`snapshot_id = sha256(claim 集)` 只覆盖 claim 集；`lifecycle`、`lifecycle_reason`、`evidence_valid_until` 不在 claim 集里（否则每次生命周期迁移都会生成一个新 id，那 S25 的投影就永远对不上），所以同一个 `snapshot_id` 会在**多条**事件里出现、每条带不同的 `lifecycle`。于是本事件里的 `snapshot_id` 不是「这份内容」的标识，而是「这份内容 + 它此刻的状态」的标识——名字说的是前者。这在功能上可以工作（消费方按 `snapshot_id` 覆盖写），但它让 MCG-1 的「按 `snapshot_id` 保留水位」也变得可行而没被写下来。**第二处**：`lifecycle_transition` 的主键是 `(snapshot_id, occurred_at, to_state)`，`occurred_at DEFAULT now()`（行 357）。`active → degraded → active → degraded` 是合法路径（§4.1 行 634），两次 `to_state='degraded'` 的 `occurred_at` 不同，主键不冲突，**两条事件都发**。所以「一次成功的迁移只发一次事件」只在同一瞬间成立——它拦的是重复执行，不是重复迁移。若 S25 的投影假设「同一 `(snapshot_id, lifecycle)` 只出现一次」，这条假设在这里落空。要定的是：`lifecycle` 该留在快照行上（承认这一行可变、并在事件里显式声明它是可变字段），还是挪到 `lifecycle_transition` 的当前指针上（那 §4.2 的 UPDATE 要改成 INSERT + 指针 CAS）。"
+    },
+    {
+      "id": "MCG-4",
+      "summary": "五个 `change_kind` 里有一个说的是池，而池被 §2.1 明确排除在快照之外——payload 里没有 `pool_id`，S25 的池健康过滤无法维护",
+      "change_kind_value": "plans/S24-model-registry.md §3.5 行 613（注释 `pool_health_changed`）+ §4.3 行 671：「探测失败连续 3 次 → 池 health='suspect'，发 model.capability.changed(change_kind=pool_health_changed)」",
+      "pool_is_separate": "§2.1 行 96：「**为什么池是独立表而不是快照上的一个字段**：`docs/09` 的主键含 `account_pool`，但池的并发上限、健康态、凭证版本是**跨模型共享**的事实；把它复制进能力快照会造成『同一个池在 30 个模型快照里各自记一份健康态』，违反单一权威。快照用外键引用池。」",
+      "pool_ddl": "§2.1 行 66–91：`provider_account_pool` 的主键是 `pool_id`，健康态是 `health text NOT NULL DEFAULT 'disabled'` + `CHECK (health IN ('healthy','suspect','unauthorized','exhausted','disabled'))`",
+      "payload_fields": "§3.5 行 609–618：`snapshot_id` / `capability_bundle_revision` / `change_kind` / `lifecycle` / `effective_from` / `changed_modes` / `evidence_valid_until`——**没有 `pool_id`，没有 `pool_health`**",
+      "consumer_need": "plans/S25-model-routing.md §3 硬过滤 #4：「账户池不可用（`health != healthy`、BYOK 不匹配）| S24 | `ACCOUNT_UNAVAILABLE` / `BYOK_MISMATCH`」",
+      "why_it_matters": "这一条比 MCG-2 更硬：**事件的结构装不下它的一个取值**。(1) 池健康是**跨模型共享**的事实，§2.1 行 96 专门为此把池拆成独立表；而本事件的 `aggregate_id` 是一个模型快照，`lifecycle` 是快照的生命周期。一次池降级影响引用它的 30 个快照，若每快照发一条事件，就是把 §2.1 明令禁止的「一份健康态在 30 处各记一遍」搬到事件层；若只发一条，那么 `snapshot_id`、`aggregate_id`、`lifecycle`、`changed_modes` 四个必填字段该填哪个快照的？(2) payload 里**没有 `pool_id`**，所以收到 `change_kind=pool_health_changed` 的消费方**不知道是哪个池降级了**——S25 的硬过滤 #4 要维护 `pool_id → health` 的映射，本事件给不出键也给不出值。(3) 事件里的 `lifecycle` 字段在这一条 `change_kind` 下是**没变的东西**，而它看起来像这次变化的内容——这正是「字段名描述状态、而事件描述变化」的经典误读（同 S15 的 VAC-5）。(4) §4.3 行 672 还有一条「401/403 → 立即 health='unauthorized'，S24 通知 S22/S26 停用该池」——**是通知，不是事件**，所以这条最紧急的池状态变化走的是另一个通道，而 `pool_health_changed` 只覆盖「连续失败 3 次」的 `suspect`。要定的是：池健康该不该有自己的 event_type（那 S25 要订两个 topic），还是本事件补 `pool_id` + `pool_health` 并在 `pool_health_changed` 时把 `snapshot_id` 改成可空/数组。"
+    },
+    {
+      "id": "MCG-5",
+      "summary": "`price_published` 是第三种身份，而 `price_snapshot_id` 不在 payload 里、`effective_from` 与 `tenant_id` 在这种 kind 下指的是哪一行都没写",
+      "change_kind_value": "plans/S24-model-registry.md §3.5 行 613（注释 `price_published`）",
+      "price_identity": "§2.5 行 279：`price_snapshot_id text PRIMARY KEY,  -- = sha256(规范化价格行)`；行 280：`tenant_id text NOT NULL DEFAULT '*'`；行 297–298：`valid_from timestamptz NOT NULL` / `valid_to timestamptz NOT NULL`；行 343：「`worst_case_units` 必须由快照自身的档位给出」",
+      "separate_expiry": "§2.6 行 362：「`evidence_valid_until` 是**能力证据的保质期**，与 `price_snapshot.valid_to` 是两回事。两者任一过期，候选即从 `GET /model-candidates` 的可用集消失，原因码分别是 `EVIDENCE_EXPIRED` / `PRICE_EXPIRED`」",
+      "consumer": "plans/S25-model-routing.md §3 硬过滤 #15：「报价不可验证（`quotable=false`）或报价已过期 | S24 | `NO_VERIFIABLE_UPPER_BOUND` / `PRICE_EXPIRED`」；§7 行 433：`price_snapshot_id text`、行 443：`watermark timestamptz`",
+      "why_it_matters": "价格是**独立内容寻址**的一行，有自己的 `price_snapshot_id`、自己的 `tenant_id`（默认 `'*'`，但可租户化）、自己的 `valid_from`/`valid_to`。本事件用 `snapshot_id`（能力）当主键、用 `effective_from`（能力快照的列名）当时间、用 `evidence_valid_until`（能力证据的列名）当有效期——**三个字段全是能力侧的，价格侧一个都没有**。于是一条 `price_published` 事件告诉 S25「这个模型的价格变了」，而不告诉它**新的 `price_snapshot_id` 是哪个、新价格从何时生效、到期何时**。S25 的 `route_candidate.price_snapshot_id`（行 433）与 `quote_upper_bound_micro` 只能靠另一次回查填上，而 §1 行 24 声明它不写能力事实、只消费本事件建投影。(2) **`tenant_id` 在这种 kind 下也有歧义**：能力快照的 `tenant_id` 与价格行的 `tenant_id` 可以不同（一个是 `'*'` 共享款、一个是某租户的 BYOK 价），而 envelope 只有一个 `tenant_id`。(3) `effective_from` 在能力表是自然键的第七分量（§2.2 行 124），在价格表叫 `valid_from` 且不在主键里——两个语义不同的时间被一个字段承载。要定的是：`price_published` 是否该有自己的 event_type 与 `price_snapshot_id`，还是本事件补一个可空的 `price_snapshot_ref`。"
+    },
+    {
+      "id": "MCG-6",
+      "summary": "§3.5 的示例画了一条写入路径不可能产生的状态：`snapshot_published` 带着 `lifecycle=active`",
+      "example": "plans/S24-model-registry.md §3.5 行 612–614：`\"change_kind\": \"snapshot_published\"` 与 `\"lifecycle\": \"active\"`",
+      "write_path": "§3.1 行 414：`\"lifecycle\": \"validating\",          // 不接受直接写 active`；行 468–470 的 201 响应：`\"snapshot_id\": \"9f2c...e1\", \"capability_bundle_revision\": 42, \"lifecycle\": \"validating\"`——**同一个 rev 42、同一个 snapshot、这里是 validating 而 §3.5 是 active**",
+      "guard": "§4.1 行 643：「`validating → active` | 存在 `method in (account_probe,paid_probe) AND result=supported AND valid_until>now()` 的证据；且每条被使用的能力键都有 `probe_verified` | 否则 422 `ACTIVE_REQUIRES_PROBE_EVIDENCE`」",
+      "why_it_matters": "`POST /capability-snapshots` 是产生 `snapshot_published` 的唯一路径，而那条路径只可能写出 `validating`。要变成 `active` 还得有一次独立的 `lifecycle_transition`，那次会再发一条 `change_kind=lifecycle_changed` 的事件。所以 §3.5 的示例把**两条事件的内容合成了一条**：rev 42 是登记那次、状态却是登记之后那次迁移的结果。这不是文字游戏——本文件既然要给 payload 定型，就必须决定 `lifecycle` 到底是「快照此刻的状态」还是「这次变化之后的状态」：若是前者，`snapshot_published` 永远带 `validating`；若是后者，`lifecycle_changed` 才有意义而 `snapshot_published` 也该带 `validating`（因为登记后就是 `validating`）。两种读法结论相同（`snapshot_published` ⇒ `validating`），但只有照 §3.1 才能得到这个结论，照 §3.5 会得到一条自相矛盾的示例。本仓库的示例（`contracts/examples/model-capability-changed.json`）用 `validating`，因为它是这条写入路径的真实产物。要定的是：§3.5 行 614 的 `active` 是否该改为 `validating`（改示例），还是承认「快照登记后会立刻自动过 probe 并同时发两条事件」（那 §3.1 的 201 响应也要改）。"
+    },
+    {
+      "id": "MCG-7",
+      "summary": "§3.5 的示例本身过不了本仓库的 envelope：缺 `data_ref`，`snapshot_id` 不是哈希，`traceparent` 是省略号",
+      "example": "plans/S24-model-registry.md §3.5 行 598–619：`\"id\": \"evt_01J...\"`、`\"data\": {\"snapshot_id\": \"9f2c...e1\", ...}`、`\"traceparent\": \"00-...\"`，且**整个示例没有 `data_ref` 键**",
+      "envelope": "contracts/event-envelope.v2.schema.json 的 `required` 16 项含 `data_ref`；`data_ref` 的 `oneOf` 是四键引用对象或 `null`；`traceparent` 是 `minLength: 1`（不校验 W3C 形态）",
+      "why_it_matters": "三处，性质不同。(1) **缺 `data_ref` 是硬失败**：envelope 的 `required` 里有它，§3.5 的示例照抄会被本仓库自己的校验器拒。这不是 S24 独有的疏忽（S15 §5.3 的示例漏的是 `schema_version`），但两条加起来说明「方案的示例」与「仓库的 envelope」是两套写法，照抄任何一份都会失败——本仓库的示例用 `\"data_ref\": null`。(2) `snapshot_id` 的 `9f2c...e1` 在 §2.2 行 104 的 `= sha256(...)` 下不是合法值，所以本文件收 `^[0-9a-f]{64}$` 是对的，而示例是错的。(3) **`tenant_id: \"*\"` 是本仓库唯一一个通配租户**：实测 `contracts/examples/` 的 49 份示例里没有任何一份用 `*`（其余是 `tnt_` 前缀或 `tenant_demo`），而 envelope 只要求 `minLength: 1`。`*` 在 §2.1 行 46 与 §2.2 行 105 有明确含义（共享目录行），所以它是**对的**，只是与其余 48 份示例的写法不同——这条记在这里是为了让下一个实现者知道 `*` 是有据的，不是笔误。**另有一处结构性漂移**：`subject` 与 `aggregate_id` 完全相同，且都是四段斜杠形态、没有 `type/` 前缀；实测 49 份示例里有 10 份用 `type/id` 形态（如 `voice/vox_linlan`、`manifest/manifest_ep3`）。envelope 两者都只要求 `minLength: 1`，所以都能过，但 S24 是唯一一个「`subject` 恒等于 `aggregate_id`」的生产者。"
+    },
+    {
+      "id": "MCG-8",
+      "summary": "`changed_modes` 的语义在 5 个 `change_kind` 下各不相同，其中 3 个它必然是空——而空数组与「没变」在事件里无法区分",
+      "field": "plans/S24-model-registry.md §3.5 行 616：`\"changed_modes\": [\"image_to_video\"]`",
+      "kinds": "§3.5 行 612–613 的五个值：`snapshot_published` / `lifecycle_changed` / `combination_probe_added` / `price_published` / `pool_health_changed`",
+      "per_kind": "`snapshot_published`：§3.1 行 416–462 的 `modes` 数组，可能多个 → 列表有意义。`combination_probe_added`：§2.4 行 227–245 的 `mode_combination_probe` 带 `(snapshot_id, mode, combination_key)`，只有**一个** mode 变了 → 列表长度必为 1。`lifecycle_changed`：§4.1 行 631–636，变化在快照行 → 无 mode 变。`price_published`：§2.5 行 278–305 的 `price_snapshot` 没有 mode 列（主键是 `price_snapshot_id`，六元组不含 mode）→ 无 mode 变。`pool_health_changed`：§2.1 行 80 的 `provider_account_pool.health` → 无 mode 变。",
+      "why_it_matters": "同一个字段在五种情形下分别是「若干」「恰好一个」「零」「零」「零」，而**零在三种情形下含义不同**：`lifecycle_changed` 的零是「这次确实没动任何模式」，`price_published` 的零是「模式这个概念不适用于这次变化」，`pool_health_changed` 的零是「变化的实体根本不是这个快照」。消费方看到 `[]` 无法区分这三种，于是任何「按 `changed_modes` 做增量刷新」的优化都只能退化成「无论如何全量重算该快照」，而全量重算在 `pool_health_changed` 下重算的还是错的快照（MCG-4）。本文件允许 `[]` 是因为拒掉它就会拒掉三种合法事件；但这是一个**信息缺口**，不是「字段可以空着」。要定的是：`changed_modes` 是否该在 `lifecycle_changed` / `price_published` / `pool_health_changed` 下改为可选（缺席 = 不适用，`[]` = 确实没变），或者干脆按 `change_kind` 拆成五个各自的事件类型——那 `change_kind` 这个字段本身就可以消失。"
+    }
+  ]
+}

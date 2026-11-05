@@ -54,6 +54,7 @@ SCHEMA_OF = {
     "lineage-impact-computed": "event-envelope.v2.schema.json",
     "memory-claim": "memory-claim.v2.schema.json",
     "memory-committed-event": "event-envelope.v2.schema.json",
+    "model-capability-changed": "event-envelope.v2.schema.json",
     "orchestration-run-state-changed": "event-envelope.v2.schema.json",
     "post-master-rendered": "event-envelope.v2.schema.json",
     "post-subtitle-ready": "event-envelope.v2.schema.json",

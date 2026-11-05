@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 32 个 topic 带**（23 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 33 个 topic 带**（22 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -96,6 +96,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `lineage.impact.computed` | `lineage.impact-computed.v2.schema.json` | S09 §5.4 |
 | `asset.binding-set.created` | `asset.binding-set-created.v2.schema.json` | S10 §5.3 |
 | `asset.voice.authorization.changed` | `asset.voice-authorization-changed.v2.schema.json` | S15 §5.3 / §10 C15-2 |
+| `model.capability.changed` | `model.capability-changed.v2.schema.json` | S24 §3.5 |
 | `change.plan.applied` | `change.plan-applied.v2.schema.json` | S07 §5.5 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
@@ -583,6 +584,52 @@ envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。�
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
 `SCHEMA_OF` 把它们的 stem 映射到 envelope，payload 子树由这个键自动接上。
 
+### `model.capability-changed.v2.schema.json`：一条事件承载五件事，其中三件的实体不在信封里
+
+S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力快照：
+
+| `change_kind` | 真正变了的东西 | 在 payload 里有吗 |
+|---|---|---|
+| `snapshot_published` | `model_capability_snapshot` 的一行 | 有（`snapshot_id`） |
+| `lifecycle_changed` | 同一行的 `lifecycle` 列 | 有（但只是新值，旧值不在） |
+| `combination_probe_added` | `mode_combination_probe` 的一行 | 只有 `changed_modes`，没有 `combination_key` |
+| `price_published` | `price_snapshot` 的一行 | **没有** `price_snapshot_id` |
+| `pool_health_changed` | `provider_account_pool` 的一行 | **没有** `pool_id`，也没有 `pool_health` |
+
+后三行是**结构缺口**，不是精度问题：S25 §1 行 24 声明「只消费本事件建投影」，而它的投影
+主键 `candidate_key`（S25 §3.2 行 503）是 `{provider}/{channel}/{model_id}@{model_snapshot}#{region}#{account_pool_id}`。
+本事件的 8 个字段里，`provider`/`channel`/`model_id`/`model_snapshot` 只能从 `aggregate_id`
+按 `/` 切出来，**`region` 与 `account_pool_id` 一个都没有**——而 §2.1 行 96 专门把池拆成独立表，
+理由正是「不能把一份池健康态复制进 30 个快照」。事件于是同时踩了两头：需要按池发，却不让带池 id。
+
+三处与 DDL 的直接对撞：
+
+- **`lifecycle` 是这里唯一取值有依据的字段**（§2.2 行 125 真 CHECK），对照 S15 的 VAC-3（那边 CHECK 装在
+  不驱动事件的那张表上）。但 §3.5 行 614 的示例写 `active`，而 `snapshot_published` 的唯一来源
+  `POST /capability-snapshots` 只可能写出 `validating`（§3.1 行 414「不接受直接写 active」，行 468 的 201
+  响应就是 `validating`）。示例是两条事件合成的一条。
+- **§7 行 779 说能力快照「不可变」，§4.2 行 653 的扫描器对它原地 `UPDATE`**。于是
+  `snapshot_id`（§2.2 行 104，`= sha256(claim 集)`）在多条事件里重复出现、每条带不同的
+  `lifecycle`——它标识的是「内容 + 此刻状态」，不是「内容」。
+- **`capability_bundle_revision` 是全局计数器**（§6.1 行 740）同时充当 `aggregate_sequence`
+  （§3.5 行 596）。于是同一 `aggregate_id` 的事件序号稀疏（42、57、63…）。outbox 的
+  `UNIQUE (aggregate_id, aggregate_seq, event_type)`（§2.7 行 389）因此永不冲突——**S15 的 VAC-1
+  在这里不可能发生**，这是全局计数器的净收益。代价在 S25 §6.2 行 600：`WHERE revision < EXCLUDED.revision`
+  按全局水位丢弃，一条晚到的 rev 42 会被已写入的 rev 43 吃掉，而 `projection_lag` 按水位算是 `false`。
+
+`changed_modes` 在五个 `change_kind` 下分别是「若干 / 恰好一个 / 零 / 零 / 零」，而三种零含义不同
+（确实没变 / 不适用 / 实体不是这个快照）。本 schema 允许 `[]` 并只要求元素唯一——`capability_mode.mode`
+是 `mode text NOT NULL`（§2.3 行 151）**没有 CHECK**，16 个模式只活在行 141–146 的 ```text``` 块里，
+所以拼错的 mode 在数据库层合法、在 S25 的投影里会静默地不匹配任何需求。
+
+`change_kind` 的五个值只出现在 §3.5 的一条 JSONC 注释里：`model_capability_snapshot` 没有这一列，
+`outbox` 也没有，全仓库没有对应的 `CHECK`。本文件照 `contracts/README.md` 的原则收 `minLength: 1`
+而不枚举，词表归属记在 `x-needs-owner`。
+
+`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 49 份示例是 `tnt_` 前缀或 `tenant_demo`）。它有据：
+§2.1 行 46 与 §2.2 行 105 都写「共享目录行 `tenant_id = '*'`」。envelope 只要求 `minLength: 1`，
+所以 schema 不拦也不推。另外 `subject` 在这里恒等于 `aggregate_id`，是全仓库唯一这么做的生产者。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -679,8 +726,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 32 个 payload schema
-                                                              （见上表；其余 23 个 envelope-only）
+                                        └──data_schema_ref──▶ 33 个 payload schema
+                                                              （见上表；其余 22 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -693,11 +740,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（102 个 JSON 解析）、`payloads`（87 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 32 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（104 个 JSON 解析）、`payloads`（88 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 33 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（48 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（49 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -749,7 +796,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：48 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：49 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

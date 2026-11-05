@@ -1,0 +1,29 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG9C4R6T8V0X2Z4B6D8F0H2",
+  "source": "S24",
+  "type": "model.capability.changed",
+  "subject": "seedance/volcengine/seedance-1-0-pro/250528",
+  "time": "2026-10-30T03:11:00Z",
+  "tenant_id": "*",
+  "home_cell": "cell_a1",
+  "aggregate_id": "seedance/volcengine/seedance-1-0-pro/250528",
+  "aggregate_sequence": 42,
+  "correlation_id": "cmd-s24-0001",
+  "causation_id": "cmd-s24-0001",
+  "traceparent": "00-4d8b2e6a1c9f3750b8d2e4a6c8f0b2d4-4d8b2e6a1c9f3750-01",
+  "data": {
+    "schema_version": "2.0",
+    "snapshot_id": "2de5f3a735c299a33da29a70e1fb07429930c09dd1ddaa2875a06b800e81231b",
+    "capability_bundle_revision": 42,
+    "change_kind": "snapshot_published",
+    "lifecycle": "validating",
+    "effective_from": "2026-10-30T03:11:00Z",
+    "changed_modes": [
+      "image_to_video"
+    ],
+    "evidence_valid_until": "2026-11-29T00:00:00Z"
+  },
+  "data_ref": null
+}
