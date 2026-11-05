@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality.repair-planned.v2.schema.json",
+  "title": "quality.repair.planned payload v2",
+  "description": "event `quality.repair.planned` 的 data 部分。权威定义在 plans/S39-repair-planning.md §9（行 808–822）的事件示例与 §7 的 DDL（行 642–679）；本文件只是把那份定义变成可校验的形状。S39 是生产者，S21 是唯一被点名的消费者（S39 §9 订阅段）。事件刻意只带摘要——完整计划（targets、actions、snapshot）走 envelope 的 data_ref 回查 `GET /repair-plans/{id}`（S39 §8 行 775–792）。本 schema 不含任何从消费方散文推断的字段；S39 里没有出处的字段见 x-needs-owner。**不要把这个 payload 当成计划全文**：它没有一个字段能重建计划。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有约定（见 contracts/examples/artifact-ingested.json）。S39 §9 的示例没有画它，但每个已发布的 payload schema 都带，缺了它消费方无法判断用哪一版解析。"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S39 §7 DDL（行 643 `plan_id text PRIMARY KEY`）+ §9 示例（行 811 `rp_…`）。DDL 注释给出生成规则 `rp_ + ulid`，但 §9 的示例用省略号写，全文没有把前缀写成约束，故此处不收窄为 pattern——收窄会拒掉 S39 自己没禁止的形式。envelope 的 aggregate_id 也是它（§6.2 行 744「aggregate_id = repair_plan_id」）。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "planned_partial",
+        "blocked_incomplete",
+        "escalated",
+        "human_resolved",
+        "resolved",
+        "superseded"
+      ],
+      "description": "来源：S39 §7 DDL 的 CHECK（行 653–655），逐字照搬 7 个值。**事件名是这个集合里的一值**：`quality.repair.planned` 对应表里的 `planned`，见 x-conflicts RPP-1——事件本身带 `state` 字段，那么这个字段在 `planned` 事件里能否是 `planned_partial`，S39 没有说。"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S39 §7 DDL（行 652 `artifact_sha256 text NOT NULL`）+ §9 示例（行 812，注释「修复前」）。**这是修复前的产物哈希**，与 `recheck_job.artifact_sha256`（行 687，注释「修复后的」）是两个不同的量。DDL 是裸 `text`、无 pattern——S39 全文没有一处 `sha256:` 前缀写法，也没有 hex 约束，故此处只要求非空字符串。其余产物的 `artifact_sha256` 契约统一用 `^[0-9a-f]{64}$`（见 contracts/quality.technical-completed.v2.schema.json），这里没有跟着收窄，见 x-conflicts RPP-2。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S39 §9 示例（行 813 `lin_…`）。**plan 表没有这一列**（§7 行 642–663 逐列核对过）：它只出现在 attempt_ledger（行 434）与 attempt_reservation（行 463）。那两张表是 per-attempt 的，plan 是 per-batch 的，而 S39 §5.2 把归并键（defect_fingerprint + shot_lineage_id）当作计划内的去重单元，所以一条 plan 可以覆盖多个 shot_lineage_id——事件里却只有一个。见 x-conflicts RPP-3。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S39 §7 DDL（行 647 `episode_id text NOT NULL`）+ §9 示例（行 814 `ep3`）。注意示例用的是裸 `ep3` 而不是 `ep_` 前缀形式，DDL 也不约束格式，故此处只要求非空。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S39 §7 DDL（行 648 `run_id text NOT NULL`）+ §9 示例（行 814）。跨服务的执行关联键，与 envelope 的 correlation_id 不是同一个量——correlation_id 是事件链，run_id 是编排运行（同 contracts/quality.technical-completed.v2.schema.json 对 run_id 的说明）。"
+    },
+    "target_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：仅 S39 §9 事件示例（行 815 `\"target_count\": 2`）。**没有 DDL 列**。它可从 `plan.snapshot`（行 659，注释「去重后的 targets」）里的 targets 数组长度算出，所以事件里放的是折叠值。计数不可能是负数，故 minimum 0；S39 没有说出处，见 x-needs-owner。"
+    },
+    "action_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：仅 S39 §9 事件示例（行 815 `\"action_count\": 3`）。**没有 DDL 列**，是 `repair_planning.action` 表按 plan_id 的行数（行 667–679）。同 target_count，属折叠值；S39 没有说出处，见 x-needs-owner。"
+    },
+    "top_action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：仅 S39 §9 事件示例（行 816 `temporal_edit`）。**没有 DDL 列**；`action.action_type`（行 671）才是落库的那个，`top_action` 是「计划里最主要的那个动作」的折叠。「top」按什么排序（动作数？成本？序列最前？）S39 全文没有定义，所以**不收窄成闭集**：闭集在 contracts/quality/action-families.v2.json 的 `action_enum`（12 值），但既然 top_action 的选取规则未定义，用闭集约束它会假装规则存在。见 x-needs-owner。"
+    },
+    "estimated_cost_band": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：仅 S39 §9 事件示例（行 817 `medium`）与 §8 的 GET 响应（行 790）。**没有 DDL 列**。§4.5 行 320 的 `\"band\": \"low|medium|high\"` 是单个动作的 `estimated_cost.band` 的 jsonc 示例字符串，不是枚举声明（同样的写法在 S39 里到处都是，例如行 320 的 `driver` 只写了一个值）；plan 级的 `estimated_cost_band` 与动作级的 `estimated_cost.band` 是否同一个域，S39 没有说。故此处只要求非空字符串，见 x-needs-owner。"
+    },
+    "recheck_scope": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "description": "来源：S39 §9 示例（行 818 `[\"technical\",\"semantic:continuity_window\"]`）+ §6.3（行 619–629）。§6.3 行 624 给出元素语法 `technical | semantic:{aspect} | alignment:{aspect} | subtitle`，但同一段的行 628 自己举了 `hash`——不在那个列表里，§4.5 行 324 的示例又用了 `identity`，也不在列表里。`{aspect}` 的取值全文没有闭合。**因此不收窄成 enum**：任何 enum 都会拒掉 S39 自己的三个示例之一。落库形状是 `action.recheck_scope text[] NOT NULL`（行 675）；§6.3 行 621 说这是「所有 target 的并集」，即 plan 级是把每个 action 的数组摊平去重——SCHEMA 保证不了这一点。与 `contracts/quality/check-registry.v2.schema.json` 的 `recheck_scope`（单字符串、7 值、`+` 分隔）**不是同一个域**，见 x-conflicts RPP-4。"
+    },
+    "escalation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：S39 §7 DDL（行 660 `escalation jsonb`，可空）+ §9 示例（行 819 `null`）。**schema 从未定义过它的形状**：DDL 是裸 `jsonb`，唯一的形状证据是 §5.7 行 518–529 的 ESCALATE 输出示例（`reason` / `capped_at`{`shot_lineage_id`,`strategy_class`,`attempts_used`,`limit`} / `remaining_targets` / `handoff`），而那是 `state: escalated` 的输出，不是 `planned` 的。这里只约束「对象或 null」，不约束键集：照搬示例里的键会把一个未定义的 `jsonb` 当成契约。见 x-conflicts RPP-5。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "plan_id",
+    "state",
+    "artifact_sha256",
+    "shot_lineage_id",
+    "episode_id",
+    "run_id",
+    "target_count",
+    "action_count",
+    "top_action",
+    "estimated_cost_band",
+    "recheck_scope",
+    "escalation"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "target_count, action_count",
+      "demanded_by": "plans/S39-repair-planning.md §9 事件示例（行 815）",
+      "s39_status": "两个计数都只在事件示例里出现，没有 DDL 列。它们分别等价于 `plan.snapshot` 里 targets 数组的长度与 `action` 表按 plan_id 的行数，属于可重算的折叠值。折叠本身不违规（省一次回查），但 S39 需要确认：发出时是否保证与落库值同事务一致？若计划在聚合窗口内还会增长（§3「aggregation_deadline」暗示计划会随迟到的报告更新），事件里的计数就是快照时刻的，消费方无法区分「计数是终值」还是「计数是当时值」。"
+    },
+    {
+      "field": "top_action",
+      "demanded_by": "plans/S39-repair-planning.md §9 事件示例（行 816）",
+      "s39_status": "没有 DDL 列，且「top」的选取规则全文未定义。可选口径至少有三种：动作数量最多的类型、成本最高的类型、`sequence` 最小的类型。不同的口径会在多动作计划上给出不同答案。要么 S39 补一句选取规则（那样本 schema 就可以收窄成 action-families 的闭集），要么把这个字段删掉——消费方可以从 `actions[]` 自己算。"
+    },
+    {
+      "field": "estimated_cost_band",
+      "demanded_by": "plans/S39-repair-planning.md §9 事件示例（行 817）、§8 GET 响应（行 790）",
+      "s39_status": "没有 DDL 列，也没有 plan 级的定义。§4.5 行 320 的 `low|medium|high` 是 jsonc 示例字符串（该行的 `driver` 同样只给了一个示例值 `per_generation_second`，显然不是枚举声明）；即便它就是枚举，plan 级 band 与动作级 band 的聚合关系（取最大？加权？）也未定义。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "RPP-1",
+      "summary": "事件名叫 `planned`，payload 却带一个 7 值的 `state`；`planned_partial` 走哪条事件没有答案",
+      "s39": "§9 行 806 标题「发布 `quality.repair.planned`」，示例行 811 `\"state\": \"planned\"`；§7 行 653–655 的 CHECK 有 7 值（planned / planned_partial / blocked_incomplete / escalated / human_resolved / resolved / superseded）",
+      "why_it_matters": "前四个值需要一个事件才能到达消费者：`escalated` 在 §11 C1 里被明确要求单开 `quality.repair.escalated`（行 915），这是自洽的——状态变化有自己的事件。但 `planned_partial` 与 `blocked_incomplete` 没有对应事件，也没有说它们是否也用 `quality.repair.planned` 发。若共用，事件名与 `state` 字段就冲突（名字说 planned，值说 planned_partial）；若不用，这两个状态到不了 S21。本 schema 保留了 `state` 与全 7 值，因为 DDL 明确允许，但**不选边**哪一种发布路径是对的。附带一处：行 827 说 ESCALATE「不能塞进 planned 的字段里」，可示例行 819 就在 planned 的 payload 里放了 `\"escalation\": null`——两条说法互相矛盾。"
+    },
+    {
+      "id": "RPP-2",
+      "summary": "`artifact_sha256` 是裸 `text`，而其余契约里同名概念一律是 `^[0-9a-f]{64}$`",
+      "s39": "§7 行 652 `artifact_sha256 text NOT NULL`（无 pattern）；全文 0 处 `sha256:` 前缀写法，0 处 hex 约束",
+      "why_it_matters": "S39 §4.2 步骤 2c 要求把本 payload 的 `artifact_sha256` 与 `quality.technical.completed` 的 `artifact_sha256` 做相等比对，后者在契约里是 `^[0-9a-f]{64}$`。若 S39 落库时写进了带前缀的形式（`sha256:abc…`）或大写 hex，比对会**静默不等**并触发 quarantine。六份已提交的 QC 契约都用裸 hex，S39 是唯一没声明格式的生产方。要么 S39 的 DDL 补 pattern，要么本 schema 补——但补之前得先确认 S39 实际写的是什么，所以这里没有替它决定。"
+    },
+    {
+      "id": "RPP-3",
+      "summary": "`shot_lineage_id` 在 plan 表里不存在，而一条 plan 可以覆盖多个镜头",
+      "s39": "§9 行 813 事件里有 `shot_lineage_id`；§7 行 642–663 的 plan 表**没有该列**；该列只在 attempt_ledger（行 434）与 attempt_reservation（行 463）",
+      "why_it_matters": "attempt_* 是 per-attempt 的，plan 是 per-batch 的。§4.3 的归因键是 `defect_fingerprint + shot_lineage_id`，§5.2 按它归并 RepairTarget——一条计划完全可能含多个 shot_lineage_id（示例里 `target_count: 2`，两个 target 未必同一个镜头）。事件只带一个 `shot_lineage_id` 时，消费方会以为整条计划属于一个镜头，而实际不是。要么 S39 说明「计划按镜头切分、一条 plan 恒属一个 lineage」，要么把它换成数组或删掉改读 `GET /repair-plans?shot_lineage_id=…`（§8 行 794）。§11 C4（行 918）说 `shot_lineage_id`「在任何契约里都没有定义」也**已过时**：contracts/quality/{technical,semantic,alignment}-completed.v2.schema.json 三份都已 required 它。"
+    },
+    {
+      "id": "RPP-4",
+      "summary": "同一个名字 `recheck_scope` 在三处是三个不同域：`text[]`+`:` / 单字符串+`+` / 数组带未闭合语法",
+      "s39": "§9 行 818 事件 `[\"technical\",\"semantic:continuity_window\"]`（数组、`layer:aspect`）；§7 行 675 `action.recheck_scope text[] NOT NULL`；§6.3 行 624 语法 `technical | semantic:{aspect} | alignment:{aspect} | subtitle`，行 628 又用 `hash`，§4.5 行 324 又用 `identity`",
+      "why_it_matters": "`contracts/quality/check-registry.v2.schema.json` 的 `$defs/check/properties/recheck_scope` 是**单字符串**、7 值 enum（`technical` / `technical+hash` / `technical+audio` / `semantic` / `semantic+continuity` / `alignment` / `subtitle`），用 `+` 连接多层。S39 §6.3 行 621 明说「`check-registry` 里每个 check 带 `recheck_scope` 字段。S39 取所有 target 的并集」——即 S39 读注册表的这套串行语法，再输出成自己的数组 `layer:aspect` 语法。两套语法之间**没有转换规则**：`technical+hash` 要拆成 `[\"technical\",\"hash\"]` 还是别的？`semantic+continuity` 拆成 `semantic:continuity` 还是 `semantic:continuity_window`（事件示例用的是后者）？这不只是格式问题——拆错会让复检少跑一层，而少跑的层正是「修复是否引入新缺陷」的证据。契约与文档冲突，按 AGENTS.md 停下报告，不自行转换。"
+    },
+    {
+      "id": "RPP-5",
+      "summary": "`escalation` 是裸 `jsonb`，唯一形状证据来自一个不属于本事件的示例；两套 escalation 契约互不相容",
+      "s39": "§7 行 660 `escalation jsonb`（可空，无注释、无 CHECK）；形状只见于 §5.7 行 518–529 的 `state: escalated` 输出示例；registry `$defs/escalation` 是 `{metric, comparator, threshold, escalate_to}`",
+      "why_it_matters": "三件事叠在一起：(a) plan 表里的 `escalation` 形状未定义，只有 ESCALATE 输出示例可参照，而那是 `escalated` 状态的对象，不是 `planned` 的；(b) `contracts/quality/check-registry.v2.schema.json` 的 `$defs/escalation` 是**规则**对象（`metric` / `comparator(lt|lte|gt|gte|eq|ne)` / `threshold` / `escalate_to`(12 值 action 枚举)），与示例里的**结果**对象（`reason` / `capped_at` / `remaining_targets` / `handoff`）完全不是一个东西，同名不同义；(c) 事件在 `planned` 里就带 `escalation: null`，而 §9 行 827 明说 ESCALATE「不能塞进 planned 的字段里」。本 schema 只约束到「对象或 null」，不锁键集。"
+    }
+  ]
+}

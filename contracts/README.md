@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 19 个 topic 带**（36 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 20 个 topic 带**（35 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -84,6 +84,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `delivery.package.published` | `delivery.package-published.v2.schema.json` | S43 §6.3 |
 | `post.timeline.revision.created` | `post.timeline-revision-created.v2.schema.json` | S41 §6.3 |
 | `post.master.rendered` | `post.master-rendered.v2.schema.json` | S42 §6.3 |
+| `quality.repair.planned` | `quality.repair-planned.v2.schema.json` | S39 §9 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -109,6 +110,23 @@ S42 / S43 / S41 这三条是又一种缺口，值得单说：**生产方宣布�
 那一段示例里出现过一次**——没有对应 DDL 列、没有流程步骤、没有指标。一个必发字段的语义
 完全悬空，见 PMO-2。这条事件的响度对象同样是三处拼接（事件三字段 / 测量表十二列 /
 §4.5 七字段），而丢掉的那个恰好是唯一带语义的 `conforms_to_spec`，见 PMO-1。
+
+`quality.repair.planned` 是第三类：**事件里的字段有一半没有落库处**。S39 的 plan 表有
+`state` / `artifact_sha256` / `episode_id` / `run_id` / `escalation`，事件里也发了
+`target_count` / `action_count` / `top_action` / `estimated_cost_band` 四个——这四个没有
+任何 DDL 列，是「折叠值」，可从 `snapshot` 与 `action` 表重算出发出时刻的数值。其中
+`top_action` 的「top」按什么排序全文没有定义（动作数 / 成本 / `sequence` 最前，三种口径
+在多动作计划上答案不同），见 x-needs-owner 与 RPP-1。
+
+更硬的缺口在 `shot_lineage_id` 与 `recheck_scope` 两个名字上。`shot_lineage_id` 事件里
+只有一个，可 plan 表根本没有这一列（它只在 per-attempt 的 `attempt_ledger` /
+`attempt_reservation` 上），而一条计划可以覆盖多个镜头——`target_count: 2` 的两个 target
+未必同一个血缘（RPP-3）。`recheck_scope` 则是同一个名字在三个地方三个域：事件是
+`text[]` 用 `layer:aspect` 冒号语法，`check-registry.v2.schema.json` 是**单字符串**用
+`+` 连接，S39 §6.3 自己的枚举列表里又漏了它下一行示例用的 `hash` 与 §4.5 用的
+`identity`。S39 §6.3 明说要「取所有 target 的并集」才算复检范围，也就是说它必须把注册表
+的 `+` 串翻译成自己的 `:` 数组——而**翻译规则不存在**。拆错一层，少跑的那层恰好是
+「修复是否引入新缺陷」的证据，所以这是 RPP-4 而不是排版问题。
 
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
@@ -211,8 +229,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 19 个 payload schema
-                                                              （见上表；其余 36 个 envelope-only）
+                                        └──data_schema_ref──▶ 20 个 payload schema
+                                                              （见上表；其余 35 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -226,7 +244,7 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 19 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 20 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（35 个示例对

@@ -1,0 +1,40 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBCQ7R2M4P6S8T0V2W4X6Y8Z",
+  "source": "S39",
+  "type": "quality.repair.planned",
+  "subject": "rp_01JBH3X4Y5Z6A7B8C9D0E1F2G3",
+  "time": "2026-11-06T16:31:07Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "rp_01JBH3X4Y5Z6A7B8C9D0E1F2G3",
+  "aggregate_sequence": 1,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "evt_01JBCQ5P0K2M4N6Q8R0S2T4U6V",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "plan_id": "rp_01JBH3X4Y5Z6A7B8C9D0E1F2G3",
+    "state": "planned",
+    "artifact_sha256": "6c2f8a1d4b7093e5a8c1f6d2b9047e3a5c8d1f4b7a2e06d9c3b8f5a1e4d70926",
+    "shot_lineage_id": "lin_01JBF8K2M4P6R8T0V2X4Z6B8D0",
+    "episode_id": "ep_3",
+    "run_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+    "target_count": 2,
+    "action_count": 3,
+    "top_action": "temporal_edit",
+    "estimated_cost_band": "medium",
+    "recheck_scope": [
+      "technical",
+      "semantic:continuity_window"
+    ],
+    "escalation": null
+  },
+  "data_ref": {
+    "service_id": "S39",
+    "id": "rp_01JBH3X4Y5Z6A7B8C9D0E1F2G3",
+    "revision": 1,
+    "content_hash": "e4b19c5d7a2f0386b9e4c1a7d5f20b8e3c6a9d4f1b7e0528c3a6f9d2b5e84017"
+  }
+}

@@ -439,6 +439,7 @@
       "topic": "drama.repair-planning.v2",
       "producer": "S39",
       "schema_ref": "event-envelope.v2.schema.json",
+      "data_schema_ref": "quality.repair-planned.v2.schema.json",
       "partition_key": "tenant_id:aggregate_id",
       "delivery": "at_least_once",
       "normal_retention_days": 14,
