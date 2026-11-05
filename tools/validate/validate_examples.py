@@ -66,6 +66,7 @@ SCHEMA_OF = {
     "quality-technical-completed": "event-envelope.v2.schema.json",
     "review-decision-recorded": "event-envelope.v2.schema.json",
     "scheduler-permit-changed": "event-envelope.v2.schema.json",
+    "snapshot-manifest-committed": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }
 

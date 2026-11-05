@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 26 个 topic 带**（29 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 27 个 topic 带**（28 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -91,6 +91,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `agent.task.completed` | `agent.task-completed.v2.schema.json` | S19 §4.3 |
 | `prompt.compiled` | `prompt.compiled.v2.schema.json` | S20 §4.3 |
 | `memory.canon.committed` | `memory.canon-committed.v2.schema.json` | S16 §3.7 |
+| `snapshot.manifest.committed` | `snapshot.manifest-committed.v2.schema.json` | S08 §6.1 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -288,6 +289,49 @@ S09 读不到窗口就被当成「覆盖 0 集」，两个空集求差集为空�
 / `merge` / `revert` 本来就无 manifest），事件把它画成必填，照 DDL 发的合法事件会被本契约拒
 （MSC-3）。
 
+`snapshot.manifest.committed` 是**唯一一条被自己的 outbox 约束挡在门外的事件**，而它不是没
+人要：S21 §3.3 与 §4.4 有完整处理逻辑、S03 行 441 靠它判 `episode.completed`、S16 §3.5 拿它当
+提交通知源、S09/S02/S04/S07/S10/S29 都有消费行。问题在于 §6.1 行 643 把 `aggregate_sequence`
+定成 `revision`，而 outbox 的唯一键是 `(aggregate_id, aggregate_sequence, event_type)`
+（DDL 行 211，行 222 还特意论证「一次提交只可能产生一条」）。可是 `manifest_revision` 的状态机
+（§1.8 行 449–456）有三个**不推进 revision** 的出边：`:accept` 全接受（§3.3 行 511 明写「6) outbox：
+data 里带 `accepted_pointers_delta`」）、`:fence` 置 VOIDED（§4.3 行 588 明写「**必须**……发布
+事件」）。于是 `:commit` 之后再 `:accept`，第二次 `INSERT INTO outbox` **必然撞唯一约束**——
+要么接受事件根本没发出（S21 的「只是指针变了」分支永远不触发、S03 的 `episode.completed` 永远
+不成立），要么实现者改 `aggregate_sequence` 而破坏 §6.1 声明的语义，要么 `ACCEPT` 得是一条
+**新事件**（catalog 里没有，正是 ATC 那一类「发了没人收」）（SMC-1 / SMC-7）。
+
+`FENCE_VOID` 那一支更绕：一次 `:fence` 是**分支级**的，会把同分支下多个 manifest 的多个
+revision 一起作废（§2.4 行 323 的响应是 `voided_revisions: [12, 13]`），产生 N 条事件，而每条
+都带一个 `manifest_ref`（指向被作废的旧 revision、其行的 `execution_fence` 还是旧值）和一个
+`execution_fence`（新值）——**这两个字段一条事件里必然不自洽**。payload 缺 `previous_fence`，
+而同一事件的 `changed_node_epochs` 恰恰用了 `from`/`to` 一对，两种 epoch 的表达方式不一致；
+S21 §4.4 行 696 的判据「`trigger = FENCE_VOID`，**或者** `execution_fence` 从 2 变成 3」要求的正是
+一个差值，而 payload 只给一个数（SMC-2）。`branch_id` 也不在 payload 里，所以消费方连「这次
+fence 影响了哪些集」都聚不起来（SMC-6）。
+
+另有两个数组**完全没有形状**：`accepted_pointers_delta`（§6.1 行 660 示例 `[]`，全文零个非空
+示例）与 `source_revisions`（行 662 是一句 `/* 有变化的引用 */` 注释占位，DDL 行 80 只说「冗余
+存储，用于索引查询」）。前者被 S21 §3.3 行 551（判「要不要跑子图」）与 S03 行 441（判
+`episode.completed`，需要知道「哪个节点成了 master」）两处消费，两者需求还不一样；后者要撑
+索引就必须固定路径，而 `SOURCE_REVISION_STALE`（§3.1 行 420）正是按它查存在性。schema 对这两个
+只收 `array`、元素不设防——**与其发明一个形状，不如把缺口留在冲突表里**（SMC-3）。
+
+`changed_node_epochs` 有形状（`{node_id, from, to}`），但 §2.2 行 288 的响应示例里带着
+`{"node_id":"shot_3_4.video","from":2,"to":2}`——**一个没变的 epoch**。按 §3.2 行 475，`input_fingerprint`
+没变则 epoch 不动，在途任务**仍然有效**；而 S21 §3.3 行 546 与 §4.4 行 685 的匹配条件是
+`node_epoch = from`，`from == to` 时条件成立，于是它会把没过期的任务取消掉——S21 自己犯了它
+§4.4 行 690 明文禁止的「把 `node_epoch` 当 `execution_fence` 用」，只是触发路径不在禁止条款的
+覆盖内（SMC-5）。
+
+最后两处是「首版状态装不下」的第三次重复：`parent_manifest_ref` 的父版本在 DDL 可空
+（`parent_revision IS NULL`，行 88，revision 1 就是这种）、`accepted_revision` 在 DDL 可空
+（行 49，`NULL = 从未接受`，刚 `:commit` 的 rev 1 正是这种），而 §6.1 的示例是 rev 13 且已接受过
+12，两个字段都恰好有值。schema 收成必填（照示例），代价是 DDL 明确允许的首次提交事件被拒
+（SMC-4，探针确认 `null` 两处都被拒）。此外 `parent_manifest_ref` 收完整三键，而 DDL 只存一个
+`parent_revision` 整数——`id` 与 `content_hash` 必须回查 `manifest_revision` 才拿得到，全文没
+说要做这一步（SMC-4 后半）。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -389,8 +433,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 26 个 payload schema
-                                                              （见上表；其余 29 个 envelope-only）
+                                        └──data_schema_ref──▶ 27 个 payload schema
+                                                              （见上表；其余 28 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -404,10 +448,10 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 26 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 27 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（42 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（43 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -459,7 +503,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：42 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：43 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用
