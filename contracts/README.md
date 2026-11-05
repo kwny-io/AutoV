@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 22 个 topic 带**（33 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 23 个 topic 带**（32 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -87,6 +87,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `quality.repair.planned` | `quality.repair-planned.v2.schema.json` | S39 §9 |
 | `connector.observation.received` | `connector.observation-received.v2.schema.json` | S27 §6.5 |
 | `continuity.check.completed` | `continuity.check-completed.v2.schema.json` | S17 §5.2 |
+| `context.pack.created` | `context.pack-created.v2.schema.json` | S18 §6.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -181,6 +182,21 @@ subtitle→S38」，而 `check_id` 命名空间只有 `TECH`/`VIS`/`AUD`/`SUB`�
 S17 是 `none|info|low|medium|high|blocking`，S39/S35/S36 与注册表 schema 是
 `blocker|major|minor|info`——`blocking` 与 `blocker` 差两个字母，按错词表查表落空后最常见的
 写法是取默认权重 0，于是最该先修的缺陷排在 `info`（10）后面（CCT-1）。
+
+`context.pack.created` 是**第六类：名字撞上了已有的企业契约，但装的不是那东西**。仓库里
+早就有 `context-pack.v2.schema.json`（18 个必填字段、带 `claim_refs`/`asset_refs` 数组），
+而 S18 §6.3 的事件是 9 个字段的摘要、只发 `claim_ref_count`。按本仓库给 topic 配
+`data_schema_ref` 的默认做法「有企业 schema 就复用」，会得到一个**每条都失败**的契约：
+把 §6.3 的示例喂给企业契约量到 12 个错误。失败模式最难查——生产方照示例发、消费者在
+inbox 前全拒，S09 的依赖边一条也建不起来。所以这份 schema 独立成文件，示例里连
+`claim_refs` 都不许出现（负向探针会拒），意思是「摘要就是摘要」。（CCP-1）
+
+但这同时暴露了更要紧的一条：S09 §5.4 行 785 明写它的处理是「按 `claim_refs` 写
+`PACK_USES_CLAIM`」——**计数没法建边**。所以这条事件现在「能被校验」和「能被使用」之间
+还差一个字段（CCP-2）。同类还有 `tokens_used` 发了、`token_budget` 没发：3180 是好是坏
+取决于预算，而看不到预算就看不出这个包有没有被裁剪（CCP-5）。另外这条事件与 S17 那条
+用了**同一个** `aggregate_id` 字面量 `series_demo:canon:ep003`，却各自发 `31` 和 `12`——
+按 catalog 的 `tenant_id:aggregate_id` 分区，两个只读服务的序号会在一处交错（CCP-4）。
 
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
@@ -283,8 +299,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 22 个 payload schema
-                                                              （见上表；其余 33 个 envelope-only）
+                                        └──data_schema_ref──▶ 23 个 payload schema
+                                                              （见上表；其余 32 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -298,10 +314,10 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 22 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 23 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（39 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（40 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -353,7 +369,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：39 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：40 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

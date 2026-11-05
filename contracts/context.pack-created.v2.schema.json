@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/context.pack-created.v2.schema.json",
+  "title": "context.pack.created payload v2",
+  "description": "event `context.pack.created` 的 data 部分。权威定义在 plans/S18-context-retrieval.md §6.3（行 464–483，完整示例）、§1.1（行 28–65，pack DDL）、§1.5（行 152–165，与企业契约的对齐规则）、§6.2（行 460–462，不可变）、§7（行 509–519，task_role 的「...」）。**这条事件不是 `context-pack.v2.schema.json`**：那份是企业契约（REST 传的 pack 对象，18 个必填字段、带 `claim_refs`/`asset_refs` 数组），本文件是事件摘要（9 个字段、只带计数）。两者不可互换——把 §6.3 的示例喂给企业契约会报 12 个错误，见 x-conflicts CCP-1。**所以本文件不引用 `context-pack.v2.schema.json`，字段名照 §6.3 抄，不沿用企业契约的字段名。** 这条事件的核心用途是给 S09 建依赖边（S09 §5.4 行 785：按 `claim_refs` 写 `PACK_USES_CLAIM`），而 §6.3 只发计数不发清单——那是本文件记录的最严重的一条缺口，见 CCP-2。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "context_pack_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 472（示例 `ctx_ep3_writer`）+ §1.1 DDL 行 30（`context_pack_id text NOT NULL`，主键 `(tenant_id, context_pack_id, revision)`）。**`context_pack_id` 与 `revision` 一起才唯一**：§6.2 行 462 规定 pack 一经写入不可变，新版本是 `revision+1` 并把旧版挂到 `supersedes_pack_id`。所以只带 id 的消费方拿到的是「所有版本的集合」，必须配 `revision` 才能定位一份具体的 pack。`aggregate_id` 不是它——见 CCP-4。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§6.3 行 473（示例 `1`）+ §1.1 DDL 行 31（`revision integer NOT NULL`）+ §6.2 行 462（`revision+1`）。`minimum: 1`：§1.1 的 `pack_idem` 唯一索引（行 64）按 `(tenant_id, task_role, target_episode_id, checkpoint_sequence, content_hash)` 去重，第一次写入的 revision 是 1。**它与 `content_hash` 是一对**：同输入同 checkpoint 会命中同一幂等键（§5 行 458），所以 revision 只在该索引键变化时才递增。"
+    },
+    "task_role": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 474（示例 `writer`）+ §1.1 DDL 行 34（`task_role text NOT NULL,  -- writer|storyboard|prompt|qc|continuity|...`）+ §7 行 511–519（五类包的差异表）+ §4 行 238（`include_candidates=true` 只允许 `task_role ∈ {preview, review}`）。**刻意不收 enum**：DDL 注释以显式 `...` 结尾，§4 行 238 又引入 `preview` / `review` 两个不在五值里的角色，§7 的表格只覆盖五类。三处合起来至少 7 个值且作者明示集合开放。收五值会拒掉 §4 自己允许的 `preview`/`review`；收七值仍然是在替 S18 定闭集。见 x-conflicts CCP-3。**它是 `pack_idem` 唯一索引的第一个分量**，也是 S19 用来核对 `required_perspective` 的入口（S19 §4 行 588–593），所以值必须稳定——同一个角色的包不能这次叫 `writer` 下次叫 `script`。"
+    },
+    "target_episode_order": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§6.3 行 475（示例 `3`）+ §1.1 DDL 行 36（`target_episode_order integer NOT NULL`）+ 行 35（`target_episode_id text NOT NULL`）。**注意事件只带了 order，没带 id**：DDL 两列都有，而 `pack_idem` 唯一索引用的是 `target_episode_id`（行 64），不是 order。S09 要按集建依赖边时，order 在多分支/多项目里不唯一（S16 §1 的 branch 让同一 order 可能有多个历史版本），见 x-needs-owner CPP-N1。`minimum: 1`：第零集没有含义。"
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "来源：§6.3 行 476（示例 `{\"commit_sequence\": 27, \"content_hash\": \"...\"}`）+ §1.1 DDL 行 40–41（`checkpoint_sequence bigint NOT NULL` / `checkpoint_hash bytea NOT NULL`）+ §1.5 行 160（「契约只有这两个字段，`branch_id` 在 pack 顶层」）。**这是 pack 有效性的来源**：§6.4 行 494 的失效判定就是 `pack.checkpoint_sequence < 新 commit`，所以这个值必须精确。**事件没有带上 pack 顶层的 `branch_id`**，而 checkpoint 本身是按分支计的（S16 §1 行 68 的 head 是 `(series_id, branch_id)` 的函数）——两个 pack 报同一个 `commit_sequence` 可能来自不同分支的不同历史点，见 CCP-4。",
+      "properties": {
+        "commit_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§6.3 行 476（`27`）+ §1.1 DDL 行 40 + S16 §1 行 132（genesis 是 0）。`minimum: 0` 与 `context-pack.v2.schema.json` 的 `checkpoint.commit_sequence` 一致（那份也是 `minimum: 0`）；收 1 会让尚未提交 claim 的分支上建出的空 pack 无法发事件。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§6.3 行 476（`\"...\"`）+ §1.1 DDL 行 41（`checkpoint_hash bytea NOT NULL`）+ S16 §1 行 132（checkpoint_hash 是 sha256，即 64 hex）。**键名与 DDL 不一致**：DDL 叫 `checkpoint_hash`，事件与企业契约都叫 `content_hash`（§6.3 行 476、`context-pack.v2.schema.json` 的 `checkpoint.content_hash`）。本文件取事件名。见 CCP-4。"
+        }
+      },
+      "required": [
+        "commit_sequence",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "claim_ref_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：**只有 §6.3 行 477**（示例 `42`）——**DDL 没有这一列**。§1.1 行 46 存的是 `claim_refs jsonb NOT NULL`（`[{service_id,id,revision,content_hash}]` 的数组），计数是 `jsonb_array_length(claim_refs)` 的派生值。**这是本事件最要命的地方**：S09 §5.4 行 785 明说它的处理是「按 `claim_refs` 写 `PACK_USES_CLAIM`」，可事件里发的只有这个计数——**计数没法建边**。见 CCP-2。本 schema 收 `minimum: 0`：一个 `unresolved_conflicts` 全失败的 pack 可以有零条引用，而它仍然要发事件（那正是 S09 需要知道「这个 pack 没依赖任何事实」的时刻）。"
+    },
+    "prohibited_assumption_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：**只有 §6.3 行 478**（示例 `6`）——DDL 同样没有这一列。§1.1 行 50 的 `prohibited_assumptions jsonb NOT NULL` 是 `[{id, text, basis, claim_ref, severity}]` 的结构化数组，§1.5 行 158 规定对外序列化时只输出 `text` 并用 `severity='hard'` 优先、`assumption_id` 升序排列。**所以这个计数是「序列化后的条数」，与 DDL 的行数在去重规则未定义前不一定相等**，见 x-needs-owner CPP-N2。它是 §7 行 519 的交叉核对入口：「`qc`/`continuity` 包的 `prohibited_assumptions` 用于交叉核对 S17 的覆盖率」——但核对需要内容，不是条数，这也是同一个缺口的一部分。"
+    },
+    "tokens_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§6.3 行 479（示例 `3180`）+ §1.1 DDL 行 54（`tokens_used integer NOT NULL`）+ §8 行 546（指标 `s18_tokens_used` 直方图按 `task_role`）+ §1.1 行 53（`token_budget integer NOT NULL`）。**`tokens_used` 有 DDL 列，而与之配对的 `token_budget` 事件**没有**发**——所以消费方看得到花了多少，看不到预算多少，无法判断「这个 pack 是不是被截断了」。§3 行 342 说预算是确定性分配的，超预算会裁剪，那消费方更需要知道有没有裁。见 CPP-5。`minimum: 0`：空 pack 的 `tokens_used` 是 0。"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§6.3 行 480（示例 `\"...\"`）+ §1.1 DDL 行 58（`content_hash bytea NOT NULL`）+ §1.1 行 67（计算式：`sha256(canonical_json({tenant, series, branch, episode_order, perspective, checkpoint, claim_refs, asset_refs, prohibited_assumptions}))`）。**这是整个 pack 的可复现性锚点**：§1.1 行 67 说「同样的输入永远得到同样的 hash」，§9 行 618 的验收用例就是「同输入两次请求 → `content_hash` 相同」。所以它必须收 `^[0-9a-f]{64}$`——它是相等比对的输入，一次大小写或前缀漂移就会让「可复现」这个性质静默失效，而失效率恰好等于漂移率，不会报错。**它覆盖 8 个分量，而事件只发了其中 3 个**（`checkpoint` 两键、`target_episode_order`，以及由 `task_role` 近似限定的 perspective）——所以消费方**无法从事件重算它**，只能接收。见 CPP-1。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "context_pack_id",
+    "revision",
+    "task_role",
+    "target_episode_order",
+    "checkpoint",
+    "claim_ref_count",
+    "prohibited_assumption_count",
+    "tokens_used",
+    "content_hash"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`target_episode_id`，以及它与 `target_episode_order` 的关系",
+      "demanded_by": "plans/S18-context-retrieval.md §1.1 DDL 行 35–36、行 64（`pack_idem` 唯一索引用 `target_episode_id`）；消费侧 plans/S09-lineage-impact.md §5.4 行 785（按事件建集级依赖边）",
+      "s18_status": "DDL 同时有 `target_episode_id text NOT NULL` 与 `target_episode_order integer NOT NULL`，而 §6.3 的事件示例只带 order。两者不是同一个量：order 是「第几集」的序号，id 是实体主键。S18 §1.1 行 64 的幂等索引用的是 id——说明作者知道 id 才是键。在多分支项目里（S16 §1 的 `canon_branch` 只插一行、不复制 claim），同一个 order 可能对应不同分支上的不同集版本，所以 order 单独不唯一。本 schema 不与 DDL 冲突（事件没有这个字段就不校验它），但事件缺它是实打实的。要补需要 owner 定：事件是否补 `target_episode_id`，还是 S09 靠 `context_pack_id` 回查 S18。"
+    },
+    {
+      "field": "`prohibited_assumption_count` 的口径（序列化条数还是 DDL 行数），以及它在交叉核对里的用途",
+      "demanded_by": "plans/S18-context-retrieval.md §6.3 行 478、§1.1 行 50、§1.5 行 158、§7 行 519；消费侧 plans/S17-continuity.md §4.3 行 327（pack 的 `prohibited_assumptions` 是否被本次检查覆盖）",
+      "s18_status": "三个地方指向三个数：(1) DDL 的 `prohibited_assumptions jsonb` 是带 `severity`/`basis`/`claim_ref` 的结构化行；(2) §1.5 行 158 的序列化规则按 `severity='hard'` 优先排序、只输出 `text`；(3) §6.3 的 `prohibited_assumption_count` 没说是哪一边的条数。如果序列化时对 `text` 去重（§1.5 没说不去重），那计数会小于 DDL 行数，而消费方拿它做「覆盖率是否达 100%」的分母就会算错。同时 §7 行 519 与 S17 §4.3 行 327 的交叉核对本质上是**内容比对**（每个 blocking 缺陷是否在 pack 的禁则里），条数根本不够用。本 schema 只收非负整数。要补需要 owner 定口径，并决定核对是靠 `GET /context-packs/{id}` 回查还是事件补内容。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "CCP-1",
+      "summary": "`context-pack.v2.schema.json` 与企业契约同名的文件装的是两样东西：REST 的完整 pack 与事件的摘要",
+      "enterprise_contract": "contracts/context-pack.v2.schema.json：18 个字段全部 required，含 `tenant_id` / `series_id` / `branch_id` / `perspective` / `claim_refs` / `asset_refs` / `unresolved_conflicts` / `prohibited_assumptions`（数组）/ `token_budget` / `source_watermark` 等，`additionalProperties: false`",
+      "event_example": "plans/S18-context-retrieval.md §6.3 行 471–481：9 个字段，`claim_ref_count` / `prohibited_assumption_count` 是**计数**而不是数组，没有 `perspective`，也没有 `branch_id`",
+      "measured": "把 §6.3 的示例当 `data` 喂给企业契约校验，得到 12 个错误（缺 `schema_version` / `tenant_id` / `series_id` / `branch_id` / `perspective` / `claim_refs` / `asset_refs` / `unresolved_conflicts` / `prohibited_assumptions` / `token_budget` / `source_watermark`，以及 `claim_ref_count` / `prohibited_assumption_count` 为额外属性）",
+      "why_it_matters": "本仓库给 topic 加 `data_schema_ref` 的默认做法是「payload 已经有企业 schema 就复用」——S18 这一条**不能复用**。若照默认做法把 `data_schema_ref` 指向 `context-pack.v2.schema.json`，每一条 `context.pack.created` 都会校验失败，而失败模式是「生产方以为发了合法事件、消费方在 inbox 前全部拒收」——S09 的依赖边建不起来，于是「改前集触发后续集失效」的整条链路静默断掉（§6.3 行 485 说这条事件就是那条链路的上游）。反过来，若让 S18 按企业契约发完整 pack，事件体积会带上全部 `claim_refs`/`asset_refs`/`episode_blocks` 摘要块——那正是 §6.2 与 §1.5 想避免的（pack 由 `GET /context-packs/{id}` 取，事件只做通知）。本文件因此独立成 schema，并在描述里点明两者不可互换。要定的是：事件摘要是否永远与 pack 对象分离（那样两份 schema 长期共存，需要防止漂移），还是摘要里补一个 `pack_ref` 让消费方回查（那 `claim_ref_count` 这类计数就没有存在必要）。"
+    },
+    {
+      "id": "CCP-2",
+      "summary": "S09 按 `claim_refs` 建依赖边，而 S18 的事件只发 `claim_ref_count`",
+      "s09_consumer": "plans/S09-lineage-impact.md §3.2 行 70：`PACK_USES_CLAIM`（S16 claim revision → S18 context_pack revision），「S09 从 `context_pack.created.claim_refs` 推导」；§5.4 行 785：「`context.pack.created` | S18 | 按 `claim_refs` 写 `PACK_USES_CLAIM`（`origin=EVENT_DERIVED`） | `origin_event_id`」；§6 行 615：影响分析向上找「哪些 `context_pack` 引用了这些 claim」即 `PACK_USES_CLAIM` 的 target 侧",
+      "s18_producer": "plans/S18-context-retrieval.md §6.3 行 477：`\"claim_ref_count\": 42`——只有计数；§1.1 行 46 的 `claim_refs jsonb` 只在库里",
+      "why_it_matters": "这是「消费者要的字段生产者不发」的教科书形态，但后果比一般缺字段重：`PACK_USES_CLAIM` 的边必须逐条写（一条边一个 claim revision），计数无法展开成边。S09 只有三条路：(1) 收到事件后 `GET /context-packs/{id}` 回查——但 §6.3 的事件里连 `tenant_id`/`series_id` 都没有（那些在 envelope），回查要拼请求，且 S09 §11 C09-2 行 985 已经指出它的 `depends_on` 缺 S18，说明这条 RPC 依赖在契约图里根本没登记；(2) 按计数写 `claim_ref_count` 条无名边——那是伪造数据；(3) 不建边——那 `PACK_USES_CLAIM` 永远为空，于是「改一个 claim → 找出所有受影响的 pack」这条 S09 的核心能力失效，而这正是 E08/E10 验收链的中间环节。本 schema 只收计数（照 §6.3），并在示例里保留 `claim_ref_count: 42`——它能通过校验，正是本文件想说明的问题：**这条事件现在能被校验，但仍然不能被 S09 使用。** 要定的是：事件补 `claim_refs` 数组（体积代价：42 条四键引用），还是明确 S09 必须回查并把该 RPC 写进 catalog 的 `depends_on`。"
+    },
+    {
+      "id": "CCP-3",
+      "summary": "`task_role` 至少七处出现、三处取值不同，且作者用 `...` 明示集合开放",
+      "ddl": "plans/S18-context-retrieval.md §1.1 行 34：`task_role text NOT NULL,  -- writer|storyboard|prompt|qc|continuity|...` —— 五值 + 省略号",
+      "table": "§7 行 511–519：五行的差异表（`writer` / `storyboard` / `prompt` / `qc` / `continuity`）",
+      "candidate_rule": "§4 行 238：「`include_candidates=true` 只允许 `task_role ∈ {preview, review}`」——两个新值",
+      "s19_side": "plans/S19-agent-runtime.md §4 行 593：`required_perspective text NOT NULL CHECK (required_perspective IN ('omniscient','character','audience'))`——S19 侧只约束视角，不约束角色名，所以角色名的闭集没有任何一方在守",
+      "why_it_matters": "`task_role` 参与三件事：(1) `pack_idem` 唯一索引（§1.1 行 64），所以值的稳定性直接决定幂等——同一角色两种拼写会产生两个 pack，两次计费；(2) §7 的差异表，决定包里装什么 kinds，改一个名字就换了包的内容；(3) S19 的 `PERSPECTIVE_MISMATCH` 校验，S19 只知道视角不知道角色。收五值会拒掉 §4 允许的 `preview`/`review`；收七值是替 S18 定闭集。本 schema 因此只收非空字符串。要定的是：`task_role` 的规范闭集、`preview`/`review` 是正式角色还是调试入口、以及拼写的权威登记处（`role_profile` 表 §1.3 行 138–146 有 `task_role` 列，看起来是候选，但那里也没列值域）。"
+    },
+    {
+      "id": "CCP-4",
+      "summary": "`aggregate_id` 用的是同一集字符串，导致 S17 与 S18 的事件在同一个聚合上序列号自相矛盾",
+      "s18_event": "plans/S18-context-retrieval.md §6.3 行 469–470：`\"aggregate_id\": \"series_demo:canon:ep003\"` / `\"aggregate_sequence\": 31`",
+      "s17_event": "plans/S17-continuity.md §5.2 行 343–344：`\"aggregate_id\": \"series_demo:canon:ep003\"` / `\"aggregate_sequence\": 12`",
+      "partition": "contracts/event-topics.v2.json 对这两个 topic 都写 `\"partition_key\": \"tenant_id:aggregate_id\"`",
+      "why_it_matters": "两条事件分别由 S17 与 S18 发出，却用了**同一个** `aggregate_id` 字面量。envelope 的 `aggregate_sequence` 语义是「同一聚合内的单调序号」，那么 12 与 31 必须在同一条序列上——可两家服务各自生成序号，谁也看不到对方的。结果有两种，都坏：若下游按 `aggregate_id` 归并（catalog 的分区键正是这么写的），两个生产者会往同一分区里交错写互不相干的序号，投影侧看到的序列有洞、有回声；若按「每个生产者一个序列」理解，那 `aggregate_id` 就该带生产者维度（例如 `S18:series:canon:ep`），现在的写法会让 S17 的检查结果与 S18 的 pack 被系统认为是同一实体的状态变更。更微妙的是语义：这一串是「正史的那个集」，真正的状态权威是 S16 的 `(series, branch, commit_sequence)`——S17/S18 都不写它，所以拿它当聚合根意味着两个只读服务在冒充事实流的形状。清单里同一个字面量只出现这两次，说明它不是已有惯例、是一次复制。要定的是：`aggregate_id` 该由谁定义（S16？S08？）、是否需要生产者维度，以及在它定下来之前 S17/S18 的序列号如何解释。"
+    },
+    {
+      "id": "CCP-5",
+      "summary": "事件发了 `tokens_used` 却没发 `token_budget`，消费方看得到花费看不到是否被裁剪",
+      "ddl": "plans/S18-context-retrieval.md §1.1 行 53–55：`token_budget integer NOT NULL` / `tokens_used integer NOT NULL` / `budget_breakdown jsonb NOT NULL`——三列齐全",
+      "event": "§6.3 行 479：只有 `\"tokens_used\": 3180`",
+      "rule": "§3 行 342：「分配必须**确定性**：同输入 + 同 profile 版本 → 同结果（用于 content_hash 复现）」；§3 行 259 注：预算不足时的裁剪顺序是先 perspective 过滤、后分配，所以裁剪是正常路径而不是异常",
+      "why_it_matters": "`tokens_used` 单独没有诊断价值：3180 是好是坏取决于预算是 3200（差点撑爆，内容可能被裁）还是 8000（很宽松）。而「有没有被裁」直接影响 pack 的可用性——§7 行 519 说 `qc`/`continuity` 包要覆盖 S17 的全部 blocking 缺陷，裁剪过的包做不到。消费方（S19 的 AgentTask、S17 的交叉核对）拿到一个 3180 的 pack，无法判断它是完整还是残缺。`budget_breakdown`（按 section 的分账）也没发，所以连「哪个 section 被砍了」都查不到。要定的是：事件是否补 `token_budget`（一个整数，代价极小），或者消费方一律回查 `GET /context-packs/{id}`——后者与 CCP-2 是同一个决定。"
+    }
+  ]
+}
