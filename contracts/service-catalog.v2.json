@@ -968,7 +968,9 @@
       "command_api": "POST /render-jobs",
       "query_api": "GET /render-jobs/{id}",
       "published_events": [
-        "post.master.rendered"
+        "post.master.rendered",
+        "post.mix.completed",
+        "post.render.failed"
       ],
       "depends_on": [
         "S41",
@@ -994,7 +996,10 @@
       "command_api": "POST /delivery-packages",
       "query_api": "GET /delivery-packages/{id}",
       "published_events": [
-        "delivery.package.ready"
+        "delivery.package.created",
+        "delivery.package.sealed",
+        "delivery.package.published",
+        "delivery.publish.failed"
       ],
       "depends_on": [
         "S08",
@@ -1020,7 +1025,9 @@
       "command_api": "POST /evaluation-runs",
       "query_api": "GET /metrics",
       "published_events": [
-        "evaluation.report.published"
+        "analytics.metric.snapshot.created",
+        "analytics.evaluation.completed",
+        "analytics.cost.projection.updated"
       ],
       "depends_on": [
         "S23",

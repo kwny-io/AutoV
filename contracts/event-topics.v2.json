@@ -464,7 +464,29 @@
       "pii_payload": "references_only_by_default"
     },
     {
-      "event_type": "delivery.package.ready",
+      "event_type": "post.mix.completed",
+      "topic": "drama.composition.v2",
+      "producer": "S42",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "post.render.failed",
+      "topic": "drama.composition.v2",
+      "producer": "S42",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "delivery.package.created",
       "topic": "drama.delivery.v2",
       "producer": "S43",
       "schema_ref": "event-envelope.v2.schema.json",
@@ -475,7 +497,62 @@
       "pii_payload": "references_only_by_default"
     },
     {
-      "event_type": "evaluation.report.published",
+      "event_type": "delivery.package.sealed",
+      "topic": "drama.delivery.v2",
+      "producer": "S43",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "delivery.package.published",
+      "topic": "drama.delivery.v2",
+      "producer": "S43",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "delivery.publish.failed",
+      "topic": "drama.delivery.v2",
+      "producer": "S43",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "analytics.metric.snapshot.created",
+      "topic": "drama.evaluation-analytics.v2",
+      "producer": "S44",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "analytics.evaluation.completed",
+      "topic": "drama.evaluation-analytics.v2",
+      "producer": "S44",
+      "schema_ref": "event-envelope.v2.schema.json",
+      "partition_key": "tenant_id:aggregate_id",
+      "delivery": "at_least_once",
+      "normal_retention_days": 14,
+      "replay_side_effects": false,
+      "pii_payload": "references_only_by_default"
+    },
+    {
+      "event_type": "analytics.cost.projection.updated",
       "topic": "drama.evaluation-analytics.v2",
       "producer": "S44",
       "schema_ref": "event-envelope.v2.schema.json",

@@ -19,7 +19,16 @@ api:
   query: GET /delivery-packages/{id}
 
 publishes:
-  - event_type: delivery.package.ready
+  - event_type: delivery.package.created
+    topic: drama.delivery.v2
+    retention_days: 14
+  - event_type: delivery.package.sealed
+    topic: drama.delivery.v2
+    retention_days: 14
+  - event_type: delivery.package.published
+    topic: drama.delivery.v2
+    retention_days: 14
+  - event_type: delivery.publish.failed
     topic: drama.delivery.v2
     retention_days: 14
 

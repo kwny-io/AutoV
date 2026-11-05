@@ -19,7 +19,13 @@ api:
   query: GET /metrics
 
 publishes:
-  - event_type: evaluation.report.published
+  - event_type: analytics.metric.snapshot.created
+    topic: drama.evaluation-analytics.v2
+    retention_days: 14
+  - event_type: analytics.evaluation.completed
+    topic: drama.evaluation-analytics.v2
+    retention_days: 14
+  - event_type: analytics.cost.projection.updated
     topic: drama.evaluation-analytics.v2
     retention_days: 14
 
