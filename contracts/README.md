@@ -15,7 +15,8 @@ contracts/
   event-topics.v2.json         48 个 topic，注册 55 个 event_type
   mcp-tools.v2.design.json     12 个 MCP 工具（streamable-http）
   redaction-policy.v2.json     密钥脱敏规则表：secret 闭集、替换形态、兜底（见下）
-  *.v2.schema.json             9 个企业 schema（JSON Schema 2020-12）
+  *.v2.schema.json             10 个 schema（JSON Schema 2020-12）：9 个企业，
+                               + artifact-ingested（单 topic 的 payload，见下）
   domain-v1/                   v1 领域 payload 基线，保留作字段参考
   examples/                    结构与示例（占位 hash / ID，不能当 fixture）
   quality/                     质检缺陷族与 check 登记项（见下）
@@ -37,6 +38,51 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 **顺序是硬约束**：脱敏在哈希之前。S45 若用明文算 `record_hash` 再存替换后的形态，链就复算不出来，该 stream 之后每条都校验失败；S46 若先算 `params_sha256` 再替换，合法重试会变成 `REQUEST_HASH_MISMATCH`。所以**存下来的就是 `canonical` 的原样**——验链器不需要知道这份契约，检测规则以后怎么改也只影响新记录。
 
 这份文件是 `status: "proposal"`。四个 `open_questions`（R-1 KMS 密钥归属、R-2 S46 是否该把 `provider_credential` 当错误而非替换、R-3 标记里要不要带检测器版本、R-4 侧车 vs 每服务自实现）没有在方案层能给出的答案，需要平台/安全裁决。
+
+## 事件 payload 怎么挂 schema：`data_schema_ref`
+
+**envelope 不约束 payload。** `event-envelope.v2.schema.json` 里 `data` 只写了 `{"type": "object"}`
+——所以 55 个 topic 虽然都填了 `schema_ref`，那指的是 envelope，`data` 里放什么形状的
+东西，契约层从来没有说过。生产方按散文发，消费方按散文读，谁都没错，谁也校验不了。
+
+要强类型就分两层：
+
+```jsonc
+{
+  "event_type": "artifact.ingested",
+  "schema_ref": "event-envelope.v2.schema.json",        // 信封：所有 topic 都指这一个
+  "data_schema_ref": "artifact-ingested.v2.schema.json" // 载荷：只有需要时才加
+}
+```
+
+**为什么是新增一个键，而不是塞进注册项现有字段：** `schema_ref` 的语义已经被 55 个 topic
+钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
+是纯增量，缺省 = 没有 payload 契约（envelope-only），也就是今天 54/55 个 topic 的状态。
+
+**这个键目前只有 `artifact.ingested` 一个 topic 带**，这是有意的，不是遗漏。其余 topic
+要么 payload 已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
+经 REST 传递），要么本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
+契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
+
+`tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
+envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。`contracts/examples/artifact-ingested.json`
+是这条路径的现有用例。
+
+### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
+
+字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
+和 `x-conflicts` 两个扩展键里**，不走散文：
+
+| 消费方要的 | S28 有吗 | 结论 |
+|---|---|---|
+| `codec` | 只有散文「探测产出……编码」，无字段名、无列 | `NEEDS_OWNER` |
+| `frame_count` | 无（「帧数上限」是炸弹防护限额，不是元数据） | `NEEDS_OWNER` |
+| `timecode_start` | 无 | `NEEDS_OWNER` |
+| `ingesting_service` | 无，**且 §6.1 请求体根本没有请求方字段** | `NEEDS_OWNER`，而且是 S28 的输入缺口 |
+
+`duration_ms` 允许 0 与 NULL（S28 DDL）、四家消费方要求 `> 0 NOT NULL`——这是**真冲突**，
+写进 `x-conflicts`，不在 schema 里选边：schema 按权威（S28）的取值域写，消费方的
+「阻塞 + 告警」是防御而非契约。
 
 ## quality/：修复路由的两份数据 + 一个加载期校验器
 
@@ -117,7 +163,9 @@ python contracts/quality/validate_registry.py <registry.json>
 ```
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
-        └──引用──▶ event-topics.v2.json ──引用──▶ event-envelope.v2.schema.json
+        └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
+                                        └──data_schema_ref──▶ artifact-ingested.v2.schema.json
+                                                              （仅 artifact.ingested，见上）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
