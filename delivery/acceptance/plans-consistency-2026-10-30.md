@@ -2,9 +2,14 @@
 
 范围：`plans/` 下 **48 份**服务实现方案 —— 48 个服务全部有了实现方案，由 8 个并行会话产出后合并到 `main`。
 
-结论：**48 份里 45 份与契约完全自洽；3 份（S42 / S43 / S44）有一处共同的事件命名冲突待裁决（C9，见 §2.5）。**
-此前登记的 C1 冲突已收敛（§2），G1 / G2 缺口已关闭（§3 / §4），C6 / C7 / C8 契约缺口已落（§2.4）。
-没有阻断实现的问题 —— C9 只影响订阅侧，不阻塞 S42 / S43 / S44 自身的写入路径。
+结论：**48 份全部与契约自洽。** 最后一处冲突 C9（事件命名，S42 / S43 / S44）已于 2026-11-05 裁决并落地
+（§2.5，commit `4f1bdcb`）：发布侧补充登记 10 个 `event_type`、删除 2 个零消费方的旧名，
+消费侧改正 6 处指向错误产出方的事件名。事件目录由 48 条增至 55 条。
+C1 冲突已收敛（§2），G1 / G2 缺口已关闭（§3 / §4），C6 / C7 / C8 契约缺口已落（§2.4）。
+**仍未落的是 payload schema** —— 55 个 `event_type` 里没有一条有独立的 `data` schema，
+结构只写在各方案的事件定义里。这不阻断实现，但阻断跨服务的自动校验，见 §7 第 5 条。
+另有两处**新查实的文档缺陷**（不影响 C9 结论）：本报告此前写的「74 条 check」应为 99，
+以及 3 条 `check_id` 违反 S35 自己的三段式命名规约 —— 见 §7 第 6、7 条。
 
 ---
 
@@ -19,14 +24,15 @@
 | 服务 ID 引用有效性 | 全量正则扫描对比 catalog 48 项 | **0 越界引用** |
 | 幂等键格式 | `tenant_id + command_id + request_hash` | **47/48 一致**；S27 的幂等入口不同（`dispatch_id` + `stable_client_key` 双唯一约束，见 §6.2），不算偏离 |
 | `execution_fence` / `node_epoch` 混用 | 逐文件扫描误用句式 | **0 处混用** |
-| defect type 闭集 | 97 个 check 的 `defect_type` 对 14 值闭集 | **97/97 合规** |
+| defect type 闭集 | 99 个 check 的 `defect_type` 对 14 值闭集 | **99/99 合规**（重数：TECH 23 / VIS 32 / AUD 20 / SUB 24，见 §7 第 6 条） |
+| `check_id` 命名规约 | 99 条首格对 `S35:157` 的 `<LAYER>.<GROUP>.<NAME>` | **96/99 合规**；S35 的 `TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME` 只有两段，见 §7 第 7 条 |
 | 动作族一致性 | S35 §2.2.1 的 14 行 `chain` + `fallback` 逐格比对 `action-families.v2.json` | **14/14 一致**；`lipsync` 是单动作链（`redo_lipsync`，无箭头），需单独比对 |
 | QCReport 规范唯一性 | 检查是否被复述 | **唯一在 S35 §2**，S36/S37/S38 只引用 |
 | permit 状态机三方一致 | S22 / S26 / `admission-record.v2.schema.json` | **一致**；S22 的 `EXPIRED` 明确不外露（C22-4 已记录） |
 | reservation 状态机 | S23 / 契约枚举 | **一致**；`EXPIRED` 同样不外露（C23-4b 已记录） |
 | outbox DDL 完整性 | 44 个内联 `CREATE TABLE ... outbox` 逐个解析列名 | **44/44 六列齐全**（`tenant_id` / `partition_key` / `aggregate_id` / `aggregate_seq` / `headers` / `published_at`） |
 | 跨库写入 / 跨库 JOIN | 正负向扫描 | **0 处**（命中 2 处均为"禁止跨库 JOIN"的表述） |
-| 发布事件名 ↔ `event-topics.v2.json` | 48 份的"发布"行逐个比对目录 48 个 `event_type` | **45/48 一致**；S42/S43/S44 共 9 个类型未注册，见 §2.5 |
+| 发布事件名 ↔ `event-topics.v2.json` | 48 份的"发布"行逐个比对目录的 55 个 `event_type` | **48/48 一致**（2026-11-05 补登后重跑）；反向检查也通过：catalog 声明的 55 条与目录 55 条双向无差 |
 | E01–E40 覆盖 | 全量扫描 | **40/40** 被引用 |
 
 ---
@@ -121,11 +127,11 @@ candidates = action_family[defect.defect_type]
 在那之前，**族级约束有代码守着，check 级的窗口与起点动作仍靠人工** —— 这句话必须留着，
 因为它正是 C1 当初想消灭的那类风险。已记入 [contracts/README](../../contracts/README.md) 缺口第 4 条。
 
-### 2.5 C9（待裁决，2026-11-05）：三份方案的发布事件名未在 `event-topics.v2.json` 注册
+### 2.5 C9（已裁决，2026-11-05，commit `4f1bdcb`）：三份方案的发布事件名未在 `event-topics.v2.json` 注册
 
-48 份方案里有 45 份的"发布"行与目录逐字一致。剩下 3 份一共写了 **9 个目录里不存在的 `event_type`**：
+**原问题。** 48 份方案里有 45 份的"发布"行与目录逐字一致。剩下 3 份一共写了 **9 个目录里不存在的 `event_type`**：
 
-| 服务 | 目录登记 | 方案实际发布 |
+| 服务 | 目录原登记 | 方案实际发布 |
 |---|---|---|
 | S42 | `post.master.rendered` | 同上 + `post.mix.completed`、`post.render.failed` |
 | S43 | `delivery.package.ready` | `delivery.package.created`、`.sealed`、`.published`、`delivery.publish.failed` |
@@ -136,25 +142,43 @@ candidates = action_family[defect.defect_type]
 三态，S44 的 K4（单集交付耗时）要的是 **published 那个时点**，S47 要的是 **sealed 那个时点**。
 一条 `ready` 喂不饱两个下游。S42 同理：目录只有"渲染完成"，而 `remix` 的完成与渲染失败是两件事。
 
-**已经在按不存在的类型建订阅的地方**（这才是这条冲突值得单列的原因）：
+#### 裁决：发布侧补登，消费侧改名
 
-| 消费方 | 订阅的未注册类型 | 后果 |
+关键区分是**这条错名是谁的错**。方案要发的状态，目录里没有 → 补登；方案把别人发的事件名写错了
+→ 改方案，不能补登。补登一个没有生产者的名字，只会造出新的空流。
+
+**发布侧（补登 10 条，删 2 条）。** `contracts/event-topics.v2.json` 由 48 条增至 55 条，
+`contracts/service-catalog.v2.json` 的三个 `published_events` 同步，`service.yaml` 已重新生成：
+
+| 服务 | 新增登记 | topic |
 |---|---|---|
-| [S47](../../plans/S47-realtime-projection.md) §4 | `delivery.package.sealed` | 交付进度投影永远收不到事件 |
-| [S44](../../plans/S44-evaluation-analytics.md) K4 | `delivery.package.published` | K4 时长恒为空 |
-| [S44](../../plans/S44-evaluation-analytics.md) §6.3 | `billing.cost.recorded`、`generation.attempt.completed`、`quality.qc.completed` | K3/K5 的分母全部落空 |
+| S42 | `post.mix.completed`、`post.render.failed` | `drama.composition.v2` |
+| S43 | `delivery.package.created`、`.sealed`、`.published`、`delivery.publish.failed` | `drama.delivery.v2` |
+| S44 | `analytics.metric.snapshot.created`、`analytics.evaluation.completed`、`analytics.cost.projection.updated` | `drama.evaluation-analytics.v2` |
 
-后三个名字尤其要注意：S23 在目录里只有 `finance.ledger.entry-posted`，S26 只有
-`generation.job.state-changed`，四份 QC 服务各只有一条 `completed`/`ready`。
-S44 写的这六条消费事件里，**四条在目录里不存在** —— 它的 KPI 口径是照着不存在的流设计的。
+删除 `delivery.package.ready` 与 `evaluation.report.published` —— 全仓（`plans/` `contracts/` `docs/`
+除设计包）**零消费方**，是设计包的粗粒度残名，留着只会诱使后来者订阅一个永远空的流。
 
-**为什么不自行选边**（[AGENTS.md](../../AGENTS.md)「契约与文档冲突 → 停下，报告冲突」）：
-补登 9 个 `event_type` 需要连 payload schema 一起补，那是契约变更；退回单条事件则需要
-把状态塞进 `data.state`，那是让 S42/S43 的 outbox 与状态机脱节。两条路各有代价，
-**且与 C1 同一性质：改的是契约，不该由实现方案单方面决定**。
+**消费侧（改名 6 处，不补登）。** [S44](../../plans/S44-evaluation-analytics.md) §6.3 有 4 个、
+[S43](../../plans/S43-delivery.md) §6.3 有 2 个名字，指向的产出方从来不发那个类型：
 
-已按仓库既有格式记入三份方案各自的 `§11 冲突` 节（S42 C8 / S43 C8 / S44 C8，编号互相指向），
-待契约维护方裁决。**在裁决前，实现只按方案写入，不按目录订阅 —— 两边一旦不一致，宁可空订阅也不要静默错值。**
+| 方案写的 | 实际产出方只发 | 处理 |
+|---|---|---|
+| `billing.cost.recorded`（S23） | `finance.ledger.entry-posted` | 改名，取 `data.entry_type` / `data.attribution.*` |
+| `generation.attempt.completed`（S26） | `generation.job.state-changed` | 改名，按 `data.attempt_id` 聚合、`data.state` 判终态 |
+| `quality.qc.completed`（S35–S38） | 四条各一：`quality.technical.completed`、`quality.semantic.completed`、`quality.alignment.completed`、`post.subtitle.ready` | 拆四条；K5 按 `defect_type` 闭集归并，不按服务归并 |
+| `delivery.package.published`（S43） | 同左 —— 已随本轮补登 | 无需改 |
+| `governance.asset.rights.changed`（S15） | `asset.voice.authorization.changed` | 改名；撤销语义在 `data.to_state` + `data.reason_code` |
+| `production.subtitle.revision.created`（S38） | `post.subtitle.ready` | 改名；G6 用它的 `timeline_revision` |
+
+**设计包不动。** `docs/design-package/` 只读，`services/S43-delivery.md:15` 与
+`S44-evaluation-analytics.md:15` 的旧名保持原样。差异由本节和三份方案的 §11 C8 记录 ——
+那是原始输入，改了就没法对照。
+
+**仍缺的是 payload schema。** 登记只给了 `event_type` + topic + 保留策略，`data` 的结构仍只写在
+各方案的事件定义里（[S42](../../plans/S42-composition.md) §6.3、[S43](../../plans/S43-delivery.md) §6.3、
+[S44](../../plans/S44-evaluation-analytics.md) §6.3）。这三份方案的 §11 C8 都留了这句话，
+不要因为"已登记"就当 payload 也齐了。
 
 ---
 
@@ -274,9 +298,10 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 |---|---|
 | 方案总数 | **48 / 48** |
 | 会话分支 | 8 个。5 个带 worktree（S08/S22/S23、S24–S27、S02/S40、S16–S18、S35–S39），3 个直接写在 main（S01/S05/S06/S19/S20、S29–S34、S45–S48） |
-| 文档自洽性检查 | 见 §1，除 C9 外全部通过 |
+| 文档自洽性检查 | 见 §1，全部通过（C9 已裁决，2026-11-05） |
 | 全仓方案内部链接 | **0 损坏** |
-| 与设计包的偏差 | 除 C9 的 9 个事件名外，无 |
+| 事件目录 | 48 → **55** 条 `event_type`，48 个 topic 不变 |
+| 与设计包的**有意**偏差 | 事件粒度更细（设计包每服务一条，方案按状态机状态发）。设计包文件本身**零改动** —— 差异记在本报告与三份方案的 §11 C8 |
 
 ### 6.2 本轮修过但没单列的
 
@@ -284,6 +309,9 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 - **42 个 outbox 的 `aggregate_id` 加了语义标注**（`1e59f53`）：只写 `aggregate_id text` 而不说是哪个实体，实现者挑错一个字段，`aggregate_sequence` 就变成"看起来有序其实是错的"。S29–S34、S42、S44 的聚合键**逐事件不同**，那些地方没有写死一个值，而是指向各自的事件表。
 - **S38 §11 的契约缺口表被一条 blockquote 劈成两半**：`> **G2 已关闭（2026-11-01）**…` 夹在 C4 与 C5 之间，导致 C4 出现两次、C5 脱表。已把 G2 说明移到表后，C4 两条合并为一条。这类缺陷不会出现在链接检查里 —— 表格仍然"像是完整的"，只是少渲染两行。
 - **S35 §12 / S39 §11 的 C5–C8 仍标为未落**：`991ccee` 已落 `action-families.v2.json` / `qc-report.v2.schema.json` / `check-registry.v2.schema.json` / `validate_registry.py`，但两份方案的缺口表还写着"没有"。已补「已落项」小节并保留原缺口描述 —— **C5 只落了一半**（`check-registry.v2.json` 数据文件仍未落），不能整条划掉。
+- **本报告「74 条 check」是错的**（`4f1bdcb` 之后重数）：实际 **99 条**，`contracts/README.md:73` 一直是对的。74 漏算了一整份 QC 方案的表。已改 §7 第 6 条并附分层计数。
+- **3 条 `check_id` 违反自己文件里定的命名规约**：`plans/S35-technical-qc.md:773-775` 的 `TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME` 只有两段，而同文件 157 行的规约是 `<LAYER>.<GROUP>.<NAME>`。这类缺陷不会出现在链接检查里，也不会出现在"check 总数"里 —— **它恰恰是让计数变成 20 而不是 23 的原因**，因为按三段式正则数就漏掉这 3 行。已记入 §7 第 7 条，待 owner 确认改名。
+- **派活时我自己差点犯 AGENTS.md 禁的那类错**：第一版任务单让子会话「没有出处就按语义给保守值」补 `window_scope`，直接撞上 `contracts/README.md:84` 的「不从散文推断这些值」。已撤回并改成产出「缺字段清单 + `NEEDS_OWNER` 标注」。**这条值得记下来**：`check-registry.v2.json` 的诱惑就是"看起来很接近完成"，补上就绿色了。但 `window_scope` 猜错会让 S39 把 20 帧的连续窗口交给逐帧修补 —— 一个绿色比一片诚实更贵。
 
 ---
 
@@ -298,10 +326,34 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
    S19 / S20 落盘时已对齐本轮统一过的 outbox 形状；S20 里两处指向不存在文件名的链接
    （`S08-proposal-queue.md`、`S18-workflow-orchestrator.md`）已改为实际文件名，
    全仓方案内部链接现为 **0 损坏**。
-5. **C9 待裁决**（§2.5）：3 份方案共 9 个发布事件类型未在 `event-topics.v2.json` 注册，
-   已有两个下游按不存在的类型建了订阅。这是契约问题，不归实现方案单方面决定。
-6. **74 条 check 的登记项字段仍缺**（§2.4 末尾）：`window_scope` / `escalation_rule` /
-   `default_action` / `allowed_actions` / `recheck_scope` 要由四个 QC 服务各自补，
-   不能由别处推断。
+5. ~~C9 待裁决~~ 已于 2026-11-05 裁决并落地（§2.5，`4f1bdcb`）：补登 10 条、删 2 条、
+   消费侧改名 6 处，目录 48 → 55 条。**残留一项**：55 个 `event_type` 的 `data` payload schema
+   仍未落，结构只在各方案正文里。补 schema 时要注意，S42 的聚合键逐事件不同
+   （`candidate_id` / `mix_job_id` / `render_job_id`），不能套一张通用 schema。
+6. **99 条 check 的登记项字段仍缺**（§2.4 末尾）：`window_scope` / `escalation_rule` /
+   `default_action` / `allowed_actions` / `recheck_scope` 要由四个 QC 服务各自补。
+   **不能由别处推断** —— `contracts/README.md:84` 的原话是「不从散文推断这些值」，
+   `window_scope` 决定 `keyframe_edit` 能不能用，猜错会让 S39 把 20 帧的连续窗口交给逐帧修补。
+   **已派给 S35–S39 会话产出「缺字段清单」**（不是 registry 数据文件），把人工对照变成有 owner 的待办。
+
+   本节此前写「74 条」，是**错的**。重数结果（按表格首格计，含不合规命名）：
+
+   | 层 | 条数 | 其中 `check_id` 不合规 |
+   |---|---|---|
+   | TECH（S35） | **23** | 3 条 |
+   | VIS（S36） | **32** | 0 |
+   | AUD（S37） | **20** | 0 |
+   | SUB（S38） | **24** | 0 |
+   | 合计 | **99** | 3 |
+
+   `contracts/README.md:73` 的 99 是对的；此前这里的 74 漏算了一整份方案的表。
+
+7. **3 条 `check_id` 违反命名规约**（新发现）：[S35](../../plans/S35-technical-qc.md) 第
+   773–775 行的 `TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME` 只有两段，
+   而同文件第 157 行定的规约是 `<LAYER>.<GROUP>.<NAME>`（全大写下划线，全局唯一）。
+   三段式的其他 96 条都合规。两条影响：按规约写的解析器会漏掉这三条；
+   `check-registry.v2.json` 若按规约分组，这三条无处归组。
+   按文件语义应是 `TECH.FRAME.BLACK` / `TECH.FRAME.FREEZE` / `TECH.FRAME.FLASH` —— **但这要 owner 确认**，
+   改名是契约变更，不能由验收报告单方面决定。
 
 方案是设计稿。以上检查证明的是**文档之间自洽**，不是**设计正确**。E01–E40 里真正要证明的东西（跨租户拒绝、重复投递幂等、Saga 补偿、fencing、重启恢复）只能靠实现加测试证明 —— `docs/16` 的原话是「schema 校验通过 ≠ 分布式正确性」。

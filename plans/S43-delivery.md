@@ -653,7 +653,7 @@ CREATE TABLE delivery.inbox (
 | 方向 | 事件 |
 |---|---|
 | 发布 | `delivery.package.created`、`delivery.package.sealed`、`delivery.package.published`、`delivery.publish.failed` |
-| 消费 | `post.master.rendered`（S42）、`snapshot.manifest.committed`（S08）、`governance.asset.rights.changed`（S15）、`production.subtitle.revision.created`（S38） |
+| 消费 | `post.master.rendered`（S42）、`snapshot.manifest.committed`（S08）、`asset.voice.authorization.changed`（S15）、`post.subtitle.ready`（S38） |
 | 调用 | S08 查询 accepted pointer、S28 校验 artifact、S02 `policy-decisions:evaluate`、S16/S09/S23 取固定内容、连接器外发、S45 审计 |
 
 四条发布事件的 `aggregate_id` 都是 `package_id`：`DeliveryPackage` 不可变，
@@ -676,6 +676,16 @@ CREATE TABLE delivery.inbox (
 ```
 
 **事件不含签名内容、不含下载链接、不含渠道凭据。** 下游需要签名去查 API。
+
+两个消费事件的名字按实际产出方登记，不是设计包里的粗粒度名：
+
+- **权利**消费 `asset.voice.authorization.changed`（S15 只发这一条）。本方案只在
+  `data.to_state IN ('revoked','expired','suspended')` 且 `data.reason_code` 指示授权撤回时
+  把 G7 判为 `RIGHTS_REVOKED`；`to_state='granted'` 的通知**不能**用来放行 G7 ——
+  与 S15「事件只是通知，真判定走 `check-eligibility`」同构，G7 始终回查 S15/S02。
+- **字幕**消费 `post.subtitle.ready`（S38 只发这一条）。它携带 `artifact_ref` 与
+  `timeline_revision`，G6 用后者比对 master 的 timeline revision；S38 的 QC 缺陷随
+  `data.qc_report_ref` 同一条事件到达，不另开事件。
 
 ---
 
@@ -852,7 +862,7 @@ delivery.publish
 | C5 | 外发是否算"付费/计费动作"无明文 | docs/12 只列生成成本；渠道分发可能有平台侧费用 | 本方案不记账；若渠道收费，需要 S23 归集维度 |
 | C6 | 签名 key 的归属无明文 | service.yaml 写"签名与完整性"归 S43；但密钥管理不在 48 服务表中 | 本方案用 `key_ref` 引用外部 KMS |
 | C7 | `DeliveryPackage` 是否覆盖系列级交付 | S43 `data_owner` 未限制粒度；OpenAPI 的创建 body 无 `series_id`，但有 `master_artifact_id` | 本方案支持 `episode_id` 与 `series_id` 二选一（系列包为多集聚合）；需契约确认 |
-| C8 | 发布事件名与 `event-topics.v2.json` 不一致 | 设计包 `services/S43-delivery.md` 与目录都只登记 `delivery.package.ready`（topic `drama.delivery.v2`）；本方案 §6.3 拆成 `delivery.package.created` / `.sealed` / `.published` / `delivery.publish.failed` 四条 | 四条里三条未在目录注册，**按目录订阅的消费方会静默收不到**：[S47](S47-realtime-projection.md) §4 已在按 `delivery.package.sealed` 建交付进度投影，[S44](S44-evaluation-analytics.md) K4 用 `delivery.package.published` 的时点。需要契约维护方裁决：要么补登三个 `event_type` 并给 payload schema，要么退回单条 `delivery.package.ready` + `data.state`。不允许实现只发四条、目录仍只有一条 |
+| C8 | 发布事件名与 `event-topics.v2.json` 不一致 | 设计包 `services/S43-delivery.md` 与目录都只登记 `delivery.package.ready`（topic `drama.delivery.v2`）；本方案 §6.3 拆成 `delivery.package.created` / `.sealed` / `.published` / `delivery.publish.failed` 四条 | **已裁决（2026-11-05，补登，commit `4f1bdcb`）**：四条全部登记进 `contracts/event-topics.v2.json`，topic `drama.delivery.v2`，删除无消费方的 `delivery.package.ready`。设计包那一行保持原样（`docs/design-package/` 只读），差异由本行与 [验收报告](../delivery/acceptance/plans-consistency-2026-10-30.md) 记录。<br>消费侧同时纠正两个错名（不在目录、也不在任何产出方的契约里）：`governance.asset.rights.changed` → `asset.voice.authorization.changed`（S15 只发这一条），`production.subtitle.revision.created` → `post.subtitle.ready`（S38 只发这一条）。**payload schema 仍缺**（见 [S38 §11 C4](S38-subtitles.md)、[S42 §11 C8](S42-composition.md) 同一条） |
 
 ---
 

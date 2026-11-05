@@ -656,8 +656,19 @@ CREATE TABLE analytics.inbox (
 | 方向 | 事件 |
 |---|---|
 | 发布 | `analytics.metric.snapshot.created`、`analytics.evaluation.completed`、`analytics.cost.projection.updated` |
-| 消费 | `billing.cost.recorded`（S23）、`generation.attempt.completed`（S26）、`quality.qc.completed`（S35–S38）、`review.decision.recorded`（S40）、`snapshot.manifest.committed`（S08）、`delivery.package.published`（S43） |
+| 消费 | `finance.ledger.entry-posted`（S23）、`generation.job.state-changed`（S26）、`quality.technical.completed`（S35）、`quality.semantic.completed`（S36）、`quality.alignment.completed`（S37）、`post.subtitle.ready`（S38）、`review.decision.recorded`（S40）、`snapshot.manifest.committed`（S08）、`delivery.package.published`（S43） |
 | 调用 | S23 `GET /episodes/{id}/cost-breakdown?cohort=`、S26 查询、S35–S38 查询、S40 查询、S08 查询 |
+
+消费侧的事件名按产出方实际登记的名字写，不是设计包里的粗粒度名。三处折叠关系：
+
+| 本方案要的口径 | 目录里实际的事件 | 取哪个字段 |
+|---|---|---|
+| 每笔成本 | `finance.ledger.entry-posted`（S23 只发这一条） | `data.entry_type`；金额取 `data.settled_micro` / `delta_consumed_micro`；归属取 `data.attribution.*`；预算耗尽看 `data.budget_after.state` |
+| 每次生成尝试的结局 | `generation.job.state-changed`（S26 只发这一条） | 按 `data.attempt_id` 聚合，用 `data.state` 判终态，`data.provider`/`data.channel`/`data.node_id`/`data.node_epoch` 做维度 |
+| 质检通过/缺陷 | 四条各发一条：`quality.technical.completed`（S35）、`quality.semantic.completed`（S36）、`quality.alignment.completed`（S37）、`post.subtitle.ready`（S38） | 四个 QC 服务的报告结构不同，K5 返工率的分母按 **defect_type 的闭集**归并（`contracts/quality/action-families.v2.json` 的 14 类），不按服务归并 |
+
+**这四条 QC 事件不合并成一条 `quality.qc.completed`**：那是设计包的粗粒度名，没有任何服务产出，
+订阅它只会静默收到空流。若将来要合并，应该新建一个聚合投影，而不是让 S44 假装有一个统一事件。
 
 发布事件的聚合键：
 
@@ -837,7 +848,7 @@ analytics.snapshot
 | C5 | 评测产生的推理成本归属 | docs/13 说 S19 的 `episode.plan`/`memory.extract` 可产生有界推理成本；S44 的评测若用 LLM 评判，成本算生产还是评测 | 本方案要求走 S26 + 标 `cost_type=evaluation`，并排除出 K3 |
 | C6 | `projection_watermark` 的单值 vs 多源 | OpenAPI 只给一个 `projection_watermark`；实际有 S23/S26/S35/S40/S08/S43 六个源 | 本方案用 `staleness` 分源表达；单值字段保留为"最慢源"的投影 |
 | C7 | K7「记忆正确性」的可计算性 | docs/15 定义"记忆事实被后续剧情证伪前未被发现"；但"证伪"的判定归 S17/S40，S44 无权判定 | 本方案只统计"被 S17 标为冲突且 S40 确认"的条数，不自行判定证伪 |
-| C8 | 发布事件名与目录不一致，且消费侧有四个名字在目录里不存在 | 目录对 S44 只登记 `evaluation.report.published`；本方案 §6.3 发 `analytics.metric.snapshot.created` / `analytics.evaluation.completed` / `analytics.cost.projection.updated`。§6.3 消费侧 `billing.cost.recorded`（S23）、`generation.attempt.completed`（S26）、`quality.qc.completed`（S35–S38）、`delivery.package.published`（S43）**四个名字在 `event-topics.v2.json` 里都没有** | 这份方案的口径依赖这些事件，但在目录里订阅不到：S23 只有 `finance.ledger.entry-posted`，S26 只有 `generation.job.state-changed`，四条 QC 服务各只有 `quality.{technical,semantic,alignment}.completed` / `post.subtitle.ready`。三条 KPI（K3 每可用分钟成本、K4 单集交付耗时、K5 返工率）的分母都落在这四个不存在的类型上。需契约维护方逐条裁决映射或补登 —— **与 S43 C8 是同一条冲突的两面**，应一起裁 |
+| C8 | 发布事件名与目录不一致，且消费侧有四个名字在目录里不存在 | 目录对 S44 只登记 `evaluation.report.published`；本方案 §6.3 发 `analytics.metric.snapshot.created` / `analytics.evaluation.completed` / `analytics.cost.projection.updated`。§6.3 消费侧 `billing.cost.recorded`（S23）、`generation.attempt.completed`（S26）、`quality.qc.completed`（S35–S38）、`delivery.package.published`（S43）**四个名字在 `event-topics.v2.json` 里都没有** | **已裁决（2026-11-05，commit `4f1bdcb`）**，分两侧处理：<br>**发布侧（补登）**——三条 `analytics.*` 全登记，topic `drama.evaluation-analytics.v2`，删除无消费方的 `evaluation.report.published`。设计包那一行保持原样（只读），差异由本行与 [验收报告](../delivery/acceptance/plans-consistency-2026-10-30.md) 记录。<br>**消费侧（改名，不补登）**——四个错名是方案写错了产出方，登记它们会造出没有生产者的事件：`billing.cost.recorded` → `finance.ledger.entry-posted`；`generation.attempt.completed` → `generation.job.state-changed`；`quality.qc.completed` → 拆成 `quality.technical.completed` / `quality.semantic.completed` / `quality.alignment.completed` / `post.subtitle.ready` 四条；`delivery.package.published` 本身已随 S43 补登，无需改。字段映射见 §6.3 的表。<br>**payload schema 仍缺**（与 [S43 §11 C8](S43-delivery.md) 同一条） |
 
 ---
 
