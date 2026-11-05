@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 18 个 topic 带**（37 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 19 个 topic 带**（36 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -83,6 +83,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `review.decision.recorded` | `review.decision-recorded.v2.schema.json` | S40 §10.2 |
 | `delivery.package.published` | `delivery.package-published.v2.schema.json` | S43 §6.3 |
 | `post.timeline.revision.created` | `post.timeline-revision-created.v2.schema.json` | S41 §6.3 |
+| `post.master.rendered` | `post.master-rendered.v2.schema.json` | S42 §6.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -96,6 +97,17 @@ S22 有真 DDL `CHECK`，S26 有 16 个状态却没有任何机器可读的闭�
 `enum` 会让散文里的排版漂移变成契约，而 §13 的失败分支表恰恰已经在混入非状态名字
 （见 `generation.job-state-changed` 的 `x-conflicts` PGJ-1）。S40 是唯一的例外：
 `status` 收成 `enum`，因为那 5 个值在注释里是逐一列举的，不是散文推断。
+
+S42 / S43 / S41 这三条是又一种缺口，值得单说：**生产方宣布了一条事件，然后只给其中一部分
+写了字段**。S43 四条事件里只有 `delivery.package.published` 有字段清单，S42 三条里只有
+`post.master.rendered`，S41 一条事件有字段清单但消费方（S42）把它里面的字段叫成另一个
+名字。所以这三份 schema 都只覆盖「有形状的那一条」，其余的在 `x-needs-owner` 里点名
+而不猜——它们的名字已经在 `event-topics.v2.json` 里登记过了，缺的不是登记，是形状。
+
+`post.master.rendered` 还多一层：它的 `data` 块里有个 `qc_trigger_requested`，**全文只在
+那一段示例里出现过一次**——没有对应 DDL 列、没有流程步骤、没有指标。一个必发字段的语义
+完全悬空，见 PMO-2。这条事件的响度对象同样是三处拼接（事件三字段 / 测量表十二列 /
+§4.5 七字段），而丢掉的那个恰好是唯一带语义的 `conforms_to_spec`，见 PMO-1。
 
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
@@ -198,8 +210,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 18 个 payload schema
-                                                              （见上表；其余 37 个 envelope-only）
+                                        └──data_schema_ref──▶ 19 个 payload schema
+                                                              （见上表；其余 36 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -213,7 +225,7 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 18 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 19 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（35 个示例对

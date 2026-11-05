@@ -1,0 +1,48 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBH2M4N6P8Q1R3S5T7V9W2X4",
+  "source": "S42",
+  "type": "post.master.rendered",
+  "subject": "mc_01JBH1A2B3C4D5E6F7G8H9J0K1",
+  "time": "2026-11-06T16:22:41Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "mc_01JBH1A2B3C4D5E6F7G8H9J0K1",
+  "aggregate_sequence": 1,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "rj_01JBH0Z8Y7X6W5V4U3T2S1R0Q9",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "candidate_id": "mc_01JBH1A2B3C4D5E6F7G8H9J0K1",
+    "episode_id": "ep_3",
+    "branch_id": "main",
+    "timeline_revision": 10,
+    "video_artifact_ref": {
+      "service_id": "S28",
+      "id": "art_master_v_ep3",
+      "revision": 3,
+      "content_hash": "8d3a17f0b6c94e2d5a870f3b1c9de64a2f0b7c5d38e91a4b6c0f2d7e5a8b3c19"
+    },
+    "audio_artifact_ref": {
+      "service_id": "S28",
+      "id": "art_master_a_ep3",
+      "revision": 2,
+      "content_hash": "2f6b9c4d1e8a3570b2d9f6c3a0815e47d92b6c3f5a1e8074b3d6c9f2a4e1785b"
+    },
+    "duration_ticks": 5400000,
+    "loudness": {
+      "integrated_lufs": -16.0,
+      "true_peak_dbtp": -1.2,
+      "gate": "PASSED"
+    },
+    "deliverable": true,
+    "execution_fence": 2,
+    "render_env_hash": "5c1e8b3f7a2d9046e8b5c1f3a7d20694b8e5c2f1a3d70698b4e2c5f8a1d30976",
+    "graph_hash": "a7d2f5b8c1e40793b6a8d3f1c5e20947b3d6a8f2c5e10794b6d8a3f5c2e10947",
+    "stale_inputs": [],
+    "qc_trigger_requested": true
+  },
+  "data_ref": null
+}

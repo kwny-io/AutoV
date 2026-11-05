@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/post.master-rendered.v2.schema.json",
+  "title": "post.master.rendered payload v2",
+  "description": "event `post.master.rendered` 的 data 部分。定义在 plans/S42-composition.md §6.3 行 713–730（示例），字段取自 §5 的 `composition.master_candidate` 表（行 530–557）与 §4.5 的响度门（行 351–372）。**S42 发三条事件，本 schema 只覆盖这一条**：`post.mix.completed` / `post.render.failed` 在 §6.3 只出现在行 701 的事件名表与行 709–711 的聚合键表里，**没有任何字段定义或示例**——它们的 payload 仍然无契约（见 x-needs-owner 第 1 条）。**这条事件的语义是「有一个候选可以评审了」，不是「已成片」**（行 732）：候选的接受指针归 S08 的 CAS，S42 只发出事实。事件按 §2.4 行 169 刻意覆盖**永远不会被接受的候选**（预览包、失败尝试、探索性编码都留在库里作为历史），所以收到它不代表这一集有了新的有效版本——见 x-conflicts PMO-3。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 717（示例 `mc_...`）与 §5 行 531/554（`master_candidate` 主键）。**三条发布事件里只有它作 `aggregate_id`**（行 709）：§6.3 行 709 原文「候选不可变，重渲产生新 `candidate_id`」，所以同一候选的事件天然有序，不会被另一个候选打断。这也是为什么 §2.4 行 167 说候选**不可变**——「可变的是接受指针，不是候选」。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 718（示例 `ep_3`）与 §5 行 532（`episode_id text NOT NULL`）。事件的定位靠它 + `branch_id` + `timeline_revision`，但这三元组**不足以反解出 `timeline_id`**——S41 的 `editorial.timeline` 唯一键是 `(tenant_id, series_id, episode_id, branch_id, timeline_kind)`（plans/S41-editorial.md §5 行 363–364），`timeline_kind` 有 master/rough_cut/trailer/alt 四值，所以同一集同一分支下可能有多条时间线。事件里没有 `timeline_id`，见 x-conflicts PMO-5。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 718（示例 `main`）与 §5 行 533。注意 `candidate_hash_uniq` 的唯一键含它（行 558–559：`(tenant_id, episode_id, branch_id, manifest_content_hash)`）——同一集的两个分支可以有内容相同的候选，是两个不同候选。"
+    },
+    "timeline_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§6.3 行 719（示例 `10`）与 §5 行 535。下界 1 取自 S41 的 `editorial.timeline.current_revision CHECK (current_revision >= 1)`（plans/S41-editorial.md §5 行 351）——S42 的 DDL 只写 `integer NOT NULL`，但 revision 从 0 起没有意义。**这是「剪成什么样」的版本号**（§2.1 行 90 的四版本表第一行），不是 `mix_plan_hash`、`render_profile_hash`、`render_env_hash` 任何一个。"
+    },
+    "video_artifact_ref": {
+      "type": "object",
+      "description": "来源：§6.3 行 720（示例写作 `{...}`，形状被省略）与 §5 行 539（`video_artifact_ref jsonb NOT NULL`）。**形状取 plans/S28-artifact-ingest.md 行 94 的规范定义**，与 `episode-manifest.v2.schema.json` 的 `accepted_artifact_ref`、`production.video-ready.v2.schema.json` 的 `artifact_ref` 完全相同——不是本 schema 新发明的收窄。`remix` 路径下这个 ref 与上一版**逐字段相同**（§4.4 行 331：`remix` 必须保留原 video 流），所以「视频没变、音频变了」在事件里表现为同 ref + 不同 `audio_artifact_ref`。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 与 episode-manifest.v2 accepted_artifact_ref——字节、hash、地址的唯一权威都在 S28（§1「明确不写」表）。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "audio_artifact_ref": {
+      "type": "object",
+      "description": "来源：§6.3 行 720 与 §5 行 540（`audio_artifact_ref jsonb NOT NULL`）。形状同 `video_artifact_ref`（S28 规范 ref）。`remix` 产生的候选在这里换新 ref，而 `video_artifact_ref` 不变（§4.4 行 331）。**混音后的 stem 不在这个字段里**——§5 行 563–573 的 `master_candidate_artifact` 表用 `role` 区分 `master_video` / `master_audio` / `stem_*` / `subtitle`，这条事件只发两路主轨，要拿 stem 必须查 `GET /master-candidates/{id}`（§6.2 行 686）。",
+      "properties": {
+        "service_id": {
+          "const": "S28"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "duration_ticks": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§6.3 行 721（示例 `5400000`）与 §5 行 541（`duration_ticks bigint NOT NULL`）。**单位是 tick，而 tick 的换算率不在这条事件里**：换算率是 S41 的 `editorial.timeline.tick_rate DEFAULT 90000`（plans/S41-editorial.md §5 行 357，`CHECK (tick_rate > 0)`，即**可配置**）。S42 的 DDL 没有任何 `tick_rate` 列，事件里也没有——消费方要换算成秒必须回查 S41，不能默认 90000。这与 `post.timeline.revision.created` 的 PTR-2 是同一个缺口，本 schema 不重复登记冲突，只在此标注。示例的 5400000 ÷ 90000 = 60 秒，只能印证默认值，不能当作契约。"
+    },
+    "loudness": {
+      "type": "object",
+      "description": "来源：§6.3 行 722（示例 `{integrated_lufs, true_peak_dbtp, gate}`）与 §5 行 544（`loudness_gate` 列）。**这个对象是三个来源的拼接，不是任何一张表的样子**：`integrated_lufs` / `true_peak_dbtp` 来自 `composition.loudness_measurement`（行 508–527），`gate` 来自 `composition.master_candidate.loudness_gate`（行 544），而 §4.5 行 355–364 给出的测量块是**七个字段**（多 `lra_lu` / `measured_at` / `measurement_tool` / `measurement_version` / `conforms_to_spec`）。三者都不相等，见 x-conflicts PMO-1。",
+      "properties": {
+        "integrated_lufs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "来源：§6.3 行 722（示例 `-16.0`）与 §5 行 516（`integrated_lufs numeric(6,2) NOT NULL`）。**必须可 null**：`master_candidate.loudness_measurement_id` 可空（行 543），即**允许一个候选没有测量**。有测量时该列 NOT NULL，两者用 null 区分「没测」与「测了」。不能因为 DDL 那列 NOT NULL 就把这里的类型定死——NOT NULL 约束的是测量行，不是候选。"
+        },
+        "true_peak_dbtp": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "来源：§6.3 行 722（示例 `-1.2`）与 §5 行 517（`true_peak_dbtp numeric(6,2) NOT NULL`）。可 null 的理由同 `integrated_lufs`。注意示例的 `-1.2` 与 `POST /mix-jobs` 的 `true_peak_ceiling: -1.0`（行 668）是**两个不同的量**：前者是实测峰值，后者是计划上限。"
+        },
+        "gate": {
+          "type": "string",
+          "enum": [
+            "PASSED",
+            "FAILED",
+            "NOT_RUN"
+          ],
+          "description": "来源：§5 行 544（`loudness_gate text NOT NULL CHECK (loudness_gate IN ('PASSED','FAILED','NOT_RUN'))`）。三值照收，是本 schema 里第二个有 DDL CHECK 依据的闭集。**`gate` 不是测量表的列**——它是候选的判定，而测量表里对应的是 `conforms_to_spec boolean NOT NULL`（行 521）。两个值不等价：§4.5 行 369 明说 `conforms_to_spec` 由实测值比较 `master_spec` 容差得出，不是编码器自报，而 §4.5 行 372 又说「测不出 = 门失败，不是门通过」——于是 `NOT_RUN` 到底是「没测」还是「测失败」在事件里分不开。见 PMO-1。"
+        }
+      },
+      "required": [
+        "integrated_lufs",
+        "true_peak_dbtp",
+        "gate"
+      ],
+      "additionalProperties": false
+    },
+    "deliverable": {
+      "type": "boolean",
+      "description": "来源：§6.3 行 723（示例 `true`）与 §5 行 547。**这个字段带着一条 DDL 不变量**：行 555–556 的 `CONSTRAINT candidate_deliverable_consistent CHECK (deliverable = false OR (loudness_gate = 'PASSED' AND jsonb_array_length(stale_inputs) = 0))`，本 schema 用 `allOf` 的 if/then 复刻了它——见文件末尾。`deliverable=false` 不表示候选无效：它只是不能进正式交付包（§4.5 行 370、E37-S42-03/04）。S43 的完整性门 G3 会重新校验（plans/S43-delivery.md 行 140），所以这里的 `true` 是**发布时刻**的事实，不是交付时刻的许可。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§6.3 行 724（示例 `2`）与 §5 行 551。下界 1 取自 S41 的 `CHECK (execution_fence >= 1)`（plans/S41-editorial.md §5 行 353）。**候选只带 fence，不带 `node_epoch`**——这与 `post.timeline.revision.created` 不同（后者两者都带），是有意的：§3.3 行 242 说候选随 **`execution_fence` 推进**转 `VOIDED`，而 `node_epoch` 的作用域是单个 `logical_node` 的局部重生成（AGENTS.md「版本与一致性速查」），候选是整片产物，不受单节点 epoch 影响。消费方不要把这两个版本混用：旧 epoch 的结果不能推进接受指针，而**旧 fence 的候选在 fence 推进后一律作废**。"
+    },
+    "render_env_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§6.3 行 725（示例 `sha256:...`）与 §5 行 552（`render_env_hash char(64) NOT NULL`）。**用裸 64 位小写 hex，不带 `sha256:` 前缀**——S42 全文 9 处写 `sha256:`（行 119、639、641、644、646、670、675、725、726），但 `char(64)` 装不下 7 字符前缀（共 71）。这条与 PDL-5 / PRD-4 是同一个全局不一致，不在此重复登记冲突。语义见 §2.1 行 128：「在什么环境里编码」——编码器/驱动/容器镜像版本。它**进缓存键但不进 content_hash 的语义层**（§2.1 行 138–139）：产物寻址用 S28 的字节 hash，这个值是证据。§12 未决问题 1 说若客户要求比特级复现，它必须进交付证据。"
+    },
+    "graph_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§6.3 行 726（示例 `sha256:...`）与 §5 行 474–482（`composition.filter_graph` 主键 `(tenant_id, graph_hash)`）。裸 hex，理由同 `render_env_hash`。对应 §2.2 行 119 的滤镜图规范化定义：`graph_hash` 由节点与边确定性序列化得出（键排序、数字规范化），同输入必须同 hash（C-S42-01 要求 100 次一致）。**事件只给 hash 不给全文**：§8 行 815 的日志规则明说「滤镜图全文（改记 `graph_hash`）」——要复算请走 `GET /master-candidates/{id}/evidence`（§6.2 行 688）。"
+    },
+    "stale_inputs": {
+      "type": "array",
+      "description": "来源：§6.3 行 727（示例 `[]`）与 §5 行 546（`stale_inputs jsonb NOT NULL DEFAULT '[]'::jsonb`）。**元素形状全文没有定义**：DDL 只有裸 `jsonb` 无注释，§4.6 行 389 只说「`stale_inputs` 标记非空」并提到「候选 manifest 记录 subtitle hash」，§12 未决问题 6 只讨论处置策略不讨论形状。本 schema 因此只约束到 `array` 一层，不猜元素字段（contracts/README「不从散文推断这些值」）。见 x-needs-owner 第 2 条。**下游只用到「是否为空」**：S43 的 G3 门判 `stale_inputs=[]`（plans/S43-delivery.md 行 140），DDL 行 556 的 CHECK 也只取 `jsonb_array_length`。生产场景见 §4.6 行 389——渲染 40 分钟的片，第 35 分钟字幕被修了一版，候选仍有效但此数组非空，`deliverable` 因此必须为 false（见 `deliverable` 字段与文件末尾的 if/then）。"
+    },
+    "qc_trigger_requested": {
+      "type": "boolean",
+      "description": "来源：**只有 §6.3 行 728 的示例**（值 `true`）。全文其余部分——DDL（§5 行 530–557 没有对应列）、§4.1 的十二步流程、§8 的指标表、§9 的测试清单、§6.1/§6.2 的接口——**一次都没有出现这个字段**。它与 §1 行 51 的「可触发 QC（经 S21），但不写 QC verdict」是什么关系（是「我已经请求了」的事实，还是「请你触发」的指令？）没有任何文字说明。本 schema 只能按示例收成 boolean，语义留空，见 x-conflicts PMO-2。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "episode_id",
+    "branch_id",
+    "timeline_revision",
+    "video_artifact_ref",
+    "audio_artifact_ref",
+    "duration_ticks",
+    "loudness",
+    "deliverable",
+    "execution_fence",
+    "render_env_hash",
+    "graph_hash",
+    "stale_inputs",
+    "qc_trigger_requested"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deliverable": {
+            "const": true
+          }
+        },
+        "required": [
+          "deliverable"
+        ]
+      },
+      "then": {
+        "properties": {
+          "loudness": {
+            "properties": {
+              "gate": {
+                "const": "PASSED"
+              }
+            }
+          },
+          "stale_inputs": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`post.mix.completed` / `post.render.failed` 的 payload",
+      "demanded_by": "plans/S42-composition.md §6.3 行 701（只列事件名）与行 709–711（只给 `aggregate_id` / `aggregate_sequence`），以及 §11 C8 的裁决记录",
+      "s42_status": "三条事件都在 `contracts/event-topics.v2.json` 里登记过（C8 行 934 记录的 2026-11-05 裁决，commit `4f1bdcb`，topic `drama.composition.v2`），但**只有 `post.master.rendered` 有字段清单和示例**（行 713–730）。另两条全文只以名字出现：§6.3 行 701、行 710–711 的聚合键表；`service-catalog.v2.json` 的 `publishes` 列表；`plans/S41-editorial.md` 行 539（「只看 `post.master.rendered` 的引用」）。§11 C8 自己写明 **payload schema 仍缺**（与 S43 §11 C8、S44 §11 C8 同一条）。本批次只做 `post.master.rendered`：从散文推断另两条的字段名会让 schema 变成 S42 没同意过的契约（AGENTS.md「契约与文档冲突 → 停下」，contracts/README「不从散文推断这些值」）。注意 `post.mix.completed` 是 **S35/S39 的独立触发器**（C8 原话），不是 `post.master.rendered` 的子集——它要在「没有 master」的情况下也能发（§3.2 的 `MixJob` 可以独立成功），所以它的字段不能靠裁剪本条事件得出。要补需要 owner 先给出形状。"
+    },
+    {
+      "field": "`stale_inputs` 的元素形状",
+      "demanded_by": "plans/S42-composition.md §5 行 546（`stale_inputs jsonb NOT NULL DEFAULT '[]'::jsonb`，无注释）、§4.6 行 389、§12 未决问题 6",
+      "s42_status": "三处都只说「非空」与非空之后的后果（`deliverable` 必须为 false、S43 打包时拒绝），**从不说什么元素进去**。§4.6 行 389 的失败矩阵只有一行提示「候选 manifest 记录 subtitle hash」，那是记录在 manifest 里而不是在这个数组里。S47 的工作台若要显示「因为什么过时」需要元素结构，现在只能显示「有 N 项过时」。本 schema 刻意停在 `type: array`（不写 `items`），因为收窄到任何一个猜测的形状都会拒掉合法的生产数据。要补需要 owner 给出元素字段（至少要有「哪个输入」与「期望 hash / 实际 hash」）。"
+    },
+    {
+      "field": "`manifest_content_hash` 为何不进事件",
+      "demanded_by": "plans/S42-composition.md §5 行 536（`manifest_content_hash char(64) NOT NULL`）、行 558–559（`candidate_hash_uniq` 唯一索引）、§9 一致性用例 C-S42-03（行 896）、§11 C5",
+      "s42_status": "候选的身份哈希在 DDL 里是 `NOT NULL` 且承担跨集去重的唯一键，C-S42-03 还要求它**可从 manifest 复算**——但 §6.3 的 `data` 字段清单（行 716–729）里没有它，示例也没有。事件只给 `candidate_id`，消费方无法独立验证「这个候选的内容确实是我以为的那份」。这与条事件的其余字段不同：检查一下就知道，`render_env_hash` 与 `graph_hash` 都在，唯独缺了那个**本身就该可复算**的。是漏了还是有意不发（比如认为 `candidate_id` 已足够），需要 owner 明确——本 schema 不代发，因为加一个字段是**扩大**契约，不是收窄。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PMO-1",
+      "summary": "响度事实在事件里是三字段拼接，在测量表里是十列，在 §4.5 里是七字段；决定「是否合规」的那个值恰好被丢掉",
+      "s42_event": "§6.3 行 722：`\"loudness\":{\"integrated_lufs\":-16.0,\"true_peak_dbtp\":-1.2,\"gate\":\"PASSED\"}` —— 三个字段，其中 `gate` 属于候选表而不是测量表",
+      "s42_ddl": "§5 行 508–527 的 `composition.loudness_measurement`：`measurement_id` / `render_job_id` / `mix_job_id` / `artifact_ref` / `integrated_lufs` / `true_peak_dbtp` / `lra_lu` / `measurement_tool` / `measurement_version` / `conforms_to_spec` / `spec_ref` / `measured_at` —— **十二列**；另有 §5 行 543 的 `master_candidate.loudness_measurement_id`（可空）指向它",
+      "s42_prose": "§4.5 行 355–364 给出的记录块是**七个字段**：`integrated_lufs` / `true_peak_dbtp` / `lra_lu` / `measured_at` / `measurement_tool` / `measurement_version` / `conforms_to_spec`",
+      "why_it_matters": "同一个事实有三个互不相同的形状，事件是其中最窄的一个，并且**丢掉了唯一带语义的那个**：§4.5 行 369 明确「`conforms_to_spec` 由实测值比较 master_spec 的容差得出，不是由编码器自报」，行 372 又明确「测不出 = 门失败，不是门通过」。事件里既没有 `conforms_to_spec` 也没有测量 id，消费方拿到 `gate` 后**无法判断它是怎么得出的**，只能信 S42。更具体的两个后果：(1) `NOT_RUN`（DDL 行 544 的第三值）在事件里无法区分「没测」与「测失败」，而这两者对 S43 的处置完全不同；(2) `lra_lu` 缺失意味着「短剧连续对白场景的响度跳变」——§4.5 行 372 点名的那类问题——在事件层面不可见，只能回查 `GET /master-candidates/{id}/evidence`（§6.2 行 688）。要定的是：事件是否应带 `loudness_measurement_id`（additive，与 `post.master.rendered` 的其余做法一致：`graph_hash` / `render_env_hash` 都是「发 id/hash、全文回查」），以及 `gate` 与 `conforms_to_spec` 是否应同时存在。"
+    },
+    {
+      "id": "PMO-2",
+      "summary": "`qc_trigger_requested` 全文只出现在示例里一次，没有列、没有语义、没有方向",
+      "s42_event": "§6.3 行 728：`\"qc_trigger_requested\": true` —— 在 §6.3 的 `data` 块里",
+      "s42_ddl": "§5 行 530–557 的 `composition.master_candidate` 没有对应列；行 545 只有 `qc_report_refs jsonb NOT NULL DEFAULT '[]'::jsonb`（是**已有的** QC 报告引用，不是请求开关）",
+      "s42_prose": "§1 行 51：「QC 判定与缺陷 | **S35/S36/S37/S38** | 可触发 QC（经 S21），但不写 QC verdict」。§4.1 的十二步流程（行 265–280）**没有一步提到 QC**——第 10 步是「拼接 → 两遍 loudnorm → 终检 → 写 MasterCandidate」，第 11 步直接发事件。§8 的指标表、§9 的 E37/E03/E22/E12/E13/E28/E35 用例里都没有这个字段",
+      "why_it_matters": "一个在事件里必发（`data` 块成员）的布尔，其含义在文档里**完全没有落地**。两个方向的读法都讲得通，而且后果不同：若它是「我已经请求了 QC」，消费方可以据此推断 QC 已排队，不必自己触发；若它是「请接收方触发 QC」，那 S42 把自己的动作外包给了消费者，与 §1 行 51「S42 可触发 QC（经 S21）」自相矛盾——既然 S42 自己走 S21 触发，就不该同时请求下游去触发。更实际的问题是**没有对应列**：S42 重启后无法重建这个值，所以它不可能是一份可恢复的事实，只能是发送时的瞬时计算值——那它的判据是什么？§4.6 的失败矩阵里也没有任何一行会改变它。要定的是：这个字段是事实还是请求；若是事实，落哪一列；若是请求，为什么不经 S21 而放进事件。"
+    },
+    {
+      "id": "PMO-3",
+      "summary": "`purpose` 是 render_job 的 DDL CHECK 列，也是本条事件唯一无法从候选表层恢复的语义；预览候选与正式候选在事件流里长得一样",
+      "s42_ddl": "§5 行 429–430：`purpose text NOT NULL CHECK (purpose IN ('formal','preview','draft'))` —— 在 `composition.render_job` 上",
+      "s42_gate": "§3.4 行 253：`formal_master_eligible=false` 的 timeline 创建**正式**渲染 → 422 `INCOMPLETE_TIMELINE`；§9 行 845（E37-S42-01）同一条。也就是说 **`formal_master_eligible` 这一层门只在 `purpose=formal` 时生效**——`preview` / `draft` 渲染不受它约束",
+      "s42_event": "§6.3 行 716–729 的 `data` **没有 `purpose`**，也没有 `render_job_id` / `mix_job_id`（候选表行 537–538 两列都可空且互斥）",
+      "s42_prose": "§2.4 行 169：「S42 发出 `post.master.rendered` 后，候选**可能永远不会被接受**。这是正常的：**预览包、失败尝试、探索性编码**都会留在库里作为历史」",
+      "why_it_matters": "§2.4 这句话直接说明**预览也会产生候选并发出同一条事件**。于是消费方收到 `post.master.rendered` 时，看到的是一个看起来完全正常的候选（有 ref、有响度、有 `deliverable`），无法知道它是一次正式渲染还是一次预览——而这两者的可信度不同：预览没有经过 §3.4 的 `formal_master_eligible` 门。`deliverable` 不能代替它（预览完全可能 `deliverable=true`，因为门的差别在输入而不是输出）。S08 要决定「接受哪一版」、S43 要打「正式包」（`package_type='formal'`，plans/S43-delivery.md §5 行 384），两者都得先知道这是不是正式渲染，而现在只能回查 `GET /master-candidates/{id}` 再反查 render_job——一个事件驱动的投影变成了两次同步调用。§11 C3 已经记录了「渲染进度如何进入实时投影未定义」的同类问题（事件不带投影需要的维度），这一条是它在**purpose 维度**上的重复。要定的是：`purpose` 是否进事件（additive）。"
+    },
+    {
+      "id": "PMO-4",
+      "summary": "候选来自 render 还是来自 remix 在事件里看不出来，而 §4.4 明确要求交付时能回答「这一版和上一版音频差在哪」",
+      "s42_ddl": "§5 行 537–538：`render_job_id text,` / `mix_job_id text,` —— 候选表两列都可空，分别指向两条生产路径",
+      "s42_remix": "§4.4 行 331：「**`remix` 必须保留原 video 流**。候选 manifest 里 video artifact ref 与上一版逐字段相同」；§4.4 行 344：「**每次 `remix` 的 `mix_plan` 变化必须记录**，因为交付时需要能回答『这一版和上一版音频差在哪』」",
+      "s42_event": "§6.3 行 716–729 的 `data` 既没有 `render_job_id` 也没有 `mix_job_id`，也没有 `mix_plan_hash`",
+      "s42_metrics": "§8 行 792：`composition_remix_ratio` gauge，「remix 占修复比例；过低说明在滥重生成」——这个指标衡量的正是这个区分",
+      "why_it_matters": "两条生产路径产出的候选在事件里**完全同形**：都是 `candidate_id` + 两个 artifact ref + 响度 + `deliverable`。一个 `remix` 候选的 `video_artifact_ref` 按 §4.4 与上一版逐字段相同，所以连「视频没变」这条线索都读不出来——那本来可以作为启发式，但它同时也是缓存命中的正常结果（§4.3），无法区分。§4.4 行 344 的要求落不了地：交付时要回答「音频差在哪」，需要 `mix_plan_hash`，而它只在 `mix_job` 表上（行 490），候选事件不给 `mix_job_id`，于是**必须由某个服务自己记住「这个候选是哪次 remix 来的」**——而那正是 AGENTS.md 禁止的「变成第二个权威」（S08 才是候选接受状态的权威，S42 是候选本身的权威，但二者都不存「这次 remix 的计划 hash」的跨服务视图）。§8 的 `composition_remix_ratio` 同样需要这个映射。要定的是：`mix_job_id` / `mix_plan_hash` 是否进事件（additive），或者是否接受「交付证据必须走 `/evidence`」（§6.2 行 688——那里确实给了 `graph_hash`，但没提 `mix_plan_hash`）。"
+    },
+    {
+      "id": "PMO-5",
+      "summary": "`episode_id` + `branch_id` + `timeline_revision` 三元组解不回 `timeline_id`，而事件没有 `timeline_id`",
+      "s41_key": "plans/S41-editorial.md §5 行 363–364：`CONSTRAINT timeline_identity_uniq UNIQUE (tenant_id, series_id, episode_id, branch_id, timeline_kind)`，其中 `timeline_kind` 有 `master` / `rough_cut` / `trailer` / `alt` 四值（行 349–350）",
+      "s42_event": "§6.3 行 718–719 的 `data` 只有 `episode_id` / `branch_id` / `timeline_revision`，**没有 `timeline_id`、没有 `series_id`、没有 `timeline_kind`**",
+      "s42_ddl": "§5 行 532–535 的 `master_candidate` 表**有** `timeline_id` 列（行 534，`text NOT NULL`）——候选自己知道它是哪条时间线的产物，事件却把它去掉了",
+      "why_it_matters": "S41 的唯一键是四元组（加 tenant），所以 `(episode_id, branch_id)` **不唯一**：同一集的 master 线与一条 trailer 线可以同分支共存。消费方拿到 `timeline_revision=10` 时无法知道该去查哪条时间线的第 10 版。这条链路不是理论问题：S43 的 G3 门要校验「S41 的 timeline `formal_master_eligible=true`」（plans/S43-delivery.md 行 140），而 `formal_master_eligible` 是**某个 revision 的属性**，不查对时间线就无从校验。S41 自己也是这条事件的消费者（plans/S41-editorial.md 行 539：「S41 只看 `post.master.rendered` 的引用」），它同样需要 `timeline_id` 才能把候选挂回自己的聚合——按唯一键反查是可行的（S41 可以按 tenant+episode+branch+kind 查，但事件连 `kind` 都没给，只能遍历四条时间线各查一遍 `current_revision` 是否等于这个值，而**并发下这会是错的**：两条时间线的 revision 数可能恰好相同）。要定的是：`timeline_id` 是否进事件（additive，DDL 已有该列，不是新增事实）。"
+    }
+  ]
+}
