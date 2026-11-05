@@ -36,6 +36,7 @@ SCHEMA_OF = {
     "admission-unknown": "admission-record.v2.schema.json",
     "agent-task-completed": "event-envelope.v2.schema.json",
     "artifact-ingested": "event-envelope.v2.schema.json",
+    "asset-voice-authorization-changed": "event-envelope.v2.schema.json",
     "asset-binding-set-created": "event-envelope.v2.schema.json",
     "automation-policy": "automation-policy.v2.schema.json",
     "change-plan-applied": "event-envelope.v2.schema.json",

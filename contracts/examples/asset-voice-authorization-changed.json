@@ -1,0 +1,36 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG7N2Q4S6U8W0Y2A4C6E8G0",
+  "source": "S15",
+  "type": "asset.voice.authorization.changed",
+  "subject": "voice/vox_linlan",
+  "time": "2026-11-06T10:40:00Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "vox_linlan",
+  "aggregate_sequence": 9,
+  "correlation_id": "cmd_01JBG7M8T2V4X6Z8B0D2F4H6J8",
+  "causation_id": "cmd_01JBG7M8T2V4X6Z8B0D2F4H6J8",
+  "traceparent": "00-7c3e1a9b5d2f8c4e6a0b3d7f1c5e9a2b-7c3e1a9b5d2f8c4e-01",
+  "data": {
+    "schema_version": "2.0",
+    "voice_id": "vox_linlan",
+    "from_state": "granted",
+    "to_state": "revoked",
+    "state_seq": 9,
+    "reason_code": "RIGHTS_WITHDRAWN",
+    "effective_at": "2026-11-06T10:40:00Z",
+    "evidence_ref": {
+      "service_id": "S02",
+      "id": "rights_doc_01JBG7P3W5Y7A9C1E3G5J7L9N1",
+      "revision": 2
+    },
+    "authorized_uses_before": [
+      "series:series_demo",
+      "modality:speech"
+    ],
+    "expires_at": "2027-03-01T00:00:00Z"
+  },
+  "data_ref": null
+}

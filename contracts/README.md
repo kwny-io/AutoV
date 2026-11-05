@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 31 个 topic 带**（24 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 32 个 topic 带**（23 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -95,6 +95,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `snapshot.manifest.committed` | `snapshot.manifest-committed.v2.schema.json` | S08 §6.1 |
 | `lineage.impact.computed` | `lineage.impact-computed.v2.schema.json` | S09 §5.4 |
 | `asset.binding-set.created` | `asset.binding-set-created.v2.schema.json` | S10 §5.3 |
+| `asset.voice.authorization.changed` | `asset.voice-authorization-changed.v2.schema.json` | S15 §5.3 / §10 C15-2 |
 | `change.plan.applied` | `change.plan-applied.v2.schema.json` | S07 §5.5 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
@@ -514,6 +515,69 @@ AGC-7 里，因为文档指定了一处与全仓库不一致的位置，按 AGEN
 `series`）、`role_revision` 无法外挂；而自由文本 `reason`、deny-撤销与 allow-撤销同形、
 `grant_revision: 1` 三者都被接受——正是上面几条缺口的形状。
 
+### `asset.voice-authorization-changed.v2.schema.json`：唯一一条控制「停止花钱」的事件，而它发不出去
+
+S15 只发布一个契约事件（§5.3 行 742「`service.yaml` 明写」），它是「撤销音色授权」对外
+的全部信息：`to_state` 一落，S26 必须立刻停止为该音色提交付费任务（E30-C3）。9 个
+payload 字段的形状都清楚，四个状态值也是真的闭集——但这条事件在最常见的两个时刻
+（建音色、第二次授权变更）**都发不出去**。
+
+**VAC-1** 是全批最硬的一条：`aggregate_sequence` 在方案里有两个定义。§5.3 行 744 说
+`= state_seq`，§2.8 行 441 说 `= revision`（内容 revision）。按后者：(1) 建音色事务写
+`voice.current_revision` 默认 0（行 175）而同事务的授权事件 `seq=1`，envelope 的
+`aggregate_sequence` 是 `minimum: 1`——**每个新建音色的授权事件都被 schema 拒**，卡在
+outbox；(2) 一个音色 `granted→suspended→granted→revoked` 三次授权变更而内容 revision
+一直是 3，三次事件的 `(aggregate_id, aggregate_sequence, event_type)` 全等，outbox 的
+`UNIQUE`（行 429）在第二次就抛错——而它与 `UPDATE voice_authorization` 在**同一事务**
+（§4.3 行 610–615），于是 **suspend 和 revoke 整体回滚**。按 `= state_seq` 两个失败都
+消失。一个方向让撤销失败在 DB 层，另一个方向只让一句注释错——但这是方案内部的两句话
+互相矛盾，按 AGENTS.md 只报告不选边。
+
+**VAC-2** 同样在热路径上：`authorization_event.reason_code` 是 `text NOT NULL`（行 281），
+而建音色的命令体（§4.1 行 529–535）**没有这个参数**，§3.1 的创建转移（行 482）也不要求它。
+`POST /voices` 的事务第 3 步因此必然违反 NOT NULL。有意思的是**同一个问题在 `from_state`
+上已被承认过**：DDL 行 279 给它可空，于是创建事件是 `from_state: null` + `to_state: granted`
+——本文件照 DDL 收 `null`，这也是本批第一份**不由 schema 制造、而由 DDL 自己解决**的首版
+表达问题（对照 SMC-4 / MSC-3 / ABS-5 / AGC-4 那四处的同一形态）。只是没人把同样的处理
+应用到 `reason_code` 上。
+
+**VAC-4 / VAC-5** 是同一件事的两个面：9 个 payload 字段里有 3 个（`effective_at`、
+`authorized_uses_before`、`expires_at`）**在 `authorization_event` 表里根本没有列**，
+只能从 `voice_authorization` 的当前行快照。后果三个：(1) 按 `authorization_event` 重建历史
+时它们全丢失，而那张表存在的理由就是审计（行 272），§4.3 行 642 还明说 S15「记录」了
+`effective_at`——记录在哪个表？（2) `effective_at` 可以是**未来**且含义是「仅审计」，撤销
+是**立即**生效；一个按名字推断的实现会写「`now < effective_at` 还能用」，那正是方案特意
+排除的宽限期，在合规撤销上就是多用三十天。(3) 状态机的五条转移里**没有一条**修改
+`authorized_uses`（唯一的写入点在建音色，行 534），所以 `authorized_uses_before` **恒等于
+当前值**——`_before` 描述一个不存在的差量，而真正需要「变更前用途」的 `renew`/`resume`
+恰好不需要它。
+
+**VAC-6** 记一处形状例外：`evidence_ref` 三键、**没有 `content_hash`**，是全仓 91 处带
+`service_id` 的引用里唯一的例外（envelope 的 `data_ref` 把 `content_hash` 列为 required）。
+而同一张表的 `rights_ref` 描述**同一份权利文档**却是四键带 `rights_hash`（行 229）——两套
+键名、一个有 hash 一个没有。S45 不允许回查（S45 §1 行 160），所以 E30-C6 要的「依据」在
+审计手上只是 id 加数字。示例把 `service_id` 写死 `S02`，而 C15-5（§10 行 995）报告 S02 方案
+把 `rights_current` 的来处写成 `S10:binding_set@r12`——两人的说法冲突未裁决。
+
+**VAC-7** 是 S01 的 AGC-3 的第二例：payload **没有 `actor`**，而 `authorization_event.actor`
+是 `jsonb NOT NULL`（行 284），E30-C6 明写「`authorization_event` 有 `evidence_ref`、`actor`、
+`reason_code`」——三项里唯一没进事件的就是「谁」。S15 自己知道是谁（列 NOT NULL），只是
+没发出来，而审计方（S45）不能回查。
+
+**VAC-3 / VAC-8** 收剩下的语义与命名漂移：`to_state` 的四值 `CHECK` 在**驱动事件的那张表上
+不存在**（`authorization_event.to_state` 是裸 `text`，带 CHECK 的是 `voice_authorization.state`），
+所以 DB 只在更靠后的那张表上拦；`revoked` 是单向终态（触发器兜底，只能新建 `voice_id`），
+与 S01 那种「状态可反复覆盖」相反，消费方必须按 `state_seq` 取最大而不是按到达序覆盖；
+partition key 正文写 `tenant_id:voice_id` 而 catalog 写 `tenant_id:aggregate_id`（ABS-6 第二例）；
+`voice_id` 在 DDL 注释里是 `vox_01J...`、在示例里是 `vox_linlan`；C15-2 报告**没有**
+revision accepted 事件（S10 检索投影与 S17 音色缓存只能轮询）、C15-4 报告映射变更只有本地
+事件（S24/S25 不知道映射下架）。
+
+14 条负向探针复核了实际约束面：`to_state` 缺席/第五值被拒、`state_seq: 0` 被拒、
+`evidence_ref` 带 `content_hash` 被拒（三键 `additionalProperties: false`）、
+`authorized_uses_before: []` 被拒、外挂 `actor` 被拒；而 `from_state: null`、`evidence_ref: null`、
+`expires_at: null`、`effective_at: null` 四者都被接受——正是上面那几条 DDL 语义的形状。
+
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
 `contracts/examples/` 都有对应示例（`artifact-ingested.json`、`production-image-ready.json`……），
@@ -615,8 +679,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 31 个 payload schema
-                                                              （见上表；其余 24 个 envelope-only）
+                                        └──data_schema_ref──▶ 32 个 payload schema
+                                                              （见上表；其余 23 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -629,11 +693,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（100 个 JSON 解析）、`payloads`（86 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 31 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（102 个 JSON 解析）、`payloads`（87 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 32 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（47 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（48 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -685,7 +749,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：47 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：48 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用
