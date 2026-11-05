@@ -1,0 +1,32 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG1D4E5F6G7H8J9K0M1N2P3",
+  "source": "S22",
+  "type": "scheduler.permit.changed",
+  "subject": "prm_01JBG1E5F6G7H8J9K0M1N2P3Q4",
+  "time": "2026-11-06T10:02:41Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "prm_01JBG1E5F6G7H8J9K0M1N2P3Q4",
+  "aggregate_sequence": 2,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "cmd_01JBG1F6G7H8J9K0M1N2P3Q4R5",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "permit_id": "prm_01JBG1E5F6G7H8J9K0M1N2P3Q4",
+    "pool_id": "pool_seedance_volc_a1",
+    "attempt_id": "atm_01JBG1G7H8J9K0M1N2P3Q4R5S6",
+    "previous_state": "RESERVED",
+    "state": "DISPATCH_AUTHORIZED",
+    "release_reason": null,
+    "dispatch_id": "dsp_01JBG1H8J9K0M1N2P3Q4R5S6T7",
+    "execution_fence": 2,
+    "inflight_used": 38,
+    "inflight_limit": 40,
+    "account_used_inflight": 53,
+    "account_cap_inflight": 60
+  },
+  "data_ref": null
+}

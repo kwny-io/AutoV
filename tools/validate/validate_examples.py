@@ -39,9 +39,12 @@ SCHEMA_OF = {
     "enterprise-change-plan": "enterprise-change-plan.v2.schema.json",
     "episode-manifest": "episode-manifest.v2.schema.json",
     "execution-context": "execution-context.v2.schema.json",
+    "finance-ledger-entry-posted": "event-envelope.v2.schema.json",
     "generation-command": "generation-command.v2.schema.json",
+    "generation-job-state-changed": "event-envelope.v2.schema.json",
     "memory-claim": "memory-claim.v2.schema.json",
     "memory-committed-event": "event-envelope.v2.schema.json",
+    "orchestration-run-state-changed": "event-envelope.v2.schema.json",
     "post-subtitle-ready": "event-envelope.v2.schema.json",
     "production-image-ready": "event-envelope.v2.schema.json",
     "production-lipsync-ready": "event-envelope.v2.schema.json",
@@ -52,6 +55,8 @@ SCHEMA_OF = {
     "quality-alignment-completed": "event-envelope.v2.schema.json",
     "quality-semantic-completed": "event-envelope.v2.schema.json",
     "quality-technical-completed": "event-envelope.v2.schema.json",
+    "review-decision-recorded": "event-envelope.v2.schema.json",
+    "scheduler-permit-changed": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }
 

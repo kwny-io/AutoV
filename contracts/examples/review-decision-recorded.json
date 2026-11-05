@@ -1,0 +1,42 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG4Q6R7S8T9U0V1W2X3Y4Z5",
+  "source": "S40",
+  "type": "review.decision.recorded",
+  "subject": "rt_01JBG4R7S8T9U0V1W2X3Y4Z5A6",
+  "time": "2026-11-06T10:02:41Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "rt_01JBG4R7S8T9U0V1W2X3Y4Z5A6",
+  "aggregate_sequence": 3,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "cmd_01JBG4S8T9U0V1W2X3Y4Z5A6B7",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "decision_id": "rd_01JBG4T9U0V1W2X3Y4Z5A6B7C8",
+    "review_task_id": "rt_01JBG4R7S8T9U0V1W2X3Y4Z5A6",
+    "decided_against": {
+      "manifest_ref": {
+        "id": "mf_ep3_v2",
+        "revision": 7,
+        "content_hash": "c4e8a1d3f5b7092aec63b8d4f1e07492b5a3c6d18e0f2a4b7c9d1e3f50627489"
+      },
+      "execution_fence": 2,
+      "node_epoch": 4,
+      "lock_version": 11,
+      "artifact_content_hash": "3f1a9c7e5b2d80461cf23a7b9e0d4c85a6172b3c9d8e7f60412a3b5c6d7e8f90",
+      "policy_ref": {
+        "service_id": "S02",
+        "id": "policy_p1",
+        "revision": 3,
+        "content_hash": "a71c4e9d20b83f5641e7a0c3d8b56294f13a7c6e8d05b924c7f1a3e6d8b0c254"
+      },
+      "pack_hash": "5b2e8f1a3c7d0964258eb14d7f30a6c92d5e8b7f1a4c60392e7d8b5f1a3c6e09"
+    },
+    "status": "RECORDED",
+    "stale_reason": null
+  },
+  "data_ref": null
+}

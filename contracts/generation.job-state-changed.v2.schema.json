@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/generation.job-state-changed.v2.schema.json",
+  "title": "generation.job.state-changed payload v2",
+  "description": "event `generation.job.state-changed` 的 data 部分。权威定义在 plans/S26-generation-jobs.md §12（行 1014–1035）。`aggregate_id = provider_job_id`（行 1016）——**不是 attempt_id**，尽管 payload 里 `attempt_id` 是第一个字段。这个选择有后果：S21 要按 `attempt_id` 反查 run_id（行 445：「按 `attempt_id` → `node_in_flight` 反查 run_id」），所以它拿到一条事件必须先做一次查表。**不发的内容**（行 1038）：供应商原始响应体、Prompt 全文、密钥——用 `data_ref` 指向受限存储。**本地状态是权威，事件是通知**：S26 的转移每一笔都先落 `provider_job` 再写 outbox（§3.3 行 985–992 的同一事务代码块），所以事件的丢失只影响下游，不影响 S26 自己的判断。`node_epoch` 与 `execution_fence` 同时出现，两者作用域不同：`execution_fence` 是 run/branch 级，`node_epoch` 是单个 logical_node 级（AGENTS.md 速查表）。消费方用 fence 判断「这次尝试还属于当前执行」，用 epoch 判断「这个产物的输入是否还是当前版本」——**混用会静默接受旧结果**。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。来源：S26 §12 示例未画（示例只画 data 内部），按 contracts 既有 payload 约定补。"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S26 §12 行 1026。一次业务尝试。**这是 S21 与 S22 唯一能对上 S26 的键**——S26 发它，S21 反查 run_id，S22 在 `SUBMISSION_UNKNOWN` 时用它标 `reconcile_required_at`（S22 §6.2 行 795）。"
+    },
+    "state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S26 §12 行 1026（示例 `SUBMISSION_UNKNOWN`）。**不收窄为 enum**：S26 的 `provider_job.state` 列（§2.3 DDL 行 114，`state text NOT NULL`）**没有 `CHECK (... IN (...))`**——注释只写「见 §3 状态机」。状态集合在 §3.1 的转移表（行 213–241）里，共 16 个：`CREATED` / `RESERVING` / `ADMITTED` / `DISPATCH_AUTHORIZED` / `SUBMITTING` / `QUEUED` / `RUNNING` / `PROVIDER_SUCCEEDED` / `PROVIDER_FAILED` / `CANCELED` / `INGESTING` / `ARCHIVED` / `SUBMISSION_UNKNOWN` / `RECONCILING` / `REJECTED_BUDGET` / `REJECTED_QUOTA`。**表是权威但表不是机器可读的**——S21 用它做 signal、S22 用它判断 reconcile、S47 画投影，三者只能各自抄一遍表。见 x-needs-owner。"
+    },
+    "previous_state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S26 §12 行 1027（示例 `SUBMITTING`）。同 `state`，无 DDL 闭集。**`SUBMITTING` 有定义**：§3.1 转移表行 216–221 给了 `DISPATCH_AUTHORIZED → SUBMITTING`、以及 `SUBMITTING → QUEUED/RUNNING/PROVIDER_FAILED/SUBMISSION_UNKNOWN/DISPATCH_AUTHORIZED/CANCELED` 六条出边。示例值合法。"
+    },
+    "business_attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S26 §12 行 1028（示例 `1`）。**业务尝试序号**，与 `network_retry` 是两个计数器（行 1028 并列）。业务重试会推进它，网络重试不会——这个区分是 S29 §8.2 的 `SHOT_LINEAGE_DRIFT` 与「这一镜已经试了 8 次」的计数基础（S06 行 70：「跨 Run 的尝试计数必须落在同一个 lineage 上」）。`minimum: 1` 有 DDL 依据：`generation_attempt.attempt_no` 带 `CHECK (attempt_no >= 1)`（§2.1 行 86），注释「业务 attempt 序号，1..N」（行 75）。`provider_job.business_attempt` 是它的冗余（§2.3 行 126 注释 `= attempt_no，冗余便于查询`）。"
+    },
+    "network_retry": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S26 §12 行 1028（示例 `0`）。**传输层重试计数**。§2.3 DDL 行 127 带列注释：「`network_retry integer NOT NULL DEFAULT 0,-- 传输层重试计数`」，且行 143 说明了它与 `submit_attempts` 的分工：「`submit_attempts` 是**关键计数器**：它统计『真的发出去过几次 submit 请求』。`network_retry` 只统计传输层重试（**包括只读的 get_status**）。两者分开，因为只有前者可能产生费用。」`minimum: 0` 对应 DDL 的 `DEFAULT 0`。"
+    },
+    "submit_attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S26 §12 行 1028（示例 `1`）。**付费风险计数**：真正发出过几次 submit 请求。§2.3 DDL 行 127：「`submit_attempts integer NOT NULL DEFAULT 0, -- 真正发出过 submit 的次数（付费风险计数）`」。`minimum: 0` 而不是 1——DDL 是 `DEFAULT 0`，且 `DISPATCH_AUTHORIZED → SUBMITTING` 的副作用（§3.1 行 216）才是 `submit_attempts += 1`，所以一个刚创建、从未提交的 job 合法地是 0。示例值 1 表示已经发过一次。**与 `network_retry` 的区别不是数量关系而是语义**：后者可以因为一次 `get_status` 的传输失败就推进，而 `get_status` 不花钱。"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S26 §12 行 1029（示例 `seedance`）。供应商。S24 是能力与报价的权威，S26 在这里只是把实际用的那一家记下来。"
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S26 §12 行 1029（示例 `volcengine`）。渠道。**与 S23 的 `attribution.channel`（示例 `seedance_volcengine`）写法不同**：这里 provider 与 channel 是两个字段（`seedance` + `volcengine`），S23 把它们拼成一个（`seedance_volcengine`）。见 x-conflicts PGJ-3。"
+    },
+    "node_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S26 §12 行 1030（示例 `shot_3_2.video`）。**逻辑节点 ID**，形式是 `<shot_ref>.<modality>`。S21 用它反查 `node_in_flight`（行 445）。**它不是 `shot_id` 也不是 `shot_lineage_id`**——是 manifest 里的节点键。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S26 §12 行 1030（示例 `4`）。**单个 `logical_node` 的局部版本**（AGENTS.md 速查表）。局部重生成会推进它。按 AGENTS.md：「旧 epoch 的结果永远不能推进当前接受指针」——消费方必须拿它与当前 epoch 比对，**不能只看 fence**。`minimum: 1` 是因为 epoch 从 1 开始（S29 的 `node_epoch_input` 同样 `>= 1`）。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S26 §12 行 1030（示例 `2`）。**run / branch 级的取消与故障切换栅栏**（AGENTS.md 速查表）。它与 `node_epoch` **不能混用**：fence 推进表示「整个 run 换了执行，旧尝试全部作废」；epoch 推进表示「这一个节点要重做，别处不受影响」。一个 `SUBMISSION_UNKNOWN` 后对账成功的旧尝试，fence 可能还是同值而 epoch 已经变了——那种结果必须丢弃。"
+    },
+    "must_reconcile": {
+      "type": "boolean",
+      "description": "来源：S26 §12 行 1031（示例 `true`）。**这条是给 S21/S47 的显式信号**：true 表示「S26 自己不确定这次提交发生了什么，必须去供应商查」。它与 `state=SUBMISSION_UNKNOWN` 语义重叠但不等价——S26 可能在对账后发一条 `state=SUBMISSION_UNKNOWN` 但 `must_reconcile=false` 的事件（例如已确认从未发出）。AGENTS.md 明令：「在 `SUBMISSION_UNKNOWN` / `SUBSESSION_UNKNOWN` 状态下盲目重提付费任务」是绝对禁止的——`must_reconcile=true` 就是这条禁令的事件表达。"
+    },
+    "reason_code": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S26 §12 行 1032（示例 `SUBMIT_TIMEOUT_AFTER_SEND`）。**不收窄为 enum**：S26 全文只在示例里出现这一个值，§13 的分支表用中文描述原因（429 / 5xx / 401）而没有给出 code 名。`reason_code` 显然是 S26 内部与运维告警共用的字符串键，但**契约层从未列过它的值集合**。可 null（正常推进没有原因码）。见 x-needs-owner。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "state",
+    "previous_state",
+    "business_attempt",
+    "network_retry",
+    "submit_attempts",
+    "provider",
+    "channel",
+    "node_id",
+    "node_epoch",
+    "execution_fence",
+    "must_reconcile",
+    "reason_code"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "state / previous_state 的取值集合",
+      "demanded_by": "plans/S26-generation-jobs.md §12 行 1026–1027 + §3.1 的转移表（行 213–241）",
+      "s26_status": "**`provider_job.state` 没有 `CHECK (state IN (...))`**（§2.3 DDL 行 114 `state text NOT NULL`，注释只有「见 §3 状态机」）。唯一完整定义是 §3.1 的转移表，共 16 个状态。本批另一个状态机事件（S21 的 run 有 `rp_state_closed`、S22 的 permit 有 5 值 CHECK）都有真 DDL 约束，S26 没有——**S26 的状态机是这几个里最复杂的一个（16 态 + 6 条旁路）却唯一没有机器可读闭集**。后果具体：S21 用它做 signal、S22 用它判断 `SUBMISSION_UNKNOWN` 是否该标 reconcile、S47 用它画投影，三者只能各自从散文表里抄一遍，抄漏一个状态就是三处行为不一致。本 schema 只收非空字符串。若要收窄，以 §3.1 的表为准（它比 §3.2 行 239 的散文更完整）。"
+    },
+    {
+      "field": "reason_code 的取值集合",
+      "demanded_by": "plans/S26-generation-jobs.md §12 行 1032（示例 `SUBMIT_TIMEOUT_AFTER_SEND`）",
+      "s26_status": "全文只出现这一个 code。§13 的分支表描述的是情况（429、5xx 提交前/后、401/403、政策拒绝、参数错误、模型退休）而不是 code 名；`provider_job.last_error_code`（§2.3 行 131）也只是裸 `text` 列。**运维告警大概率按 `reason_code` 分组**，一个没有闭集的字符串会把「同一个原因写得不一样」变成告警噪音。本 schema 只收 `[string, null]`。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PGJ-1",
+      "summary": "§13 的「失败分支」表里混着四个不在状态机里的名字，列位置却像状态",
+      "s26_machine": "§3.1 行 213–241 的转移表——唯一的状态机定义，16 个状态，`SUBMITTING` 在列且示例值合法",
+      "s26_table13": "§13 行 1041–1056 的「失败分支汇总」表：状态列出现了 `ACCOUNT_UNAUTHORIZED` / `CAPABILITY_DRIFT` / `ROUTE_INVALIDATED` / `DISCARD_ON_COMPLETION`，**四个都不在 §3.1 的 16 态里**",
+      "why_it_matters": "示例本身没问题（`SUBMITTING` 在 §3.1 里有定义、有 6 条出边）。真正的冲突在 **§13 与 §3.1 之间**：那四个名字大概率是**失败原因**而不是状态（§13 的列名叫「失败分支」），但它们在表里的位置让人读成状态列。实现时若把它们写进 `provider_job.state`，会造出 §3.1 不认识的状态——而 `state` 列没有 CHECK，**数据库拦不住**。S21 的 signal 逻辑若按 §3.1 实现，收到一个 `state='ACCOUNT_UNAUTHORIZED'` 的事件会静默落进 default 分支。§3.1 是状态机的权威；§13 需要把「失败原因」与「目标状态」分成两列。这也是 x-needs-owner 里那个闭集缺失的具体后果：**没有 CHECK 时，散文表里的排版错误会直接变成数据错误**。"
+    },
+    {
+      "id": "PGJ-2",
+      "summary": "三个计数器各自的语义清楚，但彼此的等式关系没有，且有路径能让它们偏离直觉",
+      "s26_event": "§12 行 1028 并列给出三个（示例 1 / 0 / 1）",
+      "s26_ddl": "§2.3 行 126–127 的列注释 + 行 143 的说明：`business_attempt = attempt_no（业务序号）`、`network_retry（传输层重试，含只读 get_status）`、`submit_attempts（真正发出过 submit 的次数，付费风险计数）`",
+      "why_it_matters": "语义不冲突，**但三者之间没有等式，且有三条独立路径能让它们偏离直觉关系**：`network_retry` 会因为一次 `get_status` 传输失败而 +1（不花钱、不推进业务尝试）；`DISPATCH_AUTHORIZED → SUBMITTING` 的副作用就是 `submit_attempts += 1`（§3.1 行 216），注解却说「在 S27 侧实际发出时由回执确认」——即这个计数**在真正发出之前就加了**；`SUBMITTING → RETRYABLE → DISPATCH_AUTHORIZED`（行 221）会让同一 job 的 `submit_attempts` 继续累加而 `business_attempt` 不动。示例 1 / 0 / 1 与这三条都不冲突，但也分不清「`submit_attempts` 是否已含本次刚要发出的那一次」。**后果是付费风险判定**：S26 不得对同一输入组合重提超过一次，判断依据就是这个计数器；差 1 会把「已发两次」看成「发了一次」。本 schema 只给下界（`business_attempt >= 1`、其余 `>= 0`），不表达三者关系。"
+    },
+    {
+      "id": "PGJ-3",
+      "summary": "provider 与 channel 在这里是两个字段，在 S23 的账本里被拼成一个字符串",
+      "s26": "§12 行 1029：`\"provider\":\"seedance\", \"channel\":\"volcengine\"`",
+      "s23": "§6.1 行 1164：`\"channel\":\"seedance_volcengine\"`",
+      "why_it_matters": "S23 的账本靠 `attribution.channel` 做成本归因。若它要 join 回 S26 的事件（例如「这个失败尝试花了多少钱」），就必须知道拼接规则——而**拼接规则没有写下来**：是 `provider + '_' + channel`？顺序固定吗？S22 的池名又是第三种写法（`pool_seedance_volc_a1`，带 cell 后缀）。三处描述同一个「哪家供应商的哪条线路」，三种形态。本 schema 照 S26 收两个独立字段；三者的映射关系需要某一方给出。"
+    },
+    {
+      "id": "PGJ-4",
+      "summary": "两个版本游标都规范地传了，但「哪个决定结果作废」在契约层没有判定式，只有生产 schema 里各写各的",
+      "s26": "§12 行 1030：`\"node_epoch\":4, \"execution_fence\":2`",
+      "agp": "AGENTS.md 速查表：「`execution_fence` | run / branch | 取消、故障切换」「`node_epoch` | 单个 `logical_node` | 局部重生成」「两者不能混用。旧 epoch 的结果永远不能推进当前接受指针」",
+      "contracts": "两者成对出现的地方至少四处：execution-context.v2、episode-manifest.v2、production.image-ready.v2 的 `built_for`（`node_epoch_input` + `execution_fence`）、quality.*.completed.v2——**再加上本文件，一共五个 schema 各带一份，没有一处说清判定式**",
+      "why_it_matters": "AGENTS.md 给了两个游标的**作用域**与一条硬规则（旧 epoch 不能推进接受指针），但**没有给消费方的判定式**：一条结果同时带着 `node_epoch=4, execution_fence=2` 到达时，消费方该怎么判断它是否仍然有效？可能的读法：(a) 两个都必须等于当前值才算有效（保守），(b) fence 相等即有效、epoch 只影响接受指针的推进资格（宽松）。两种读法在线性场景下等价，在「fence 已推进但某节点 epoch 未变」的场景下不同——保守读法会作废一个本可以用的产物，宽松读法会让旧执行线的产物进入接受流程。**同一个判定要在五个消费点各写一遍，而五处都没有可引用的契约文本**。此外 `production.image-ready` 用的是 `node_epoch_input` 这个名字（表示「产出所依据的 epoch」），本文件用的是 `node_epoch` ——同一个量两个名字，见 PIR 批次的同一问题。本 schema 只开两个字段，不表达判定。"
+    }
+  ]
+}

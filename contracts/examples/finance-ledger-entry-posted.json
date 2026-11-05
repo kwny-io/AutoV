@@ -1,0 +1,51 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG2J9K0M1N2P3Q4R5S6T7U8",
+  "source": "S23",
+  "type": "finance.ledger.entry-posted",
+  "subject": "bgt_01JBG2K0M1N2P3Q4R5S6T7U8V9",
+  "time": "2026-11-06T10:02:41Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "bgt_01JBG2K0M1N2P3Q4R5S6T7U8V9",
+  "aggregate_sequence": 918,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "cmd_01JBG2L1N2P3Q4R5S6T7U8V9W0",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "entry_id": "led_01JBG2M2P3Q4R5S6T7U8V9W0X1",
+    "entry_type": "SETTLE",
+    "budget_id": "bgt_01JBG2K0M1N2P3Q4R5S6T7U8V9",
+    "currency": "CNY",
+    "delta_reserved_micro": -1250000,
+    "delta_consumed_micro": 1250000,
+    "reservation_id": "rsv_01JBG2N3Q4R5S6T7U8V9W0X1Y2",
+    "attempt_id": "atm_01JBG1G7H8J9K0M1N2P3Q4R5S6",
+    "provider_job_ref": "pj_seedance_8f21c4",
+    "settled_micro": 1250000,
+    "overage_micro": 0,
+    "pending_reconciliation": false,
+    "attribution": {
+      "project_id": "prj_01J9Z5R3L8N4P9Q6S2T7U1V5W3",
+      "series_id": "sr_01J9Z5S4M9P5Q0R7T3U8V2W6X4",
+      "episode_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+      "run_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+      "shot_id": "shot_3_2",
+      "attempt_id": "atm_01JBG1G7H8J9K0M1N2P3Q4R5S6",
+      "provider_job": "pj_seedance_8f21c4",
+      "modality": "video",
+      "model": "seedance-1.0-pro",
+      "channel": "seedance_volcengine"
+    },
+    "budget_after": {
+      "limit_micro": 50000000,
+      "consumed_micro": 18420000,
+      "outstanding_reserved_micro": 3100000,
+      "available_micro": 28280000,
+      "state": "ACTIVE"
+    }
+  },
+  "data_ref": null
+}
