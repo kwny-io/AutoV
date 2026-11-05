@@ -70,6 +70,19 @@ python contracts/quality/validate_registry.py <registry.json>
 退出码 0 = 可加载，1 = 拒绝（**不是**记警告后继续），2 = 环境问题。
 族校验必须是加载期自动执行的：只写在散文里的规则，第一次有人赶着加 check 就会被绕过。
 
+**`jsonschema` 缺失时返回 2，不返回 0。** 校验器原先在没有 `jsonschema` 的环境里
+打印一句"shape checks skipped"就照常返回 0——形状校验整层不跑，调用方却看到"通过"。
+半套校验器比没有更糟：它会给出一个它没验过的绿灯。现在缺依赖直接 rc=2，
+在 CI 里就是失败而不是静默降级。注意 `python -I`（隔离模式）不加载用户
+`site-packages`，装了 `jsonschema` 也会落到这条路——拿它做冒烟测试要记住这点。
+
+冒烟测过的 11 条（全部按预期退出）：族内合法的 registry → 0；缺 `window_max_frames`
+（`window_scope=window`）、缺 `recheck_scope`、`window_scope` 非枚举值、`schema_version`
+写成 `"2"`、`default_action` 越族、`allowed_actions` 越族、`owner_service` 与前缀不符、
+`check_id` 重复、`never_auto_repair` 无理由、`severity_default` 高于 `severity_max` → 全 1；
+`--families` / `--schema` 路径不存在 → 2。`owner_service` 那条要挑**真的不符**的项改，
+把 `S36` 的项改成 `S36` 不构成用例。
+
 ## 三层文件的关系
 
 ```

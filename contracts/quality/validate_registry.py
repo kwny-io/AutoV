@@ -110,7 +110,16 @@ def main():
     ap.add_argument("--schema", default=DEFAULT_SCHEMA)
     args = ap.parse_args()
 
-    for p in (args.registry, args.families):
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        # Half a validator is worse than none: a registry that fails the shape
+        # rules would load with exit 0 and the bug surfaces in S39's routing.
+        print("jsonschema is not installed; cannot run shape checks. Refusing to "
+              "report OK. Install it: python -m pip install jsonschema")
+        return 2
+
+    for p in (args.registry, args.families, args.schema):
         if not os.path.exists(p):
             print(f"file not found: {p}")
             return 2
@@ -118,20 +127,12 @@ def main():
     registry = load(args.registry)
     families = load(args.families)
 
-    try:
-        from jsonschema import Draft202012Validator
-    except ImportError:
-        Draft202012Validator = None
-
     errors = []
-    if Draft202012Validator is not None:
-        schema = load(args.schema)
-        v = Draft202012Validator(schema)
-        for e in sorted(v.iter_errors(registry), key=lambda e: list(e.absolute_path)):
-            loc = "/".join(str(x) for x in e.absolute_path) or "<root>"
-            errors.append(f"schema {loc}: {e.message}")
-    else:
-        print("(jsonschema not installed; shape checks skipped, family checks still ran)")
+    schema = load(args.schema)
+    v = Draft202012Validator(schema)
+    for e in sorted(v.iter_errors(registry), key=lambda e: list(e.absolute_path)):
+        loc = "/".join(str(x) for x in e.absolute_path) or "<root>"
+        errors.append(f"schema {loc}: {e.message}")
 
     errors += validate(registry, families)
 
