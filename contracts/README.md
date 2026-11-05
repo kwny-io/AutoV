@@ -90,7 +90,8 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 依据的闭集一律留成非空字符串 + `x-needs-owner`——把计划里「建议的闭集」写成 `enum`
 等于替契约做决定（见下面 `sfx_family` / `mood` 两条）。
 
-最后五个是「状态机/账本/决策」这一类，它们暴露的是另一种缺口：**状态闭集缺失**。S21、
+`orchestration.run.state-changed` 到 `review.decision.recorded` 这五个是「状态机/账本/
+决策」这一类，它们暴露的是另一种缺口：**状态闭集缺失**。S21、
 S22 有真 DDL `CHECK`，S26 有 16 个状态却没有任何机器可读的闭集（`provider_job.state`
 只是一列裸 string），S40 的 `status` 五值只写在一句 JSON 注释里。所以这五份 schema 里
 `state` 收成 `enum` 的只有 S22；S26 留非空字符串 + `x-needs-owner`——把 16 个状态抄成
