@@ -1,8 +1,10 @@
 # 实现方案统一验收 · 2026-10-30
 
-范围：`plans/` 下 17 份服务实现方案，由 5 个并行会话产出后合并到 `main`。
+范围：`plans/` 下 **46 份**服务实现方案（48 服务中 S19 / S20 尚未落盘），由 8 个并行会话产出后合并到 `main`。
 
-结论：**13 项通过，1 项冲突已收敛（C1，见 §2），2 项缺口已关闭（G1/G2，见 §3/§4），3 项契约缺口已落（C6/C7/C8，见 §2.4）。** 没有阻断问题。
+结论：**46 份里 43 份与契约完全自洽；3 份（S42 / S43 / S44）有一处共同的事件命名冲突待裁决（C9，见 §2.5）。**
+此前登记的 C1 冲突已收敛（§2），G1 / G2 缺口已关闭（§3 / §4），C6 / C7 / C8 契约缺口已落（§2.4）。
+没有阻断实现的问题 —— C9 只影响订阅侧，不阻塞 S42 / S43 / S44 自身的写入路径。
 
 ---
 
@@ -10,21 +12,21 @@
 
 | 检查 | 方法 | 结果 |
 |---|---|---|
-| 原始设计包未被改动 | 对 5 个分支逐个 `git diff base..branch -- docs/design-package` | **5/5 零改动** |
-| 方案未残留进 `services/` | 扫 `services/**/implementation-plan.md` | **0 处残留** |
-| 文件名 ↔ 服务目录 ↔ service_id | 42 项逐一对齐 | **17/17 一致** |
-| 内部相对链接 | 解析 67 个链接 | **0 损坏** |
+| 原始设计包未被改动 | `git log -- docs/design-package` 仅有仓库初始化那一条 | **零改动** |
+| 方案未残留进 `services/` | 扫 `services/**` 下 `*-plan.md` / `*方案*.md` | **0 处残留** |
+| 文件名 ↔ 服务目录 ↔ service_id | 46 份逐一对齐 `services/*/service.yaml` | **46/46 一致** |
+| 内部相对链接 | 跳过代码块后解析 | **6 处待补**，全部指向尚未落盘的 S19 / S20 |
 | 服务 ID 引用有效性 | 全量正则扫描对比 catalog 48 项 | **0 越界引用** |
-| 幂等键格式 | `tenant_id + command_id + request_hash` | **17/17 一致**，同键异 hash → 409 无歧义 |
+| 幂等键格式 | `tenant_id + command_id + request_hash` | **45/46 一致**；S27 的幂等入口不同（`dispatch_id` + `stable_client_key` 双唯一约束，见 §6.2），不算偏离 |
 | `execution_fence` / `node_epoch` 混用 | 逐文件扫描误用句式 | **0 处混用** |
 | defect type 闭集 | 97 个 check 的 `defect_type` 对 14 值闭集 | **97/97 合规** |
 | QCReport 规范唯一性 | 检查是否被复述 | **唯一在 S35 §2**，S36/S37/S38 只引用 |
 | permit 状态机三方一致 | S22 / S26 / `admission-record.v2.schema.json` | **一致**；S22 的 `EXPIRED` 明确不外露（C22-4 已记录） |
 | reservation 状态机 | S23 / 契约枚举 | **一致**；`EXPIRED` 同样不外露（C23-4b 已记录） |
-| outbox 覆盖 | 声明 `publishes` 的方案是否含 outbox | **17/17**（S25 已补，见 §3） |
-| E01–E40 覆盖 | 全量扫描 | **30/40** 被引用，未覆盖 10 项全部属于尚未写方案的服务 |
-
-未覆盖的 E 编号：E02 三集连续、E06 无人值守失败、E29 恶意媒体/SSRF、E33 Temporal 升级、E35 容量/noisy neighbor、E36 UI 断线、E37 交付、E38 费用重算、E39 审计保留、E40 FDE 移交 —— 对应 S21/S29–S34/S42–S48，属正常待办。
+| outbox DDL 完整性 | 42 个内联 `CREATE TABLE ... outbox` 逐个解析列名 | **42/42 六列齐全**（`tenant_id` / `partition_key` / `aggregate_id` / `aggregate_seq` / `headers` / `published_at`） |
+| 跨库写入 / 跨库 JOIN | 正负向扫描 | **0 处**（命中 2 处均为"禁止跨库 JOIN"的表述） |
+| 发布事件名 ↔ `event-topics.v2.json` | 46 份的"发布"行逐个比对目录 48 个 `event_type` | **43/46 一致**；S42/S43/S44 共 9 个类型未注册，见 §2.5 |
+| E01–E40 覆盖 | 全量扫描 | **40/40** 被引用 |
 
 ---
 
@@ -65,12 +67,12 @@ candidates = action_family[defect.defect_type]
 
 **改动落点**：
 
-- [S35 §2.2.1](plans/S35-technical-qc.md) 新增 14 行动作族表（含 `keyframe_edit` 仅在 `window_scope ≤ 6 帧` 可用的约束、音频类缺陷不得走 `reingest` 等硬约束）。
-- [S35 §2.2.2](plans/S35-technical-qc.md) 定义登记项字段与两条硬约束：登记项的动作必须是族的子集；severity 只能往上抬不能往下压。
-- [S35 §10.3.1](plans/S35-technical-qc.md) 新增 ROUTE-T1..T6 路由不变量，核心是「新 check 不需要 S39 改代码」这条被机械验证。
-- [S39 §3.1](plans/S39-repair-planning.md) 整张 27 行 check_id 表删除，替换为上述三步交集。
-- [S39 §3.3](plans/S39-repair-planning.md) "不能自动修"不再逐条列 check_id，改为读登记项 `never_auto_repair` + `no_auto_reason`。
-- [S39 §10.1](plans/S39-repair-planning.md) 补 E24-R13..R18，其中 R13 直接验证「新增 check 不重建 S39」。
+- [S35 §2.2.1](../../plans/S35-technical-qc.md) 新增 14 行动作族表（含 `keyframe_edit` 仅在 `window_scope ≤ 6 帧` 可用的约束、音频类缺陷不得走 `reingest` 等硬约束）。
+- [S35 §2.2.2](../../plans/S35-technical-qc.md) 定义登记项字段与两条硬约束：登记项的动作必须是族的子集；severity 只能往上抬不能往下压。
+- [S35 §10.3.1](../../plans/S35-technical-qc.md) 新增 ROUTE-T1..T6 路由不变量，核心是「新 check 不需要 S39 改代码」这条被机械验证。
+- [S39 §3.1](../../plans/S39-repair-planning.md) 整张 27 行 check_id 表删除，替换为上述三步交集。
+- [S39 §3.3](../../plans/S39-repair-planning.md) "不能自动修"不再逐条列 check_id，改为读登记项 `never_auto_repair` + `no_auto_reason`。
+- [S39 §10.1](../../plans/S39-repair-planning.md) 补 E24-R13..R18，其中 R13 直接验证「新增 check 不重建 S39」。
 
 ### 2.3 收敛带来的连带改动
 
@@ -116,7 +118,42 @@ candidates = action_family[defect.defect_type]
 **这不能靠推断补。** 给 76 条 check 凭空填 `window_scope`，是把设计决策伪装成数据提取。
 正确做法是四个 QC 服务各自按 S35 §2.2.2 的字段表补登记项，再用 `validate_registry.py` 把关。
 在那之前，**族级约束有代码守着，check 级的窗口与起点动作仍靠人工** —— 这句话必须留着，
-因为它正是 C1 当初想消灭的那类风险。已记入 [contracts/README](../contracts/README.md) 缺口第 4 条。
+因为它正是 C1 当初想消灭的那类风险。已记入 [contracts/README](../../contracts/README.md) 缺口第 4 条。
+
+### 2.5 C9（待裁决，2026-11-05）：三份方案的发布事件名未在 `event-topics.v2.json` 注册
+
+46 份方案里有 43 份的"发布"行与目录逐字一致。剩下 3 份一共写了 **9 个目录里不存在的 `event_type`**：
+
+| 服务 | 目录登记 | 方案实际发布 |
+|---|---|---|
+| S42 | `post.master.rendered` | 同上 + `post.mix.completed`、`post.render.failed` |
+| S43 | `delivery.package.ready` | `delivery.package.created`、`.sealed`、`.published`、`delivery.publish.failed` |
+| S44 | `evaluation.report.published` | `analytics.metric.snapshot.created`、`analytics.evaluation.completed`、`analytics.cost.projection.updated` |
+
+**这不是笔误，是设计包粒度与实现需要的粒度不一致。** 设计包 `services/S43-delivery.md` 第 15 行原文
+只写了一条"发布事件：`delivery.package.ready`"；但 S43 的状态机有 `created → sealed → published`
+三态，S44 的 K4（单集交付耗时）要的是 **published 那个时点**，S47 要的是 **sealed 那个时点**。
+一条 `ready` 喂不饱两个下游。S42 同理：目录只有"渲染完成"，而 `remix` 的完成与渲染失败是两件事。
+
+**已经在按不存在的类型建订阅的地方**（这才是这条冲突值得单列的原因）：
+
+| 消费方 | 订阅的未注册类型 | 后果 |
+|---|---|---|
+| [S47](../../plans/S47-realtime-projection.md) §4 | `delivery.package.sealed` | 交付进度投影永远收不到事件 |
+| [S44](../../plans/S44-evaluation-analytics.md) K4 | `delivery.package.published` | K4 时长恒为空 |
+| [S44](../../plans/S44-evaluation-analytics.md) §6.3 | `billing.cost.recorded`、`generation.attempt.completed`、`quality.qc.completed` | K3/K5 的分母全部落空 |
+
+后三个名字尤其要注意：S23 在目录里只有 `finance.ledger.entry-posted`，S26 只有
+`generation.job.state-changed`，四份 QC 服务各只有一条 `completed`/`ready`。
+S44 写的这六条消费事件里，**四条在目录里不存在** —— 它的 KPI 口径是照着不存在的流设计的。
+
+**为什么不自行选边**（[AGENTS.md](../../AGENTS.md)「契约与文档冲突 → 停下，报告冲突」）：
+补登 9 个 `event_type` 需要连 payload schema 一起补，那是契约变更；退回单条事件则需要
+把状态塞进 `data.state`，那是让 S42/S43 的 outbox 与状态机脱节。两条路各有代价，
+**且与 C1 同一性质：改的是契约，不该由实现方案单方面决定**。
+
+已按仓库既有格式记入三份方案各自的 `§11 冲突` 节（S42 C8 / S43 C8 / S44 C8，编号互相指向），
+待契约维护方裁决。**在裁决前，实现只按方案写入，不按目录订阅 —— 两边一旦不一致，宁可空订阅也不要静默错值。**
 
 ---
 
@@ -167,7 +204,7 @@ publishes:
 **为什么 `tenant_id` 必须有（而不是可省）：** `event-envelope.v2.schema.json` 的 `required`
 里有 `tenant_id`。outbox 行没有它，中继就无法填出合法信封 —— 这不是风格问题，是**发不出去**。
 
-**为什么 `partition_key` 必须有：** [S08 §6.4](plans/S08-revision-snapshot.md) 的中继按
+**为什么 `partition_key` 必须有：** [S08 §6.4](../../plans/S08-revision-snapshot.md) 的中继按
 `partition_key` 保证同一聚合的顺序。缺了它，`aggregate_sequence` 会乱，下游要么缓冲要么丢弃。
 
 **S22 / S23 属于合法引用**：两者明确写「与 S08 完全同构 … 见 S08 §1.6」，而该节确有完整
@@ -210,10 +247,11 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 
 ---
 
-## 5. 已确认无问题的两处
+## 5. 已确认无问题的三处
 
-- **`sha256:` 前缀**：S02/S40 的示例里 `content_hash` 写成 `"sha256:..."`，契约 schema 是 `^[0-9a-f]{64}$`（裸 hex）。这是**示例占位符写法**，不是字段定义冲突 —— 17 份方案在字段定义处都按裸 hex 写。实现时以 schema 为准，示例按 schema 填充。不构成待改项，但实现时注意别把示例照抄进代码。
+- **`sha256:` 前缀**：S02/S40 的示例里 `content_hash` 写成 `"sha256:..."`，契约 schema 是 `^[0-9a-f]{64}$`（裸 hex）。这是**示例占位符写法**，不是字段定义冲突 —— 46 份方案在字段定义处都按裸 hex 写。实现时以 schema 为准，示例按 schema 填充。不构成待改项，但实现时注意别把示例照抄进代码。
 - **`grant_state` 字段位置**：S26 说 `admission-record` 里有 `grant_state`，实际它在 `dispatch` 子对象内。S26 的表述正确，是我初查时误判。
+- **S27 的幂等键不是 `command_id`**：全仓统一格式是 `tenant_id + command_id + request_hash`，S27 却用 `dispatch_id` 与 `stable_client_key` 两个唯一约束。**这不算偏离** —— S27 没有 `POST /xxx` 形态的业务命令，它的写入口是消费 S26 事件后的出站请求，重放是"同一个 dispatch 被投递两次"而不是"同一个 command 被提交两次"。`dispatch_id` 唯一挡住重放，`(tenant_id, stable_client_key)` 唯一挡住"错误地生成新 dispatch_id 再发一次"，后者正是重复付费的实际路径（`unsupported` 渠道上新 key = 新任务）。两重都在 [S27 §5.2](../../plans/S27-provider-connectors.md) 的 DDL 里，且 T27-02/T27-03 直接测这两条。**但 S27 的 `request_hash` 目前只落库不参与判定** —— 若将来要挡"同 dispatch 不同 body"，需要补一条显式比较，现在没有。
 
 ---
 
@@ -229,6 +267,20 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 
 5 个会话分支本身**未推送**，方案内容已全部收进 `main:plans/`。
 
+### 6.1 至此累计（2026-11-05）
+
+| 项 | 值 |
+|---|---|
+| 方案总数 | **46 / 48**，缺 S19 Agent 运行时、S20 Prompt 编译器 |
+| 会话分支 | 8 个，其中 5 个带 worktree（S08/S22/S23、S24–S27、S02/S40、S16–S18、S35–S39）、3 个直接写在 main（S01/S05/S06、S29–S34、S45–S48） |
+| 文档自洽性检查 | 见 §1，除 C9 外全部通过 |
+| 与设计包的偏差 | 除 C9 的 9 个事件名外，无 |
+
+### 6.2 本轮修过但没单列的
+
+- **42 个 outbox 补齐为可发信**（`0afca3e`，23 份方案）：`tenant_id` / `partition_key` / `headers` 三列此前缺失。缺 `tenant_id` 是信封 `required` 挡住的，缺 `partition_key` 是 S08 §6.4 的中继排序挡住的 —— 都不是风格问题。
+- **42 个 outbox 的 `aggregate_id` 加了语义标注**（`1e59f53`）：只写 `aggregate_id text` 而不说是哪个实体，实现者挑错一个字段，`aggregate_sequence` 就变成"看起来有序其实是错的"。S29–S34、S42、S44 的聚合键**逐事件不同**，那些地方没有写死一个值，而是指向各自的事件表。
+
 ---
 
 ## 7. 下一步
@@ -238,7 +290,12 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 3. ~~落 `action_family` 与登记项的机器可读契约（C6/C7/C8），族校验进加载期。~~
    已于 2026-11-02 完成，见 §2.4。族校验的**参考实现**在 `contracts/quality/validate_registry.py`；
    实现期需要把它移植进 `platform/qc-sdk`，并补 `check-registry.v2.json` 数据文件。
-4. 剩余 31 个服务（S01/S03–S07/S09–S15/S19–S21/S28–S34/S41–S48）尚无方案 —— **正在并行编写**，
-   已落 18 份，剩余 13 个在 3 个会话窗口中。
+4. ~~剩余 31 个服务尚无方案 —— 正在并行编写。~~ 已于 2026-11-05 落至 **46/48**，只剩
+   S19-agent-runtime / S20-prompt-compiler 在写。两篇落盘后，S04/S05/S06 里指向它们的 6 个链接自动接通。
+5. **C9 待裁决**（§2.5）：3 份方案共 9 个发布事件类型未在 `event-topics.v2.json` 注册，
+   已有两个下游按不存在的类型建了订阅。这是契约问题，不归实现方案单方面决定。
+6. **74 条 check 的登记项字段仍缺**（§2.4 末尾）：`window_scope` / `escalation_rule` /
+   `default_action` / `allowed_actions` / `recheck_scope` 要由四个 QC 服务各自补，
+   不能由别处推断。
 
 方案是设计稿。以上检查证明的是**文档之间自洽**，不是**设计正确**。E01–E40 里真正要证明的东西（跨租户拒绝、重复投递幂等、Saga 补偿、fencing、重启恢复）只能靠实现加测试证明 —— `docs/16` 的原话是「schema 校验通过 ≠ 分布式正确性」。

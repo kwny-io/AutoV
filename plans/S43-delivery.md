@@ -852,6 +852,7 @@ delivery.publish
 | C5 | 外发是否算"付费/计费动作"无明文 | docs/12 只列生成成本；渠道分发可能有平台侧费用 | 本方案不记账；若渠道收费，需要 S23 归集维度 |
 | C6 | 签名 key 的归属无明文 | service.yaml 写"签名与完整性"归 S43；但密钥管理不在 48 服务表中 | 本方案用 `key_ref` 引用外部 KMS |
 | C7 | `DeliveryPackage` 是否覆盖系列级交付 | S43 `data_owner` 未限制粒度；OpenAPI 的创建 body 无 `series_id`，但有 `master_artifact_id` | 本方案支持 `episode_id` 与 `series_id` 二选一（系列包为多集聚合）；需契约确认 |
+| C8 | 发布事件名与 `event-topics.v2.json` 不一致 | 设计包 `services/S43-delivery.md` 与目录都只登记 `delivery.package.ready`（topic `drama.delivery.v2`）；本方案 §6.3 拆成 `delivery.package.created` / `.sealed` / `.published` / `delivery.publish.failed` 四条 | 四条里三条未在目录注册，**按目录订阅的消费方会静默收不到**：[S47](S47-realtime-projection.md) §4 已在按 `delivery.package.sealed` 建交付进度投影，[S44](S44-evaluation-analytics.md) K4 用 `delivery.package.published` 的时点。需要契约维护方裁决：要么补登三个 `event_type` 并给 payload schema，要么退回单条 `delivery.package.ready` + `data.state`。不允许实现只发四条、目录仍只有一条 |
 
 ---
 

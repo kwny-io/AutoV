@@ -837,6 +837,7 @@ analytics.snapshot
 | C5 | 评测产生的推理成本归属 | docs/13 说 S19 的 `episode.plan`/`memory.extract` 可产生有界推理成本；S44 的评测若用 LLM 评判，成本算生产还是评测 | 本方案要求走 S26 + 标 `cost_type=evaluation`，并排除出 K3 |
 | C6 | `projection_watermark` 的单值 vs 多源 | OpenAPI 只给一个 `projection_watermark`；实际有 S23/S26/S35/S40/S08/S43 六个源 | 本方案用 `staleness` 分源表达；单值字段保留为"最慢源"的投影 |
 | C7 | K7「记忆正确性」的可计算性 | docs/15 定义"记忆事实被后续剧情证伪前未被发现"；但"证伪"的判定归 S17/S40，S44 无权判定 | 本方案只统计"被 S17 标为冲突且 S40 确认"的条数，不自行判定证伪 |
+| C8 | 发布事件名与目录不一致，且消费侧有四个名字在目录里不存在 | 目录对 S44 只登记 `evaluation.report.published`；本方案 §6.3 发 `analytics.metric.snapshot.created` / `analytics.evaluation.completed` / `analytics.cost.projection.updated`。§6.3 消费侧 `billing.cost.recorded`（S23）、`generation.attempt.completed`（S26）、`quality.qc.completed`（S35–S38）、`delivery.package.published`（S43）**四个名字在 `event-topics.v2.json` 里都没有** | 这份方案的口径依赖这些事件，但在目录里订阅不到：S23 只有 `finance.ledger.entry-posted`，S26 只有 `generation.job.state-changed`，四条 QC 服务各只有 `quality.{technical,semantic,alignment}.completed` / `post.subtitle.ready`。三条 KPI（K3 每可用分钟成本、K4 单集交付耗时、K5 返工率）的分母都落在这四个不存在的类型上。需契约维护方逐条裁决映射或补登 —— **与 S43 C8 是同一条冲突的两面**，应一起裁 |
 
 ---
 
