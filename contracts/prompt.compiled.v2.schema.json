@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/prompt.compiled.v2.schema.json",
+  "title": "prompt.compiled payload v2",
+  "description": "event `prompt.compiled` 的 data 部分。权威定义在 plans/S20-prompt-compiler.md §4.3（行 523–547，完整示例）、§5.3（行 687–722，`compiled_prompt_manifest` DDL）、§4.1（行 460–512，manifest 全文与 `content_hash` 覆盖清单）、§4.4（行 549+，回归报告）。**事件只发 7 个字段，manifest 有 25 列**——§4.3 明说「事件不带 `prompt_text`」（行 549），因为它是剧情内容 + 客户资产描述，进 Kafka 就是 14 天多副本留存（E31）。所以这条事件的全部价值是「通知有一份新 manifest，去 `data_ref` 取」，不是交付内容。**本 schema 覆盖的范围就是这 7 个字段**；manifest 的其余字段属于 `GET` 路径，不在这里。两处需要特别说明的：`aggregate_sequence` 恒为 1（§4.3 行 525 + §6.4 行 900：manifest 不可变、只发一次），这与 envelope 的 `minimum: 1` 一致所以不构成冲突，但它意味着这条事件**永远不能表达「同一聚合的第二次变更」**；以及 `warnings[]` 的元素形状全文没有定义——见 x-conflicts PCM-2。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§4.3 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "manifest_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 538（示例 `{\"id\":\"cpm_01J...\",\"revision\":1,\"content_hash\":\"sha256:...\"}`）+ §5.3 DDL 行 692（`manifest_id text NOT NULL`）+ 行 693（`revision integer NOT NULL DEFAULT 1`）+ 行 718（`content_hash bytea NOT NULL`）+ §4.1 行 467（manifest 全文里同名同形）。**这是三键 ref，没有 `service_id`**——与 §10.3 行 1191 的 `template_ref` 四键形状不同，也与 `shot_ref` 的三键+`service_id` 不同。本文件照 §4.3 与 §4.1 收三键：S20 是自己发的，加 `service_id: \"S20\"` 是冗余。**`revision` 恒为 1**：§5.3 行 693 的 DEFAULT 1 + §3.7 行 439 不变量 1（manifest 一旦写入不可变）+ §10.3 行 1193（「`revision` 是 manifest 的 `revision`（当前恒为 1）」）。这里收 `minimum: 1` 而不是 `const: 1`，因为后者是 DDL 现状而非事件语义。哈希写裸 64 位小写 hex（DDL `bytea` 实际存 32 字节，序列化时是 64 hex），§4.3 与 §4.1 的 `sha256:...` 是全局不一致的又一例，见 PDL-5 / PRD-4。**它与 `data_ref` 指的是同一份 manifest**（§4.3 行 545 的 `data_ref` 用同一个 `cpm_01J...` 与同一个 hash），所以事件里出现两次是冗余的——见 PCM-5。"
+      ,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "shot_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 539（示例 `{\"service_id\":\"S06\",\"id\":\"shot_3_2\",\"revision\":5,\"content_hash\":\"...\"}`）+ §5.3 DDL 行 695（`shot_ref jsonb NOT NULL,   -- {service_id,id,revision,content_hash}`——注释逐字给出四键）+ §4.1 行 468。**这是四键 ref，带 `service_id`**，与 `manifest_ref` 的三键不同。它是 `manifest_input_once` 唯一索引的第一个表达式分量（§5.3 行 726：`(shot_ref->>'id')`），所以 `id` 必须精确——两种拼写会建出两份 manifest（§6.6 行 914 的三个上游并发场景就靠这个索引收敛）。**它是产出的输入锚点，不是当前状态**：manifest 不可变（§3.7 行 439），所以即使 `shot_3_2` 已经推进到 revision 6，这条事件仍然报 5——消费方拿它判断「这份 prompt 基于哪一版镜头」。"
+      ,
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "template_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 540（示例 `{\"id\":\"tpl_shot_video\",\"revision\":12,\"content_hash\":\"...\"}`）+ §5.3 DDL 行 696（`template_ref jsonb NOT NULL`，无键集注释）+ §4.1 行 469。**这是 `TemplateRevision` 的三键 ref，不是 `generation-command` 里的那个 `template_ref`**。两者同名，指向的东西完全不同：这里是 S20 内部的模板版本（`tpl_shot_video` rev 12），而 `contracts/generation-command.v2.schema.json` 的 `template_ref` 是**四键、要求 `service_id`**，且 S20 §10.3 行 1191–1194 明写它「`service_id` 恒为 `\"S20\"`」「`id` 是 `manifest_id`，**不是** `template_id`」。所以本文件的 `template_ref` 与 S26 的 `template_ref` 是两个不同的域，一个三键指向模板、一个四键指向 manifest。**这不是笔误，是刻意的命名复用**——但同一份 S20 方案里两个叫 `template_ref` 的东西指向不同实体，见 x-conflicts PCM-1。本文件照 §4.3 收三键；加第四键 `service_id` 会让它与 S26 那个字段看起来可以互换，而那正是 §10.3 花一整节警告的错误。"
+      ,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "model_snapshot": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 541（示例 `seedance-1.0-pro@2026-10`）+ §5.3 DDL 行 697（`model_snapshot text NOT NULL`）+ §4.1 行 470 + §4.1 行 510（`content_hash` 覆盖它）。**不收 enum**：它是「供应商模型 + 快照月」的自由串（示例的 `@2026-10` 后缀），S24 的模型注册才拥有闭集，S20 只是把编译时 pin 的那个快照串带出来。`minLength: 1`：空串会让 `manifest_input_once`（§5.3 行 728 的第一个字符串分量之一）失去区分力。**它是 manifest 的有效性锚点之一**：同一个 shot + 同一个模板 + 不同 `model_snapshot` 会命中不同的 manifest（§5.3 行 729 的 `content_hash` 与 `model_snapshot` 都在索引里），所以消费方拿它判断「这份 prompt 是给哪个模型的」。"
+    },
+    "warnings": {
+      "type": "array",
+      "description": "来源：§4.3 行 542（示例 `[]`）+ §5.3 DDL 行 712（`warnings jsonb NOT NULL DEFAULT '[]'::jsonb`）+ §4.1 行 504（manifest 里同名）+ §4.1 行 510（`warnings` 进 `content_hash`）+ §3.6 行 417（「warning 必须进 manifest 的 `warnings[]`，且 `warnings` 进 `content_hash`」）。**元素形状全文没有定义，本文件因此只收「字符串数组」**——这是本 schema 里唯一一处我按「最小可判」原则收窄的地方，理由在 PCM-2。已确认有三个 warning 值需要落进这里，而它们的语法互不相同：`ADAPTER_FALLBACK`（§3.4 行 345，纯代码词）、`OPTIONAL_OMITTED`（§3.6 行 411，但 §8 行 989 的指标按 `warning_code` 打标签，说明还要带**哪个字段被省略**）、`UNMAPPED_REFERENCE_APPENDED`（§3.5 行 371，同样要带**追加了哪些引用**）。§4.1 的 manifest 示例给的是 `[]`（空数组），所以全文**没有一个非空 `warnings` 的示例**——三个值有名字、无形状。`minimum: 0` 不设（空数组合法且是常态）。**注意 `items` 只收 `string`**：若 S20 实际发对象（例如 `{code, field}`），会在这里被拒——那正是见 PCM-2 需要 owner 裁决的地方，宁可现在拒、不要静默接受一个没人定义过的形状。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "node_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 543（示例 `shot_3_2.video`）+ §5.3 DDL 行 714（`node_id text,`——**可空**）+ §4.1 行 512（「**不覆盖**：……`node_id`、`node_epoch`、`execution_fence`」）。**这里收必填而非可空**：DDL 允许 NULL 是因为 `compiled_prompt_manifest` 也能由不带执行上下文的路径写入（例如批处理回填，§6.6 行 914 提到三个上游里有一个是「批处理回填」），而这条事件只在编译请求完成时发，那时执行上下文必在。本文件与 `agent.task-completed.v2.schema.json`、`execution-context.v2.schema.json` 取同一口径。**它不参与 `content_hash`**（§4.1 行 512 明确排除），所以同一份 prompt 在两个不同节点上编译会得到相同 hash、相同 manifest——那是设计意图（内容决定 hash），不是 bug。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.3 行 543（示例 `4`）+ §5.3 DDL 行 715（`node_epoch bigint,`）+ §4.1 行 512（不覆盖）。`minimum: 1` 与 `execution-context.v2.schema.json`、`generation.job-state-changed.v2.schema.json`、`agent.task-completed.v2.schema.json` 一致。**S20 不推进它**：§4.1 行 512 把它排除在 `content_hash` 之外，说明它被当作运行元数据而不是内容——这与 AGENTS.md 的「`node_epoch` 作用域 = 单个 `logical_node`，用途 = 局部重生成」一致：局部重生成会产生**新的 manifest**（因为输入变了），而不是给旧 manifest 改 epoch，而旧 manifest 的 epoch 保持旧值正是因为它是历史事实。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.3 行 543（示例 `2`）+ §5.3 DDL 行 716（`execution_fence bigint,`）+ §4.1 行 512（不覆盖）。`minimum: 1` 与兄弟 schema 一致。**不能与 `node_epoch` 混用**（AGENTS.md 速查表）：fence 是 run/branch 级（取消、故障切换），epoch 是单节点级（局部重生成）。这里两个都发，正是为了让消费方能各自比对——但**没有一处写明判定式**（`generation.job-state-changed` 的 PGJ 批次已登记同一问题）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "manifest_ref",
+    "shot_ref",
+    "template_ref",
+    "model_snapshot",
+    "warnings",
+    "node_id",
+    "node_epoch",
+    "execution_fence"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`warnings[]` 的元素形状",
+      "demanded_by": "plans/S20-prompt-compiler.md §4.1 行 504、§4.3 行 542、§5.3 行 712、§3.6 行 417、§8 行 989（`s20_warnings_total` 按 `warning_code` 打标签）、§3.4 行 345 / §3.6 行 411 / §3.5 行 371（三个已知 warning 值）",
+      "s20_status": "全文没有一处给出非空 `warnings` 的示例：§4.1 行 504 与 §4.3 行 542 都是 `[]`。三个已知值需要的形状不一样——`ADAPTER_FALLBACK` 只要代码词，`OPTIONAL_OMITTED` 至少还要「哪个字段被省略」（否则 §8 行 989 按 `warning_code` 的计数无法定位），`UNMAPPED_REFERENCE_APPENDED` 还要「追加了哪些引用」（§3.5 行 371 的语义是「剩余图放在最后」，条数与位置都没了）。本文件收 `string[]` 是三种可能形状里最保守的一种（它至少让纯代码词能过），但若 S20 实际想发对象，会在这里被拒。要补需要 owner 定：是 `string[]`（每条编码成 `CODE:detail`）、还是 `{code, detail}` 对象数组——后者才能同时满足指标打标签与定位需求。"
+    },
+    {
+      "field": "`manifest_ref` 与 `data_ref` 重复表达同一份 manifest，是否应删掉 `manifest_ref`",
+      "demanded_by": "plans/S20-prompt-compiler.md §4.3 行 538 与行 545（同一 `cpm_01J...`、同一 `content_hash` 出现两次）；envelope 的 `data_ref` 是必填字段（`contracts/event-envelope.v2.schema.json`）",
+      "s20_status": "§4.3 的事件里 `data.manifest_ref` 与顶层 `data_ref` 指同一份 manifest：同 id、同 revision、同 hash。两者形状几乎相同（`manifest_ref` 三键、`data_ref` 四键多 `service_id`），所以这不是信息冗余而是**形状冗余**——一个消费者读 `data.manifest_ref.id`、另一个读 `data_ref.id`，两边都拿得到，但若 S20 某次只更新其中一个，就会出现两个值不同的状态，而本 schema 表达不了「它们必须相等」。本文件照 §4.3 保留两者。要定的是：删掉 `data.manifest_ref`（`data_ref` 已经够了，且带 `service_id`），还是保留它（因为 payload 内部自足——消费方只看 `data` 就能知道引用的是什么，不必知道 envelope 约定）。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PCM-1",
+      "summary": "同一个名字 `template_ref` 在同一份方案里指两个不同实体：事件里的三键 `TemplateRevision` 与生成命令里的四键 `manifest`",
+      "event_side": "plans/S20-prompt-compiler.md §4.3 行 540：`\"template_ref\":{\"id\":\"tpl_shot_video\",\"revision\":12,\"content_hash\":\"...\"}` —— 三键，无 `service_id`，指向 `TemplateRevision`",
+      "command_side": "§10.3 行 1189–1196：`contracts/generation-command.v2.schema.json` 的 `template_ref` 是 `oneOf [四键 ref, null]`，且「`service_id` 恒为 `\\\"S20\\\"`」「`id` 是 `manifest_id`，**不是** `template_id`」",
+      "contract_check": "实测 `contracts/generation-command.v2.schema.json`：`template_ref` 的 `required` 为 `['service_id','id','revision','content_hash']`、`additionalProperties: false`。所以三键的 `{id, revision, content_hash}` **会被生成命令的契约拒收**（缺 `service_id`）",
+      "why_it_matters": "§10.3 行 1196 把这条写成「第 2 条是最容易写错的」，说明作者知道这里有坑——但坑比作者描述的更深。作者只警告了「`id` 该填 manifest 不该填 template」，没警告「**事件里的 `template_ref` 与命令里的 `template_ref` 是两个字段**」。一个按名字对应的实现者会把事件的 `template_ref`（`tpl_shot_video`）直接塞进生成命令的 `template_ref`，得到的是「用模板 ID 冒充 manifest ID」——而 §10.3 行 1196 说「如果指向 `TemplateRevision`，S26 就无法证明『这次提交用的是哪段文字』，§1.1 的整条论证就塌了」。更隐蔽的是形状层面：事件的三键塞进命令的四键会因缺 `service_id` 被契约拒收，这个失败**是可观测的、因此是好的**；但如果实现者「补上 `service_id: \"S20\"`」让它过校验，就会得到一份形状合法、语义错误的命令，S26 回读 manifest 时会 404（`tpl_shot_video` 不是 manifest_id）——那次失败发生在 S26 侧，报错是 `NOT_FOUND`，排查方向会被引向「manifest 不存在」而不是「字段填错了」。本文件照 §4.3 收三键是**刻意让两个域在形状上不可互换**。要定的是：事件里这个字段是否改名（例如 `source_template_ref`），或者 §10.3 的 manifest 引用是否改叫 `manifest_ref` 以免与它同名。"
+    },
+    {
+      "id": "PCM-2",
+      "summary": "`warnings[]` 有三个已知取值、零个非空示例，元素形状全文未定义；而它进 `content_hash`，形状未定等于可复现性未定",
+      "values_named": "§3.4 行 345（`ADAPTER_FALLBACK`：通配 adapter 命中）、§3.6 行 411（`OPTIONAL_OMITTED`：可选字段无能力且允许省略）、§3.5 行 371（`UNMAPPED_REFERENCE_APPENDED`：`_allow_leftover=true` 时剩余图追加）",
+      "no_shape": "§4.1 行 504 与 §4.3 行 542 两处示例都是 `\"warnings\": []`——全文没有一个元素",
+      "hash_role": "§4.1 行 510：`content_hash` 覆盖清单里包含 `warnings`；§3.6 行 417：「`warnings` 进 `content_hash`（它是内容的一部分：两个 manifest 一个带 warning 一个不带，不是同一份产物）」",
+      "metrics_need": "§8 行 989：`s20_warnings_total` 的标签是 `warning_code`，即指标要求能从 `warnings[]` 里取出「代码」这一层",
+      "why_it_matters": "这是本仓库里少见的「形状缺口直接损害可复现性」的例子。§3.6 行 417 说 `warnings` 进 hash，而 hash 的唯一用途是相等比对（§3.7 行 440 + §5.3 行 725 的 `manifest_input_once` 索引最后一个分量就是 `content_hash`）。那么：`warnings` 的规范化形式必须先定下来，否则「同一输入同 warnings」会因序列化顺序、键序、空格不同而得到不同 hash，于是**同一个输入组建出两份 manifest**——而 §6.6 行 914 承诺「三者输入相同 → 全部返回同一 `manifest_id`」。反方向同样坏：若 `warnings` 是 `string[]`，`[\"ADAPTER_FALLBACK\"]` 与 `[\"ADAPTER_FALLBACK\",\"ADAPTER_FALLBACK\"]` 是两个不同 hash，取决于去重发生在哪一层，而全文没写去重。§8 行 989 的指标又要求结构化到 `warning_code` 一级。本文件收 `string[]` 是在「三种形状里选一个最保守的」，不是裁决。要定的是：元素形状（字符串还是 `{code, detail}`）、排序规则（按 code？按产生顺序？）、去重规则，以及这三条是否属于 `canonical_json` 的既有约定。"
+    },
+    {
+      "id": "PCM-3",
+      "summary": "S20 点名三个消费者（S25 / S26 / S47），三份方案里都没有订阅这条事件",
+      "producer_claim": "plans/S20-prompt-compiler.md §4.3 行 551：「消费者：S25（缓存失效）、S26（可选：预编译校验）、S47（投影）」；§10.2 行 1185 的表里 S47 一行写「消费 `prompt.compiled`」；§10.4 行 1215：「`replay_side_effects=false` 意味着消费者重放必须幂等——S47 的投影按 `manifest_id` upsert」",
+      "s25_side": "plans/S25-model-routing.md grep `prompt.compiled` 命中 **0 次**；§10.2 行 1180 只描述 S25 调 `GET /prompt-compilations:probe`（同步读），与事件无关",
+      "s26_side": "plans/S26-generation-jobs.md grep `prompt.compiled` 命中 **0 次**；§10.2 行 1181 只描述 S26 从生成命令的 `template_ref` 回读 manifest（同步读）。§4.3 行 551 自己也把这个消费者标成「可选」，说明它本来就不确定",
+      "s47_side": "plans/S47-realtime-projection.md grep `prompt.compiled` 命中 **0 次**",
+      "measured": "仓库范围内 `prompt.compiled` 只出现在 5 个文件：`plans/S20-prompt-compiler.md`、`docs/design-package/SERVICE-SPECIFICATIONS.md` 行 798、`docs/design-package/services/S20-prompt-compiler.md`、`contracts/event-topics.v2.json` 行 217、`contracts/service-catalog.v2.json` 行 453。**没有任何一个消费方的方案提到它**",
+      "why_it_matters": "与 ATC-1 是同一形态的第二次出现——这回连「哪个是权威说法」都没有：§10.2 的表说 S25/S26 走同步读、只有 S47 消费事件，而 §4.3 行 551 把 S25 也列为事件消费者、把 S26 列为「可选」的消费者，§10.4 行 1215 又只提 S47。三种说法在同一份方案里。后果分两档：(1) 若无消费者，这条事件的唯一实际用途是 S47 的投影——而 S47 的方案没有订阅它，所以投影里不会有 prompt 相关的表；(2) 若 S25 真的要「缓存失效」，它现在完全靠 `GET /prompt-compilations:probe` 同步探测，那意味着**缓存键里必须包含 manifest 的 `content_hash`**，否则编译一次新 manifest 之后 S25 仍在用旧缓存——而 `probe` 接口是否能拿到 `content_hash` 又是另一条未验的链路。本 schema 只让事件能被校验，消费侧的登记仍需 owner 决定。要定的是：S25 的缓存失效到底走事件还是走同步 probe（后者需要 S25 侧把 `content_hash` 进缓存键），以及 S47 是否要订阅（若要，它的投影表与 upsert 键要进 catalog）。"
+    },
+    {
+      "id": "PCM-4",
+      "summary": "`modality` 不在事件的 7 个字段里，而 `content_hash` 覆盖它，于是同一份 prompt 换模态会得到同一 manifest",
+      "ddl_check": "plans/S20-prompt-compiler.md §5.1 行 607：`CHECK (modality IN ('image','video','audio','tts','music','sfx','lipsync','upscale','edit'))` —— **9 值闭集，就在这里**",
+      "event_absence": "§4.3 行 537–544 的 `data` 块：`manifest_ref` / `shot_ref` / `template_ref` / `model_snapshot` / `warnings` / `node_id` / `node_epoch` / `execution_fence` —— **没有 `modality`**",
+      "hash_dependency": "§4.1 行 510 的覆盖清单里有 `duration`、`parameters`、`adapter_ref.content_hash` 等；`modality` 虽未逐字列入，但它决定了 `adapter_ref`（§3.4 的 adapter 选择按 modality）与 `parameters` 的合法集，因此**实际上进 hash**。§5.3 行 694 的 `modality text NOT NULL` 是 manifest 的独立列",
+      "why_it_matters": "两个后果。(1) **消费方无法按模态分流**：S25 的路由、S26 的派单、S47 的投影都要按模态分表/分队列，而事件里没有这个字段——只能经 `data_ref` 回查。§4.3 行 551 说消费者是 S25/S26/S47，三者都恰好需要模态。(2) **更实质的一条**：`manifest_input_once`（§5.3 行 725–734）的唯一索引分量是 `shot_ref.id` / `template_ref.id` / `template_ref.revision` / `model_snapshot` / `adapter_ref.revision` / `binding_set_ref.content_hash` / `content_hash`——**`modality` 不在索引里**。若同一 shot 用同一模板、同一模型、同一 adapter 但不同模态（例如同模板既产 image 又产 video，§5.1 行 599 的 `modality` 在 `template` 表上而不是 `template_revision` 上，说明一个 template 只有一个模态——那这条竞态不存在）。但 §5.1 的 `template.modality` 是**表级列而非 revision 级**，意味着「template 的模态」不能在 revision 之间变化；若真要换模态，`template_ref` 就变了，`content_hash` 也变。所以索引是安全的——**代价是这条推理需要跨两节才能完成，而事件里看不到 `modality`，消费方连验证它都没机会**。要定的是：事件是否补 `modality`（代价极小、DDL 已有列、9 值闭集在 §5.1 行 607 就有，可以直接收 enum）。"
+    },
+    {
+      "id": "PCM-5",
+      "summary": "`manifest_ref` 与 envelope 的 `data_ref` 表达同一份 manifest，两份相同信息没有一致性约束",
+      "event": "plans/S20-prompt-compiler.md §4.3 行 538（`data.manifest_ref`）与行 545（顶层 `data_ref`）：`{\"id\":\"cpm_01J...\",\"revision\":1,\"content_hash\":\"sha256:...\"}` 与 `{\"service_id\":\"S20\",\"id\":\"cpm_01J...\",\"revision\":1,\"content_hash\":\"sha256:...\"}`",
+      "envelope": "`contracts/event-envelope.v2.schema.json` 的 `data_ref` 是 `required` 字段，形状为四键 ref 或 null",
+      "why_it_matters": "同一份事实在一个 payload 里写两遍，而 JSON Schema 无法表达「这两处必须相等」。风险不是理论上的：`data_ref` 由 outbox 的写入路径填、`data.manifest_ref` 由组装 payload 的代码填，两条路径若不同步（例如一次 refactor 只改了其中一处），事件仍然通过校验，而下游会看到「payload 说 rev 1、data_ref 说 rev 2」——取决于读哪个字段，指向不同 manifest。`data_ref` 还多一层用途：它决定消费者回查哪一份字节（§4.3 行 549：「消费者需要正文时用 `data_ref` 去 S20 取」），所以错的 `data_ref` 会让消费方拿到**另一份** prompt，而 `manifest_ref` 看起来是对的。本文件照 §4.3 保留两者（删任何一个都是在替 S20 改 payload）。要定的是：删掉 `manifest_ref`（`data_ref` 已足够且带 `service_id`），或保留但在 S20 的写入路径里断言两者相等（`data_ref.content_hash == data.manifest_ref.content_hash`）。"
+    }
+  ]
+}

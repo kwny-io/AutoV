@@ -59,6 +59,7 @@ SCHEMA_OF = {
     "production-sfx-ready": "event-envelope.v2.schema.json",
     "production-speech-ready": "event-envelope.v2.schema.json",
     "production-video-ready": "event-envelope.v2.schema.json",
+    "prompt-compiled": "event-envelope.v2.schema.json",
     "quality-alignment-completed": "event-envelope.v2.schema.json",
     "quality-repair-planned": "event-envelope.v2.schema.json",
     "quality-semantic-completed": "event-envelope.v2.schema.json",

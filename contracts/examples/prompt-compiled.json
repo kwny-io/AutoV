@@ -1,0 +1,46 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBE2A6C8E0G2J4L6N8Q0S2U5",
+  "source": "S20",
+  "type": "prompt.compiled",
+  "subject": "compiled-prompt/cpm_01JBE29F5D7H9K1M3P5R7T9V1X",
+  "time": "2026-11-06T18:11:40Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "cpm_01JBE29F5D7H9K1M3P5R7T9V1X",
+  "aggregate_sequence": 1,
+  "correlation_id": "cmd_01JBE27R9T1V3X5Z7B9D1F3H5J",
+  "causation_id": "cmd_01JBE27R9T1V3X5Z7B9D1F3H5J",
+  "traceparent": "00-8a1c4e6f0b2d4a6c8e0f1a3b5c7d9e0f-1a3b5c7d9e0f1a3b-01",
+  "data": {
+    "schema_version": "2.0",
+    "manifest_ref": {
+      "id": "cpm_01JBE29F5D7H9K1M3P5R7T9V1X",
+      "revision": 1,
+      "content_hash": "3f7b1d9e5a2c8f406b3d7e1a9c5f2b8d4e6a0c3f7b1d9e5a2c8f406b3d7e1a9c"
+    },
+    "shot_ref": {
+      "service_id": "S06",
+      "id": "shot_3_2",
+      "revision": 5,
+      "content_hash": "9c2e4a6f8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a"
+    },
+    "template_ref": {
+      "id": "tpl_shot_video",
+      "revision": 12,
+      "content_hash": "5a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c"
+    },
+    "model_snapshot": "seedance-1.0-pro@2026-10",
+    "warnings": [],
+    "node_id": "shot_3_2.video",
+    "node_epoch": 4,
+    "execution_fence": 2
+  },
+  "data_ref": {
+    "service_id": "S20",
+    "id": "cpm_01JBE29F5D7H9K1M3P5R7T9V1X",
+    "revision": 1,
+    "content_hash": "3f7b1d9e5a2c8f406b3d7e1a9c5f2b8d4e6a0c3f7b1d9e5a2c8f406b3d7e1a9c"
+  }
+}
