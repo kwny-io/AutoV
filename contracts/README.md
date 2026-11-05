@@ -97,8 +97,25 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
 
 实现前需要先补齐，否则代码生成或归属会出问题：
 
-1. **OpenAPI 21 个操作没有 `x-owner` 扩展字段** —— 所有权映射只存在于散文里，工具无法自动归属到服务。
-2. **MCP 工具 JSON 里没有 scope 字段** —— 只有 annotations 和 input schema，而 docs/13 描述了 read/plan/execute/review/admin 五档 scope。契约与文档不一致。
+1. ~~**OpenAPI 21 个操作没有 `x-owner` 扩展字段**~~ —— **这条不成立，已撤销。**
+   归属字段叫 **`x-service-id`**，21 个操作 21 个全带，取值全部命中
+   `service-catalog.v2.json` 的 `service_id`，工具可以直接按它自动归属。
+   另有 5 处 `x-access-boundary: internal_or_explicit_service_scope` 标不该对客户端直开的内部边界。
+   原先写「所有权只存在于散文里」是因为按 `x-owner` 这个名字去找，字段名不对不代表字段没有。
+   见 [contracts-gap-list-corrections-2026-11-06.md](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
+
+2. **MCP 工具与 `docs/13` 不是同一份清单。** 12 个工具都带 `required_scope`，五档里
+   `read` / `plan` / `execute` / `review` / `admin` 各有实例——**但**：
+   - `drama.delivery.publish` 用 `publish`，不在五档闭集内（第六个值）；
+   - 工具集合对不上：`docs/13` 具名 13 个，JSON 12 个，交集只有 8 个。
+     `docs/13` 有而 JSON 无：`artifact.compare` / `episode.plan` / `memory.extract` /
+     `model.estimate` / `project.get`；JSON 有而 `docs/13` 无：`delivery.prepare` /
+     `delivery.publish` / `policy.get` / `run.command`；
+   - `model.estimate` / `episode.plan` / `memory.extract` 在 `docs/13` 里承担「要 `plan:compute`
+     预算」的角色，JSON 无对应工具——**能力清单差异，不是措辞差异**。
+
+   补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
+   原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
 4. **`quality/check-registry.v2.json` 数据文件还没有，且方案里的表不足以生成它。**
    schema 与校验器已在，但 99 条 check（TECH 23 / VIS 32 / AUD 20 / SUB 24）只存在于四份
