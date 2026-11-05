@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 21 个 topic 带**（34 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 22 个 topic 带**（33 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -86,6 +86,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `post.master.rendered` | `post.master-rendered.v2.schema.json` | S42 §6.3 |
 | `quality.repair.planned` | `quality.repair-planned.v2.schema.json` | S39 §9 |
 | `connector.observation.received` | `connector.observation-received.v2.schema.json` | S27 §6.5 |
+| `continuity.check.completed` | `continuity.check-completed.v2.schema.json` | S17 §5.2 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -156,6 +157,30 @@ S42 / S43 / S41 这三条是又一种缺口，值得单说：**生产方宣布�
 `provider_usage` 报供应商的计费秒数，而 S23 是唯一钱权威，它是观测还是计价输入没人划清
 （PCR-4）。所以这份 schema 刻意**只约束到「S27 能发出什么形状」**，不替 S26 的状态机
 裁决语义。
+
+`continuity.check.completed` 是**第五类，缺口换了位置**：payload 完整、envelope 也发得出
+（`aggregate_id` 是 `series:branch:episode` 这种真串），可它**进了 S39 的门也走不到修复**。
+S39 的检查登记表 `check-registry.v2.schema.json` 在 `x-cross-checks` 里写死
+「`owner_service` matches the layer: technical→S35, semantic→S36, alignment→S37,
+subtitle→S38」，而 `check_id` 命名空间只有 `TECH`/`VIS`/`AUD`/`SUB`——S17 是第五个生产者，
+`chk_` 是第五种前缀，**结构上不在表里**。后果按 S39 自己的两条规则取最坏的：§4.2 行 208 说
+校验失败即 `quarantine`、不 best-effort，那报告直接进死信；§3.1 行 104 说登记项无效即
+`human_review`，那每条连续性缺陷都丢掉自动化。而 S39 §11 C8 说这条事件存在的全部意义就是
+「否则跨集冲突永远到不了修复决策」。**所以本 schema 只是把门修到「能被校验」，门后面那段
+路仍是断的**（CCT-4）。
+
+还有三处同类的形状缺口，都不是笔误而是两段散文各写各的：S39 §5.3 的六行分派表以
+`fault_hypothesis` 为依据、并说 `fault_owner_service` 是左列，可 §5.2 的事件示例里**这两个
+字段一个都没有**（CCT-2）；§5.3 行 382 把「script + blocking 必须附剧本 source span」写成
+硬约束，同样没有出现在示例里，于是 S39 既看不见 span，也就无法执行它自己那条
+「缺 span → `needs_human`」的降级路径（CCT-3）；`memory_checkpoint` 在 §1.1 行 35 是三键
+（含 `branch_id`）、在 §5.2 行 353 是两键，而 S16 把同一个量叫 `checkpoint_hash`——少一个
+`branch_id`，「checkpoint 27」在多分支项目上就是歧义的，而 §6 的 `CHECKPOINT_MISMATCH`
+判定正要比它，比错分支会报假 mismatch 导致整条检查白 abstain（CCT-5）。示例文件里补了
+前两个字段并有出处，`branch_id` 收成可选（两种写法都能过）。最要命的是严重度：
+S17 是 `none|info|low|medium|high|blocking`，S39/S35/S36 与注册表 schema 是
+`blocker|major|minor|info`——`blocking` 与 `blocker` 差两个字母，按错词表查表落空后最常见的
+写法是取默认权重 0，于是最该先修的缺陷排在 `info`（10）后面（CCT-1）。
 
 `tools/validate/validate_examples.py` 会读这个键：示例的 `type` 命中某个 topic，就先按
 envelope 校验整条事件，再按 `data_schema_ref` 校验 `data` 子树。上表每个 topic 在
@@ -258,8 +283,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 20 个 payload schema
-                                                              （见上表；其余 34 个 envelope-only）
+                                        └──data_schema_ref──▶ 22 个 payload schema
+                                                              （见上表；其余 33 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -273,10 +298,10 @@ python tools/check_all.py --only links,examples
 ```
 
 九项检查：`json`（75 个 JSON 解析）、`payloads`（73 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 21 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+都指向真实文件，其中 22 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（38 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（39 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
@@ -328,7 +353,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：38 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：39 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用
