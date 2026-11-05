@@ -300,8 +300,70 @@ def check_registry(name):
     return r
 
 
+# Two-segment TECH ids in S35. Renaming them is a plan change that also touches
+# acceptance items E24-T4/T5, so it waits on the S35 owner. Listed here so the
+# check is green for everything else instead of being a permanently failing
+# suite nobody reads.
+KNOWN_BAD_CHECK_IDS = {
+    "TECH.BLACK_FRAME",
+    "TECH.FREEZE_FRAME",
+    "TECH.FLASH_FRAME",
+}
+
+
+def check_check_ids(name):
+    """check_id values in the four QC plans match the schema's naming pattern.
+
+    Only ids that appear in a plan's table row count: prose mentions like
+    "TECH.BLACK_FRAME 那条" are discussion, and a plan may quote a name it is
+    proposing to change. The table is what a registry would be built from.
+
+    This runs before the registry data file exists because a plan whose ids the
+    schema would reject cannot be transcribed into a valid registry at all, and
+    finding that out during transcription is later than necessary.
+    """
+    r = Result(name)
+    pattern = re.compile(r"^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$")
+    total = 0
+    seen_bad = set()
+    for fname, prefix in (
+        ("S35-technical-qc", "TECH"),
+        ("S36-semantic-qc", "VIS"),
+        ("S37-audio-alignment", "AUD"),
+        ("S38-subtitles", "SUB"),
+    ):
+        path = os.path.join(ROOT, "plans", fname + ".md")
+        if not os.path.exists(path):
+            r.fail(f"plans/{fname}.md is missing")
+            continue
+        text = _utf8(path)
+        ids = set(re.findall(r"\|\s*`(" + prefix + r"\.[A-Z0-9_]+(?:\.[A-Z0-9_]+)*)`\s*\|", text))
+        total += len(ids)
+        for i in sorted(ids):
+            if pattern.match(i):
+                continue
+            if i in KNOWN_BAD_CHECK_IDS:
+                seen_bad.add(i)
+                continue
+            r.fail(
+                f"plans/{fname}.md: {i} has {i.count('.') + 1} segment(s); the schema "
+                f"requires at least three ({prefix}.<GROUP>.<NAME>)"
+            )
+
+    # A suppression entry that no longer matches anything means the id was
+    # renamed (fixed) or the plan changed; either way the entry is stale and
+    # should be removed rather than left to hide a future rename back.
+    for i in sorted(KNOWN_BAD_CHECK_IDS - seen_bad):
+        r.fail(f"{i} is in KNOWN_BAD_CHECK_IDS but no longer appears un-conforming; "
+               f"remove the entry")
+    r.note = (f"{total} check_id(s), {len(seen_bad)} known non-conforming "
+              f"(owner decision, see contracts/README.md gap 4)")
+    return r
+
+
 CHECKS = [
     ("json", check_json, "every contracts/**.json parses"),
+    ("checkids", check_check_ids, "check_id values in the QC plans match the schema pattern"),
     ("links", check_links, "every relative markdown link resolves"),
     ("catalog", check_catalog, "service/topic ids agree across catalog, docs/02, topics"),
     ("families", check_families, "action-family structural invariants"),

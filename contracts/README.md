@@ -130,7 +130,8 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-七项检查：`json`（41 个 JSON 解析）、`links`（1317 条相对链接全部可达）、
+八项检查：`json`（41 个 JSON 解析）、`checkids`（四份 QC 方案里 99 个 `check_id`
+是否符合 schema 的三段命名）、`links`（1317 条相对链接全部可达）、
 `catalog`（服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`
 （动作族文件自己声明的 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、
 `examples`（17 个示例对 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
@@ -142,6 +143,11 @@ python tools/check_all.py --only links,examples
 自动执行」这句话没有执行入口——校验器只有在被调用时才约束任何东西。
 `registry` 这一项现在报「还没有文件」而不是失败，因为 99 条 check 的字段确实还没补齐
 （缺口 4）；文件一落地，加载期校验立刻生效，不需要再接线。
+
+`checkids` 里三条 `TECH.*_FRAME` 走白名单放行——改名要动 `E24-T4/T5` 验收项，是 S35
+owner 的决定，不是我能在检查里替它选的。白名单**双向**校验：新冒出来的不合规 id 会报，
+白名单里的 id 一旦不再出现也会报（说明改名已落地，条目该删）。单向的抑制清单会慢慢变成
+一个没人敢动的黑名单。
 
 两处实现细节容易踩：
 
