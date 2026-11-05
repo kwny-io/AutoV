@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/adaptation.training-completed.v2.schema.json",
+  "title": "adaptation.training.completed payload v2",
+  "description": "event `adaptation.training.completed` 的 data 部分。权威定义在 plans/S48-adaptation-training.md §4.3（行 419–451，事件体）、§5.1 `training_job`（行 490–540）、§5.2 数据集三表（行 544–593）、§5.3 兼容性与产物（行 595–643）、§5.5 `outbox`（行 688–701）、§3.1 状态机（行 167–216）、§3.7/§3.8（行 301–335）、§4.4 与 §11 C48-4（行 453–460、1085）。这份 schema 记录的是本仓库里唯一一条**把状态机当作事件体**的发布事件：`state` 是 14 值 DDL CHECK，而 §3.1 行 216 专门论证过 `EVAL_FAILED` 与 `FAILED` 必须分开；可这条事件用一个 `type` 同时承载 `EVAL_FAILED` / `CANDIDATE` / `FAILED` 三个语义完全不同的终局，判别全压在 `state` 一个字段上。最要紧的是 ATR-1：计划给的 `data_ref` 是裸字符串，信封只接受四键对象或 `null`，而 `training_job` 既没有 `revision` 列也没有 `content_hash` 列——**四键里有三个填不出来**，所以 `null` 不是妥协，是唯一不伪造版本的说法。十一处 `x-conflicts` 里有三处不会被 JSON Schema 校验发现：ATR-3 是 `aggregate_sequence` 的计数没有持久化列，ATR-9 是一张被查询却从未创建的表，ATR-10 是同一个事件在四个地方叫四个名字。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§4.3 的示例没有这个键——它是本仓库 36 份 payload schema 的统一约定（S06 §4.3 与 S05 §4.2 的示例同样省略）。"
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 434（`\"job_id\": \"job_01J...\"`）+ §5.1 行 492（`job_id text PRIMARY KEY`）+ §4.3 行 421（`aggregate_id = job_id`）。形态只有前缀 `job_`，无长度或字符集契约。**主键是 `job_id` 单列，不含 `tenant_id`**——这与 S22 的 `permit`、S23 的 `ledger_entry`、S25 的 `route_decision` 一致（它们也都是代理主键单列），所以本文件不把它记成缺陷；租户隔离靠 envelope 的 `tenant_id` 与 §5.5 行 694 的 `partition_key`。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "REQUESTED",
+        "REJECTED",
+        "ADMITTED",
+        "QUEUED",
+        "PREPARING",
+        "TRAINING",
+        "RESUMING",
+        "EVALUATING",
+        "EVAL_FAILED",
+        "CANDIDATE",
+        "PUBLISHED",
+        "BLOCKED",
+        "FAILED",
+        "EXPIRED"
+      ],
+      "description": "来源：§4.3 行 435（`\"state\": \"EVAL_FAILED\"`，注释写「或 CANDIDATE / FAILED」）+ §5.1 行 513–516 的真 DDL `CHECK (state IN (...))` 十四值。本文件照 DDL 收全十四值而不收紧，理由与 `breakdown.revision.created` 的 `state` 同一个：DDL 是权威，发送规则是另一层，收紧任何一层都会掩盖另一层。但**可达集远小于枚举**，且小得多：§4.4 行 453–460 明说中间阶段的事件不在注册表里（C48-4 行 1085），所以 `REQUESTED` / `ADMITTED` / `QUEUED` / `PREPARING` / `TRAINING` / `RESUMING` / `EVALUATING` 在这条事件上取不到；`REJECTED` 有终局但 §7.1 行 781 的拒绝理由全部走 HTTP 422，不发事件；`EXPIRED`（§7.2 行 795）同理；`PUBLISHED` / `BLOCKED` 的迁移在 §3.7 行 317 与 §3.8 行 330 指定发的是**另外两个未注册的事件名**。剩下真正可达的只有三个：`EVAL_FAILED`、`CANDIDATE`、`FAILED`——即 §4.3 行 435 注释列的那三个。见 ATR-2 与 ATR-10。"
+    },
+    "adaptation_type": {
+      "type": "string",
+      "enum": [
+        "character_lora",
+        "style_lora",
+        "voice_clone"
+      ],
+      "description": "来源：§4.3 行 436（`\"adaptation_type\": \"character_lora\"`）+ §5.1 行 497–498 的真 DDL `CHECK (adaptation_type IN ('character_lora','style_lora','voice_clone'))`。**这是本文件里形状最干净的一个字段：三值枚举与 DDL 完全一致，无需推断。** 但它与同一条事件里的 `target_ref.service_id` 不配套：`training_job` 行 499 把目标服务注释成 `'S11' | 'S15'` 两个，而三值枚举里 `style_lora` 无处可去——S11 是角色、S15 是音色，风格 LoRA 的目标服务在本文里没有落位。见 ATR-8。"
+    },
+    "target_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 437（`\"target_ref\": {\"service_id\": \"S11\", \"id\": \"char_linlan\", \"revision\": 4}`）+ §5.1 行 499–502（`target_service` / `target_id` / `target_revision` / `target_content_hash` 四个列）。**注意这一处与 DDL 的列数不一致**：DDL 有四列，事件只给三个键——缺 `target_content_hash`，而它是 `char(64) NOT NULL`。所以事件无法让消费方验证「训练用的那一版目标资产」到底是哪一版，只能验证版本号。这让它成为本事件里唯一一个**提交时在、存储时在、到事件才丢**的字段：§2.1 行 78–83 的命令体 `target_ref` 是四键（含 `content_hash`），§5.1 行 502 存下来，只有 §4.3 行 437 不发。这与 `base_model_ref`（下面那个四键的）形成对比：同一份 DDL 里两个引用都是四列，命令体里也都是四键，事件里一个三键一个四键。见 ATR-4。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "来源：§4.3 行 437（`\"S11\"`）+ §5.1 行 499（`target_service text NOT NULL, -- 'S11' | 'S15'`）。取信封 `data_ref.service_id` 的同一模式——本仓库所有 `service_id` 一律 `^S[0-9]{2}$`。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§4.3 行 437（`\"char_linlan\"`）+ §5.1 行 500（`target_id text NOT NULL`）。示例值 `char_linlan` **不带 id 前缀**，与本仓库其它示例（`sht_` / `bkd_` / `scn_` / `art_` / `job_`）的写法不同——它不是 S48 铸造的 id，而是 S11 那边的业务 id，所以这里留 `minLength: 1` 不猜词法。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：§4.3 行 437（`4`）+ §5.1 行 501（`target_revision integer NOT NULL`）。`minimum: 1` 无 CHECK，按本仓库「revision 从 1 起」的既有约定。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "base_model_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 438（`\"base_model_ref\": {\"service_id\": \"S24\", \"id\": \"mdl_x\", \"revision\": 7, \"content_hash\": \"…\"}`）+ §5.1 行 504–507（`base_service` / `base_id` / `base_revision` / `base_content_hash` 四列，全 NOT NULL）。**这是本事件里唯一一个与信封 `data_ref` 形状完全同构的引用**（四键、同模式），也是唯一一个把 DDL 四列全部搬上来的引用。它与 `target_ref`（三键）和 `dataset_ref`（三键但含 `items_hash`）并列出现在同一个 `data` 里，三种形状讲同一件事，见 ATR-4。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "来源：§4.3 行 438（`\"S24\"`）+ §5.1 行 504（`base_service text NOT NULL DEFAULT 'S24'`）。有 DDL 默认值 `'S24'`，所以这一列的取值空间在实现上恒为 `S24`，但 schema 不写成 `const`——默认值可被显式覆盖。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§4.3 行 438（`\"mdl_x\"`）+ §5.1 行 505（`base_id text NOT NULL`）。`mdl_` 前缀见 S24 的模型 id 约定；本文件不猜词法。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：§4.3 行 438（`7`）+ §5.1 行 506（`base_revision integer NOT NULL`）。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§4.3 行 438（`\"…\"`——**计划里是省略号，没有给值**）+ §5.1 行 507（`base_content_hash char(64) NOT NULL`）。取裸 hex 64 位，与 DDL 的 `char(64)` 及信封 `data_ref.content_hash` 一致。（S06 的 SRC-4 与 S05 的 BRK-4 都记过计划示例写 `sha256:` 前缀而 `char(64)` 装不下的问题；本条计划的示例干脆没写值，所以没有那个分歧，但也没有可核对的样本。）§1.5 说明兼容性按 `(base_id, base_revision, content_hash)` 三元组记录（§13 行 1120），所以这个 hash 是三元组里唯一不能省的成员——而它在事件里恰好是唯一一个计划没给值的。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "artifact_ref": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§4.3 行 439（`\"artifact_ref\": null,  // EVAL_FAILED 时为 null`）。**计划只给了这一个取值样本，而它是 `null`——所以这个字段的非空形状在整个方案里没有定义。** 唯一出现过非空写法的地方是 §4.2 行 387（`\"artifact_ref\": {\"service_id\": \"S28\", \"id\": \"art_01L...\"}`），那是**两键**、无 `revision`、无 `content_hash`，与本事件另外两个引用（三键、四键）都不同，也与信封 `data_ref` 的四键要求不同。而 `lora_artifact` 表（§5.3 行 615–638）确实有 `weights_hash char(64) NOT NULL` 与 `storage_ref text NOT NULL`，所以「产物的内容 hash」在库里有、在事件里没有落位。见 ATR-4。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "照 §4.2 行 387 的两键写法。没有其它出处，见 ATR-4。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "照 §4.2 行 387（`art_01L...`）+ §5.3 行 624（`storage_ref text NOT NULL, -- S28 的 artifact ref（不是 S48 的 checkpoint）`）。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "dataset_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 440（`\"dataset_ref\": {\"service_id\": \"S48\", \"id\": \"ds_01J...\", \"items_hash\": \"…\"}`）+ §5.2 行 545–559（`dataset_manifest`）。**第三个引用形状**：`items_hash` 占掉了 `revision` 的位置。这个替换本身是诚实的——`dataset_manifest` 表里确实**没有 `revision` 列**（主键就是 `dataset_id` 单列，行 546），数据集靠内容摘要而不是版本号识别。但它带来一个跨服务的后果：`dataset_manifest.state` 有 `DRAFT` / `FROZEN` / `SUPERSEDED` 三值（行 555–556），而事件不带 `state`，消费方无法判断这个 `items_hash` 是冻结后的还是冻结前的——行 551 的注释说 `items_hash` 是「冻结后的摘要」，可 DDL 里它 `NOT NULL` 且没有 CHECK 约束把 `items_hash` 的写入绑到 `state = 'FROZEN'`。见 ATR-4。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "来源：§4.3 行 440（`\"S48\"`）。**数据集由 S48 自己铸造，不是来自别的服务**——这与 S06/S05 的 `source_*_ref` 都指向外部服务不同，也和本事件另外两个引用不同。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§4.3 行 440（`ds_01J...`）+ §5.2 行 546（`dataset_id text PRIMARY KEY, -- 'ds_01J...'`）。"
+        },
+        "items_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§4.3 行 440（`\"…\"`——计划未给值）+ §5.2 行 551（`items_hash char(64) NOT NULL, -- 冻结后的摘要`）。取裸 hex 64 位与 DDL 一致。§7.5 行 826 明确「`items_hash` 由输入决定，确定」，所以它是可复算的——这一点比本文件其它 hash 都强，值得记下来。但复算所需的输入（`dataset_item` 的全集与排序）不在事件里，消费方要复算必须回源。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "items_hash"
+      ],
+      "additionalProperties": false
+    },
+    "evaluation_passed": {
+      "type": "boolean",
+      "description": "来源：§4.3 行 441（`\"evaluation_passed\": false`）。**这个字段与 `state` 是同一事实的两种编码，而两者可以合法地互相矛盾。** 至少三条路径会让它们不一致，且都是计划自己写的：(1) §4.1 行 363 的 `POST /training-jobs/{id}:reject`——人工否决把 `CANDIDATE` 打成 `EVAL_FAILED`，此时评测**是过的**，只是人不同意，所以 `state = EVAL_FAILED` 配 `evaluation_passed: true`；(2) §7.4 行 816「评测基础设施失败 → 重试 1 次；再失败 → `FAILED`」——此时评测**没跑完**，`evaluation_passed` 该是 `false` 还是不该存在，计划没说；(3) §7.4 行 815 的 `EVAL_FAILED` 是真正的指标不达标。schema 无法区分这三种。见 ATR-7。"
+    },
+    "metrics_summary": {
+      "type": "object",
+      "description": "来源：§4.3 行 442（`\"metrics_summary\": {\"identity_preservation\": 0.61, \"overfit_score\": 0.48}`）+ §3.6 行 289–292（四个指标 + voice_clone 的两个）。**这是本文件最松的一个字段：计划给的是一份两键的样本，而 §3.6 列了至少四个必跑指标，§4.2 行 395–399 的查询响应又给了另一个三键集合 `{identity_preservation, overfit_score, holdout_loss}`——三处三个集合，没有一处说哪些是必备的。** 所以本文件不收 `properties`、不加 `required`、不设 `additionalProperties: false`：任何收紧都会把一个计划没定的决定写进契约。数值也没定域：`overfit_score` 在 §4.3 的样本里是 `0.48`（越高越差），`identity_preservation` 是 `0.61`（越高越好），而 §12 行 1108 第 5 条明说阈值「应该来自客户验收与 evals 数据集，不是实现时的拍脑袋」——所以连方向都是推断出来的，不写 `minimum`/`maximum`。见 ATR-5。",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "gpu_seconds_consumed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§4.3 行 443（`18400`）+ §4.3 行 449（「`gpu_seconds_consumed` 是给 S23/S44 做成本归集的」）+ §5.1 行 522（`gpu_seconds_consumed bigint NOT NULL DEFAULT 0`）。`minimum: 0` 有 DDL 依据（`DEFAULT 0` 且是累计消耗，没有负数语义）。**计数口径与 S23 对不上**：这一列是 job 生命周期内的**累计**值，而 §5.4 行 648–657 的 `training_slot_usage` 是按 permit 逐条记录的 `gpu_seconds`（一 job 可有多条，`tsu_job_idx` 行 658），S23 自己的 `usage_accrual` 又是按发生的 accrual 逐条记。所以这条事件只给出一个总数，S23 无法拿它去核对自己那边的明细；而 §5.4 行 662 已经写明那张表「不是账本」、权威在 S23——于是「训练到底花了多少」这件事，权威方 S23 手上只有 S48 推送给它的证据，没有可比对的第二份。见 ATR-6。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "state",
+    "adaptation_type",
+    "target_ref",
+    "base_model_ref",
+    "artifact_ref",
+    "dataset_ref",
+    "evaluation_passed",
+    "metrics_summary",
+    "gpu_seconds_consumed"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`state` 在一条事件里承载三个终局时，消费方靠什么区分 `EVAL_FAILED` / `FAILED` / `CANDIDATE`",
+      "demanded_by": "plans/S48-adaptation-training.md §4.3 行 435（`\"state\": \"EVAL_FAILED\"  // 或 CANDIDATE / FAILED`）、§3.1 行 216（「`EVAL_FAILED` 不是 `FAILED`」整段论证）、§7.4 行 811–819（三种到达 `EVAL_FAILED` / `FAILED` 的不同路径）、§5.1 行 513–516（十四值 CHECK）",
+      "s48_status": "§3.1 行 216 花了整段论证这两个状态**必须**分开，理由是「前者说明数据或超参有问题，后者说明基础设施/基座有问题。合并成一个码会让排查无从下手」——这是本服务状态机的设计核心。可到达上层的只有一条 `adaptation.training.completed`，三个终局共用它，`state` 是唯一判别位。这在 schema 层是可表达的（枚举里都在），所以本文件照抄十四值；**问题在别处**：`x-needs-owner` 这一项要问的是，消费方（S11 行 572、S15 行 782、S47 投影、S45 审计）是否被要求按 `state` 分支，以及 `FAILED` 发生时 `metrics_summary` / `evaluation_passed` / `artifact_ref` 这三个字段该出现还是该省略。目前计划只在 `artifact_ref` 上给了「`EVAL_FAILED` 时为 null」一条（行 439），另两个字段在 `FAILED` 路径下的取值没有任何说明。要补需要 owner 定：是否为三个终局各定一套字段存在性规则，或拆成三个事件类型（那会直接推翻 §4.3 与 §5.5 行 704 的单事件设计）。"
+    },
+    {
+      "field": "`artifact_ref` / `dataset_ref` / `target_ref` 三个引用为什么是三种形状，`target_content_hash` 与 `weights_hash` 该不该进事件",
+      "demanded_by": "plans/S48-adaptation-training.md §4.3 行 437–440（三个引用各一种形状）、§5.1 行 499–507（`target_service`/`target_id`/`target_revision`/`target_content_hash` 与 `base_service`/`base_id`/`base_revision`/`base_content_hash` 都是四列）、§5.3 行 615–638（`lora_artifact.weights_hash char(64) NOT NULL`）、§4.2 行 387（唯一的非空 `artifact_ref` 写法，两键）、§1.5 与 §13 行 1120（兼容性按 `(base_id, base_revision, content_hash)` 三元组记录）",
+      "s48_status": "同一个 `data` 里并列三（四）个引用，键集分别是 3 / 4 / 2（或 2+null） / 3：`target_ref` 3 键缺 `target_content_hash`（DDL 有该列且 NOT NULL）、`base_model_ref` 4 键完整、`artifact_ref` 非空时 2 键且**方案里没有定义过**、`dataset_ref` 3 键以 `items_hash` 代 `revision`。信封的 `data_ref` 恰好就是 `base_model_ref` 那个 4 键形状，说明本仓库已经有「引用」的标准形状，而这条事件只在其中一个上用了它。后果是消费方不能写一个通用的 ref 解析器；更具体的后果是 **`target_content_hash` 缺席导致「训练的是哪一版目标资产」在事件里不可验证**：`target_revision` 只说第几版，不说那一版的内容是什么，而 S11/S15 侧的 revision 号在哪些情况下会重编计划没写。要补需要 owner 定：三个引用是否统一成信封 `data_ref` 的四键形状（`dataset_ref` 则需决定用 `content_hash` 承载 `items_hash` 还是保留特例），以及 `artifact_ref` 的非空形状。"
+    },
+    {
+      "field": "`metrics_summary` 的键集、必备项与取值范围",
+      "demanded_by": "plans/S48-adaptation-training.md §4.3 行 442（两键样本）、§3.6 行 289–292（四个指标 + voice_clone 两项）、§4.2 行 395–399（三键样本）、§12 行 1108 第 5 条（阈值「应该来自客户验收与 evals 数据集，不是实现时的拍脑袋」）、§10.7（对 S44 评测口径，行 1072）",
+      "s48_status": "三处给了三个不同的指标集合：§3.6 是 `identity_preservation` / `overfit_score` / `holdout_loss`（+ voice_clone 的音色相似度与可懂度），§4.2 是前三者中的前两个加 `holdout_loss`，§4.3 只有前两个。**没有一处说明哪些是必备**，而 `evaluation_passed` 的取值恰恰由这些指标算出（§3.6 行 294「达标 → CANDIDATE；不达标 → EVAL_FAILED」）。本文件因此完全不约束这个对象，等于承认消费方拿到的指标集合是不可预期的。同时 `voice_clone` 的两个指标在 §4.3 的样本里不存在，所以同一条事件在两种 `adaptation_type` 下的 `metrics_summary` 语义不同。要补需要 owner 定：必备键集、voice_clone 的附加键、每个键的方向与量纲，以及是否把阈值一并落进 `evaluation_spec`（§5.1 行 511 有这一列但没有 schema）。"
+    },
+    {
+      "field": "`gpu_seconds_consumed` 作为成本归集唯一跨服务证据的口径与补偿",
+      "demanded_by": "plans/S48-adaptation-training.md §4.3 行 443 与 449（「给 S23/S44 做成本归集」）、§5.1 行 522（累计列）、§5.4 行 645–662（`training_slot_usage` 逐 permit 记录，行 662「这张表不是账本」）、§10.4（对 S22/S23，行 1051–1059）、plans/S23-budget-ledger.md 的 `usage_accrual`（代理主键逐条）",
+      "s48_status": "三个不同的计数基座同时存在：事件给 job 生命周期的累计数，`training_slot_usage` 按 permit 逐条记（一 job 多条），S23 的 `usage_accrual` 又按 accrual 逐条记。计划明说权威在 S23 且 §5.4 那张表不是账本——这是对的纪律。**但这条事件是 S23 唯一能收到的训练用量证据**：`outbox` 是 `at_least_once`（registry `delivery`），重放会重复推送同一累计数（幂等键 `(aggregate_id, aggregate_sequence, event_type)` 行 699 能挡），可一旦事件**从未写成**（§7.5 行 821–828 列了四个崩溃点，其中「训练中崩溃」只恢复到可续，没有一条说 outbox 行会不会漏），S23 那边就没有任何东西可以补。且 §6.2 行 736 明确「撤销事件到达时若 job 在 `TRAINING`，**不中断**……但完成后立刻 `BLOCKED`」——`BLOCKED` 走的是另一个未注册事件（§3.8 行 330 `lora.blocked`），所以「花了 GPU 但被拦下」这条路径上，`adaptation.training.completed` **根本不会发**，`gpu_seconds_consumed` 也就永远到不了 S23。要补需要 owner 定：成本归集的权威上报路径是哪一条（事件 / 轮询 S48 / S23 自己记），以及 `BLOCKED` 路径下的用量如何上报。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "ATR-1",
+      "summary": "计划的 `data_ref` 是裸字符串，信封只接受四键对象或 `null`；而 `training_job` 既无 `revision` 列也无 `content_hash` 列，四键里三个填不出来",
+      "plan_writes": "plans/S48-adaptation-training.md §4.3 行 445：`\"data_ref\": \"training-job/job_01J...\"`——与 `subject`（行 427 `\"training-job/job_01J...\"`）逐字相同，即「把 subject 抄进 data_ref」",
+      "envelope_requires": "contracts/event-envelope.v2.schema.json 的 `properties.data_ref` 是 `oneOf: [ {四键对象，`service_id` `^S[0-9]{2}$`、`id` minLength 1、`revision` integer ≥1、`content_hash` `^[0-9a-f]{64}$`，`required` 全四键，`additionalProperties: false`}, {type: null} ]`。裸字符串**两个分支都不匹配**，所以 §4.3 的示例连信封都过不了",
+      "why_unfillable": "就算改成四键对象也填不出来：`training_job`（§5.1 行 490–540）**没有 `revision` 列**（它的 `aggregate_sequence` 是 §4.3 行 451 的「job 内部的阶段序号」，不是版本号），也**没有 `content_hash` 列**。唯一长得像 hash 的是 `request_hash char(64)`（行 495），可它是 §6.1 行 724 的 `sha256(JCS(body 去掉 command_id 与 request_hash))`——**命令**的摘要，不是 job 的内容摘要。用它冒充 `content_hash` 会把「同一命令重放」与「同一 job 的两个阶段」混为一谈，而 job 在 `aggregate_sequence` 每 +1 时内容明明变了却 hash 不变",
+      "consequence": "本事件的 payload 因此**不可寻址**：消费方拿到 `data` 之后，没有任何合法字段能定位到「这一版 job 是什么」。信封提供了 `data_ref` 就是为了这件事（`data_ref` 在 16 个 `required` 里）。相同处境在 S47 的 `projection.cursor.advanced` 也出现过（那条计划干脆写 `\"data_ref\": null`，见其 §4.4 行 429–456），所以本仓库并非没有先例——但 S47 那条被正确地留空了，这条却填了一个不合法的值",
+      "resolution_in_this_file": "本文件的示例用 `\"data_ref\": null`。这不是偏好，是三个选项里唯一不伪造的：裸字符串非法，四键对象需要编造一个不存在的 `revision` 语义与一个冒充的 `content_hash`。留 `null` 等于承认「这条事件没有可寻址的内容版本」，而不是把这个问题藏进一个能过校验的假对象里"
+    },
+    {
+      "id": "ATR-2",
+      "summary": "`state` 的十四值 DDL CHECK 里只有三个能经由这条事件到达，而 §3.1 花整段论证必须区分的 `EVAL_FAILED` / `FAILED` 正在这三个之中，判别全靠一个字段",
+      "reachable": "§4.3 行 435 的注释「或 CANDIDATE / FAILED」是唯一的可达性说明。逐值核对：`REQUESTED`/`ADMITTED`/`QUEUED`/`PREPARING`/`TRAINING`/`RESUMING`/`EVALUATING` 是中间阶段，§4.4 行 453–460 与 C48-4 行 1085 说它们要发的是**另外**两个事件类型（`training.lora.registered` / `training.voice_clone.ready`），而这两个类型在 registry 里不存在；`REJECTED` 的全部六个触发场景（§7.1 行 781–787）出口都是 HTTP 422，不发事件；`EXPIRED`（§7.2 行 795）同理；`PUBLISHED` 由 §3.7 行 317 指定发 `training.lora.registered`；`BLOCKED` 由 §3.8 行 330 指定发 `lora.blocked`——两者都不是本条",
+      "state_machine": "§3.1 行 216：「**`EVAL_FAILED` 不是 `FAILED`。** 前者是「训出来了但不好」，后者是「没训出来」……合并成一个码会让排查无从下手」。这条论证是整个状态机分十四值而不是分十值的理由",
+      "why_it_matters": "(1) 三个终局共用一条事件、一个 `type`、一个 `state` 字段，判别面只有 `state`——这本身可以接受，但计划没有为三个终局分别定义其它字段的存在性，所以消费方读到 `FAILED` 时不知道 `metrics_summary` 该不该有（`FAILED` 可能根本没跑到评测，§7.3 行 804–809 的四个失败点都在 `TRAINING` 阶段）。(2) 更实际的后果是**`at_least_once` + 三个终局 + 无版本列**的组合：如果同一 job 先 `FAILED` 后人工重试再 `CANDIDATE`，两条事件的 `aggregate_sequence` 会递增而 `data_ref` 恒为 `null`（ATR-1），消费方只能靠 `outbox` 的 `id` 排序，而 `id` 不在事件里。(3) 本文件不把枚举收紧成三值：DDL 是权威，且收紧会掩盖「计划打算在别处发这些状态」这个事实——那个意图目前只写在 §4.4 与 §3.7/§3.8 的散文里，不在 registry 里（ATR-10）"
+    },
+    {
+      "id": "ATR-3",
+      "summary": "`aggregate_sequence` 定义为「每个状态迁移 +1」的阶段序号，但 `training_job` 没有保存这个序号的列——序号只能从 `outbox` 里数出来，而 `outbox` 有保留期",
+      "definition": "§4.3 行 451：「`aggregate_sequence` 用 job 内部的阶段序号（每个状态迁移 +1），单调」。§5.5 行 692 的列注释同义：「`aggregate_sequence bigint NOT NULL, -- 状态迁移序号」",
+      "no_column": "§5.1 的 `training_job` 列清单（行 492–535）里没有任何计数器列：`state text NOT NULL`（行 513）、`state_since timestamptz`（行 517），再到 `gpu_seconds_consumed`（行 522）。**「第几次迁移」这个数在整个库里的唯一落点是 `outbox.aggregate_sequence` 自己**",
+      "why_that_breaks": "若实现从 `outbox` 反推出下一个序号（例如 `SELECT max(aggregate_sequence) + 1 FROM outbox WHERE aggregate_id = $1`），它依赖 `outbox` 行**永不消失**。而 `outbox` 是发布队列：`published_at` 一旦写入（行 698）行就可以被清理，`outbox_unpublished_idx`（行 701）也只为未发布行服务。registry 给这个 topic 的 `normal_retention_days` 是 14——一旦清理发生，`max()` 归零或跳回旧值，`UNIQUE (aggregate_id, aggregate_sequence, event_type)`（行 699）就挡不住重复，`partition_key` 的严格有序前提（行 694 `tenant_id || ':' || aggregate_id`）也随之失效",
+      "consequence": "这不是 schema 能发现的：payload 里根本没有 `aggregate_sequence`（它在信封上），所以任何对 payload 的校验都不会碰到它。但它是这条事件**顺序保证的全部基础**——§4.3 行 451 说它「单调」，而单调性目前没有持久化载体。同族的对照：S08 的 `manifest_revision` 表把 `(manifest_id, revision)` 落成主键，序号有家；S48 的 `training_job` 没有对应列",
+      "fix_shape": "要么在 `training_job` 加一列（例如 `stage_seq bigint NOT NULL DEFAULT 0`，迁移时 `+1` 并在同一事务写 outbox），要么明确「序号 = `outbox.id` 之外的派生值，且 outbox 行永久保留」——后者会与 14 天保留期冲突"
+    },
+    {
+      "id": "ATR-4",
+      "summary": "同一个 `data` 里并列四个引用、四种键集；引用的标准形状（信封 `data_ref` 四键）只在其中一个上被采用",
+      "four_shapes": "`target_ref` 3 键（§4.3 行 437；**命令体 §2.1 行 78–83 是 4 键、DDL 行 502 有 4 列——`target_content_hash` 提交时在、存储时在，只有事件不发**）；`base_model_ref` 4 键（行 438，DDL 4 列全搬，**恰是信封 `data_ref` 的形状**）；`artifact_ref` 非空时 2 键（唯一写法来自 §4.2 行 387，本事件只给了 `null`）；`dataset_ref` 3 键且以 `items_hash` 代 `revision`（行 440）",
+      "target_content_hash": "§5.1 行 502 `target_content_hash char(64) NOT NULL`。**它在 §2.1 行 82 的命令体里就是必填的，§2.1 行 113 的硬规则还专门论证过为什么 hash 必填：“训练完成后基座漂移了，无法复现”——同一条理由对目标资产逐字成立。** 可它到事件里就没了。§1.5 与 §13 行 1120 把兼容性按 `(base_id, base_revision, content_hash)` 三元组定义，只有基座侧进了事件",
+      "weights_hash": "§5.3 行 630 `weights_hash char(64) NOT NULL` + 行 637 的 `la_weights_uniq UNIQUE (tenant_id, weights_hash)`。`la_weights_uniq` 的注释（行 643）说「同一租户下相同权重 hash 只注册一次」——若两次训练产出一模一样的权重，复用的是同一条 artifact。**这件事消费方无法从事件得知**，因为事件不带 `weights_hash`：两次不同的 job、两条事件、可能同一个产物，消费方会当成两个",
+      "dataset_state": "§5.2 行 551 `items_hash char(64) NOT NULL, -- 冻结后的摘要`，行 555–556 `state text NOT NULL DEFAULT 'DRAFT' CHECK (state IN ('DRAFT','FROZEN','SUPERSEDED'))`。注释说「冻结后的」，但 DDL 没有把 `items_hash` 的写入绑到 `state = 'FROZEN'`（没有 CHECK、没有触发器），所以事件带出的 `items_hash` 是否对应一个已冻结的 manifest，消费方无从判断；`SUPERSEDED` 的 manifest 也仍带着一个合法的 `items_hash`",
+      "why_it_matters": "引用是这条事件的**全部内容**——§4.3 行 449 明说「事件里不含：训练数据、权重 URL、prompt、任何素材内容。只有引用与指标」。四个引用四种形状，等于「只有引用」这件事本身没有统一表示。消费方若要按 ref 去回源（S11 行 572 写 `lora_refs` 建议、S15 行 782 把 `clone_artifact_ref` 加入候选），每个引用要写一套解析"
+    },
+    {
+      "id": "ATR-5",
+      "summary": "`metrics_summary` 在计划里出现三次、三个键集，没有一处说哪些必备；而 `evaluation_passed` 的全部依据就是它",
+      "three_sets": "§3.6 行 289–292：`identity_preservation` / `overfit_score` / `holdout_loss`（+ voice_clone 的音色相似度与可懂度）；§4.2 行 395–399：`identity_preservation` / `overfit_score` / `holdout_loss`；§4.3 行 442：只有 `identity_preservation` / `overfit_score`",
+      "decision_chain": "§3.6 行 294：「达标 → CANDIDATE；不达标 → EVAL_FAILED」。§3.6 行 288 又说这是「训练侧指标（不是 S44 的评测）」——S44 的口径在 §10.7 行 1072 另有约定，所以两侧的指标集合本就不该假设相同",
+      "no_ranges": "`overfit_score` 在 §4.3 样本里是 `0.48`、§4.2 里是 `0.14`；`identity_preservation` 是 `0.61` / `0.87`。方向（越高越好 / 越低越好）与量纲（0–1？百分比？）计划里都没写。§12 行 1108 第 5 条自己承认：「训练侧评测指标的阈值……它们应该来自客户验收与 evals 数据集，不是实现时的拍脑袋」",
+      "why_it_matters": "消费方无法校验、无法告警、无法复算 `evaluation_passed`。S45 审计（§8.3 行 889）要记录「为什么这个产物被接受」，而依据正是这组数——一组键集不定、方向不定的数不能作为审计证据。本文件因此不对 `metrics_summary` 施加任何约束；把可能的值写进 `properties` 会把一个计划明确留白的决定固化成契约"
+    },
+    {
+      "id": "ATR-6",
+      "summary": "`gpu_seconds_consumed` 是 S23 唯一的训练用量证据，而它在 `BLOCKED` 路径上永远发不出来",
+      "role": "§4.3 行 449：「`gpu_seconds_consumed` 是给 S23/S44 做成本归集的」。§5.4 行 662：「**这张表不是账本。** 它是「本服务上报给 S23 的用量记录」，权威在 S23」",
+      "blocked_path": "§6.2 行 736：「授权撤销与训练**同时**发生 | 撤销事件到达时若 job 在 `TRAINING`，**不中断**（中断会浪费已消耗的 GPU），但完成后立刻 `BLOCKED`」。§3.8 行 329–330 的迁移表把 `PUBLISHED → BLOCKED` 指定为发 `lora.blocked` 事件（行 330），而 `lora.blocked` 在 `contracts/event-topics.v2.json` 里**不存在**（C48-4 行 1085 承认）",
+      "gap": "两边都有缺口：若授权在 `TRAINING` 期间被撤销，job 会消耗完 GPU 再落到 `BLOCKED`——而 `BLOCKED` 只由那条未注册的事件通知，`adaptation.training.completed` 不会发。于是**已经花掉的 GPU 秒数没有任何事件承载**。§6.2 行 739 说这取舍「要在客户文档里写明」，但没说要怎么报账",
+      "counting_base": "事件给的是 `training_job.gpu_seconds_consumed`（§5.1 行 522，job 生命周期累计）；`training_slot_usage.gpu_seconds`（§5.4 行 653）是按 `permit_ref` 逐条记录（行 658 `tsu_job_idx ON training_slot_usage (job_id)` 暗示一 job 多行）；S23 的 `usage_accrual` 又按 accrual 逐条。三个基座，一个事件只带其中一个",
+      "why_it_matters": "AGENTS.md 禁止「让某个服务变成第二个权威」。S48 严格守住了这条（不建 `balance`/`quota_remaining`，§5.6 行 710）。但守住的代价是：权威方 S23 手上没有独立的用量观测，只有 S48 推过来的总数。若这个总数在一条路径上根本没推，S23 不会「记错」，它会**什么都不记**——而客户端已经付了 GPU 费。这不是 schema 能修的，是路径覆盖问题"
+    },
+    {
+      "id": "ATR-7",
+      "summary": "`evaluation_passed` 与 `state` 是同一事实的两种编码，计划自己就写了三条会让它们合法矛盾的路径",
+      "field": "§4.3 行 441 `\"evaluation_passed\": false` + 行 435 `\"state\": \"EVAL_FAILED\"` —— 样本里两者一致，但一致性没有任何约束保证",
+      "three_paths": "(1) **人工否决**：§4.1 行 363 `POST /training-jobs/{id}:reject` → `CANDIDATE → EVAL_FAILED`，§7.4 行 817「人工否决 | `EVAL_FAILED`，`rejection` 记理由」。此时评测是过的，`evaluation_passed` 应为 `true` 而 `state` 是 `EVAL_FAILED`；(2) **评测基础设施失败**：§7.4 行 816「重试 1 次；再失败 → `FAILED`」——评测没跑完，`evaluation_passed` 该取什么值计划没说，`metrics_summary` 该不该出现也没说；(3) **指标不达标**：§7.4 行 815，两者一致为 `false`",
+      "schema_cannot_tell": "本文件对两者都只做类型约束，没有 `allOf` / `if-then` 把它们关联——因为关联规则本身在计划里不存在，写进 schema 就是我在替 owner 决定「人工否决时 `evaluation_passed` 算不算过」。而消费方（尤其是 S45 审计与 S47 投影）若以 `evaluation_passed` 为准，会把人工否决误读成「训练质量不达标」——正好是 §3.1 行 216 想避免的那类混淆",
+      "why_it_matters": "这是同一条事件里**两个字段描述同一个判断**的经典问题。删掉一个最省事，但 `evaluation_passed` 是布尔、`state` 是十四值枚举，前者对 UIS 更友好，后者是状态机权威。要定的是谁派生谁、以及人工否决算不算「评测未通过」"
+    },
+    {
+      "id": "ATR-8",
+      "summary": "`adaptation_type` 三值枚举里 `style_lora` 的目标服务没有落位：`target_service` 只注释了 `'S11'` 与 `'S15'` 两个",
+      "enum": "§5.1 行 497–498 的真 CHECK：`character_lora` / `style_lora` / `voice_clone`",
+      "target_service": "§5.1 行 499：`target_service text NOT NULL,  -- 'S11' | 'S15'`。行 501–502 的 `target_id` / `target_revision` 同样没有 CHECK",
+      "mismatch": "三个 type、两个 service 的目标——`style_lora` 无处可去。可能的解释：`style_lora` 的目标也是 S11（风格挂在角色上），或目标是 S13（场景）/ S14（道具），或它其实不挂任何资产服务。计划正文没有一处说明 `style_lora` 是什么、挂在谁身上：§1 的边界段（行 11–67）只讨论与 S15、S24 的关系，§2.1 的命令入口（行 71–116）不在本文件已读范围内但 §3.1 的状态机对三种 type 一视同仁",
+      "why_it_matters": "这不是枚举与注释的细微差别：`target_ref.service_id` 是消费方决定「把这条建议递交给谁」的唯一依据（S11 行 572 与 S15 行 782 各自只认自己那一种）。若 `style_lora` 的 `target_ref.service_id` 也写 `S11`，S11 的消费者要判断「这是角色 LoRA 还是风格 LoRA 才能决定写进 `lora_refs` 的哪一支」——而 §3.7 行 320 只说「`training.lora.registered` 只写 `revision_reference` / `lora_refs` 建议」，没提风格这一类。若写 S13/S14，那两个服务根本没有声明消费任何训练事件",
+      "not_inferred": "本文件不为 `style_lora` 编服务 id，`target_ref.service_id` 只按 `^S[0-9]{2}$` 约束"
+    },
+    {
+      "id": "ATR-9",
+      "summary": "「训练默认关」这个开关在 §6.3 被当作一张表查询，而这张表在数据模型里从未创建",
+      "referenced": "§6.3 行 743–750 的队列认领 SQL：`WHERE state = 'QUEUED' AND tenant_id IN (SELECT tenant_id FROM tenant_training_enabled)`",
+      "never_created": "§5 的数据模型（行 484–715）里没有 `CREATE TABLE tenant_training_enabled`。§5.6 「不建的表」（行 706–715）也没有把它列为「不建」，更没有说明它归谁所有",
+      "default_off": "§4.5 行 467：`403 TRAINING_NOT_ENABLED | 客户未订购 S48（默认关）`。这与 AGENTS.md「所有生产开关默认关闭」一致，方向和纪律都对",
+      "why_it_matters": "「默认关」是正确的，但**它在库里没有落点**：一张不存在的表既不能默认为空（那等于全关，符合意图）也不能授权任何人。两种实现都合法而语义不同——若表不存在时查询直接报错，服务起不来；若容忍空结果，则全租户关闭，与「默认关」一致但也说明这张表的存在全靠运维手动插行，没有 API、没有 schema、没有审计路径。S45 审计（§8.3 行 889）需要记录「谁为哪个租户开启了训练」——那是采购动作，是钱的事，应当与 S23 的授权引用（§5.1 行 520 `budget_auth_ref`）同等可追溯。本事件不携带任何「该租户是否启用」的信息，所以 `TRAINING_NOT_ENABLED` 的后果不会出现在事件流里"
+    },
+    {
+      "id": "ATR-10",
+      "summary": "同一个事件被四个地方叫成四个名字，其中只有一个是注册过的；两个声明的消费者等的都不是它",
+      "four_names": "(1) `contracts/event-topics.v2.json` 登记的是 `adaptation.training.completed`（producer `S48`，topic `drama.adaptation-training.v2`）——**唯一注册的**；(2) S11 的消费表（plans/S11-character-assets.md 行 572）写 `training.lora.registered`（S48）；(3) S15 的消费表（plans/S15-voice-assets.md 行 782）写 `training.completed`（adaptation_type=voice_clone），S48；(4) §3.8 行 330 与 C48-4 写 `lora.blocked`（S24/S25 消费），§3.7 行 317 与 §4.4 行 457 写 `training.lora.registered`，§4.4 行 458 写 `training.voice_clone.ready`",
+      "registry_check": "`event-topics.v2.json` 共 55 个 topic。逐个核对：`training.lora.registered` **否**、`lora.blocked` **否**、`training.voice_clone.ready` **否**、`training.completed` **否**、`adaptation.training.completed` **是**",
+      "consumer_impact": "S15 行 782 等的是 `training.completed`（无 `adaptation.` 前缀）并进一步按 `adaptation_type=voice_clone` 过滤——即使把 `adaptation.training.completed` 投递给它，**事件名不匹配，消费方通常按 `type` 精确匹配订阅，这一条会被静默丢弃**。S11 行 572 等的是 `training.lora.registered`，那个事件根本不存在，于是 S11 的 `lora_refs` 建议链路永远空转。两者的失败模式都是**静默**：没有任何一处会报错，产物只是不被采纳",
+      "s48_own_view": "C48-4 行 1085 承认了这一点：「`event-topics.v2.json` 里 `drama.adaptation-training.v2` 只登记 `adaptation.training.completed`；`training.lora.registered` / `lora.blocked` 等建议事件未登记 | S11/S15 的「建议」链路无法工作；`BLOCKED` 无法通知 S24/S25」。所以 S48 侧是知情的、并已如实上报",
+      "why_it_matters": "这条是本文件里唯一一条**之所以存在，是因为它跨了三个服务**的缺陷：没有任何一个服务的 schema 校验能发现它，registry 与三条消费声明各自自洽，只有把它们并排才看得出名字对不上。它同时说明为什么 `adaptation.training.completed` 这条事件目前**几乎没人真正消费**——已注册但消费者等的是别名，别名又没注册。`payload` 类型化之后这个矛盾更显眼：我们给一条无人订阅的事件写了完整 schema"
+    },
+    {
+      "id": "ATR-11",
+      "summary": "§4.3 的示例把 `causation_id` 写成 `null`，而信封要求非空字符串——26 份示例里唯一的 `null` 出自本计划",
+      "plan_writes": "plans/S48-adaptation-training.md §4.3 行 431：`\"correlation_id\": \"cmd_01J...\", \"causation_id\": null,`",
+      "envelope_requires": "contracts/event-envelope.v2.schema.json 的 `properties.causation_id` 是 `{\"type\": \"string\", \"minLength\": 1}`——**没有 `null` 分支**，且在 16 个 `required` 里",
+      "measured": "全仓库 37 份带 `causation_id` 的示例里没有一个是 `null`（本文件的初稿曾是唯一的例外，被 `validate_examples.py` 直接判失败：「1 error(s), first at causation_id: None is not of type 'string'」）。逐份核对 plans/ 下的写法：27 篇里写字符串的 24 篇，写 `null` 的 3 篇——**S48 行 431、S45、S46**",
+      "why_the_three_exist": "S48 的 `null` 有语义动机：§4.3 描述的是「训练完成」这类由 GPU runtime 自己推进的事件，没有一条上游命令触发它，所以「因」不存在。这个动机是合理的，**但信封没有为「根事件」留出口**——`causation_id` 是 required 且必须非空。S45（审计导出）与 S46（集成命令）写 `null` 大概是同一种「没有上游」的情形",
+      "consequence": "本文件的示例按信封写成字符串（复用 `correlation_id` 的值），因为规则是 `validate_examples.py` 硬判的，而计划散文不能覆盖 schema。**但这掩盖了一个真实的设计缺口**：如果一个事件确实没有因，唯一合法的写法是编一个与本事件无关的 id——那让 `causation_id` 从「因果链指针」退化成「必填但可能无意义的字符串」。诚实的做法是要么信封允许 `null`（并规定只有根事件可为 null），要么规定根事件回填自己的 `correlation_id`——后者恰是本示例做的，也是唯一不需要改 schema 的写法",
+      "not_the_same_as": "这与 ATR-1 不同：ATR-1 是计划违反了信封且违反后**没有**合法写法；这里是违反了但有替代写法（填 `correlation_id`），只是替代写法会丢失「无因」这个信息。前者需要 owner 决定语义，后者只需要约定"
+    }
+  ]
+}

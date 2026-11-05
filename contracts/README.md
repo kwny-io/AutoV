@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 36 个 topic 带**（19 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 37 个 topic 带**（18 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -101,6 +101,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `change.plan.applied` | `change.plan-applied.v2.schema.json` | S07 §5.5 |
 | `storyboard.shot.revision.created` | `storyboard.shot-revision-created.v2.schema.json` | S06 §4.3 / §11 C3 |
 | `breakdown.revision.created` | `breakdown.revision-created.v2.schema.json` | S05 §4.2 / §11 C3 |
+| `adaptation.training.completed` | `adaptation.training-completed.v2.schema.json` | S48 §4.3 / §11 C48-4 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -629,7 +630,7 @@ S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力
 `outbox` 也没有，全仓库没有对应的 `CHECK`。本文件照 `contracts/README.md` 的原则收 `minLength: 1`
 而不枚举，词表归属记在 `x-needs-owner`。
 
-`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 52 份示例是 `tnt_` 前缀或 `tenant_demo`）。它有据：
+`tenant_id: "*"` 是本仓库唯一一个通配租户（其余 41 份带 `tenant_id` 的示例里 35 份是 `tnt_` 前缀、6 份是 `tenant_demo`）。它有据：
 §2.1 行 46 与 §2.2 行 105 都写「共享目录行 `tenant_id = '*'`」。envelope 只要求 `minLength: 1`，
 所以 schema 不拦也不推。另外 `subject` 在这里恒等于 `aggregate_id`，是全仓库唯一这么做的生产者。
 
@@ -667,7 +668,7 @@ S24 的 `change_kind` 有五个取值，而事件的 `aggregate_id` 只指能力
 示例只有 `duration_seconds` 与 `aspect_ratio` 两个键，而视频路径的 `GenerationCommand.input` 还有
 `resolution`、`mode`、`references[]`、`audio_strategy`。本文件收 `type: object` 不约束内容，记在 MRT-9 与 `x-needs-owner`。
 
-`home_cell` 在 §7.1 的示例里是 `cn-east-1`，是本仓库唯一一个非 `cell_a1` 的示例（其余 36 份带这个键的全是
+`home_cell` 在 §7.1 的示例里是 `cn-east-1`，是本仓库唯一一个非 `cell_a1` 的示例（其余 38 份带这个键的全是
 `cell_a1`，envelope 只要求 `minLength: 1`；S06 §4.2/§4.3 又写了一处 `cell-a1`，与 S25 这处并列）。本仓库的示例用 `cell_a1`，与其余示例一致。
 
 ### `storyboard.shot-revision-created.v2.schema.json`：一条事件的聚合键漏了分支，唯一的消费者建不出主键
@@ -731,6 +732,59 @@ S09 能靠自检查出漏关（「`valid_to IS NULL` 但 `target_revision` 已�
 另外 `content_hash` 的输入含 `revision`（§4.1 行 467），而它同时是
 `UNIQUE (tenant_id, breakdown_id, content_hash)` 的一部分——「同一内容不能出现两版」
 这条约束因此在跨 revision 时挡不住重复提交，而重复提交恰恰会产生新 revision（BRK-9）。
+
+### `adaptation.training-completed.v2.schema.json`：一条事件承载三个终局，而四个消费者等的是别的名字
+
+这是本仓库唯一一条**把状态机当事件体**的发布事件。`state` 在 DDL 里有十四值
+（S48 §5.1 行 513–516），但 §4.3 行 435 的注释只点了三个：`EVAL_FAILED`、`CANDIDATE`、
+`FAILED`。中间七个阶段（`REQUESTED`→`EVALUATING`）要发的是 §4.4 行 453–460 那两个
+事件，`REJECTED` / `EXPIRED` 的出口全是 HTTP 422，`PUBLISHED` / `BLOCKED` 由 §3.7 行 317
+与 §3.8 行 330 指定发另两个名字。**所以可达集是 3 / 14**，而 §3.1 行 216 花整段论证
+`EVAL_FAILED` 与 `FAILED` 必须分开——它们正好都在这三个里，判别面只有一个字段（ATR-2）。
+
+最硬的一条是 **ATR-1**：§4.3 行 445 把 `data_ref` 写成裸字符串
+（`"training-job/job_01J..."`，与 `subject` 逐字相同），而信封的 `data_ref` 是
+`oneOf`：四键对象或 `null`，没有字符串分支。实测这条示例**过不了信封**。就算改成四键
+也填不出来——`training_job` 既没有 `revision` 列也没有 `content_hash` 列；唯一像 hash 的
+`request_hash` 是**命令**的摘要（§6.1 行 724），拿它冒充会把「同一命令重放」与
+「同一 job 的两个阶段」混为一谈。所以本仓库的示例写 `"data_ref": null`：不是偏好，
+是三个选项里唯一不伪造的那个。
+
+**ATR-10** 是这条事件目前几乎没有消费者真正接收它的原因，也解释了为什么给它写完整
+payload schema 有点讽刺。同一个事件在四个地方叫四个名字：registry 里是
+`adaptation.training.completed`（唯一注册的），S11 的消费表等 `training.lora.registered`，
+S15 的消费表等 `training.completed`（连 `adaptation.` 前缀都没有，还按
+`adaptation_type=voice_clone` 过滤），S48 自己要发 `lora.blocked` 通知 S24/S25。
+逐个核对 registry 的 55 个 topic：后三个**一个都不存在**。失败模式全静默——
+S11 的 `lora_refs` 建议链路永远空转，S15 按 `type` 精确匹配会把这条直接丢掉，
+没有任何一处报错。C48-4（§11 行 1085）已经如实上报了这件事，所以这是**已知缺口**而不是新发现；
+schema 只是把它变得显眼：我们为一条无人订阅的事件写了 11 个字段的契约。
+
+**ATR-3** 藏在信封上，任何 payload 校验都不会碰到：`aggregate_sequence` 被定义为
+「job 内部的阶段序号（每个状态迁移 +1）」（§4.3 行 451），但 `training_job` **没有保存
+这个序号的列**。唯一落点是 `outbox.aggregate_sequence` 自己，而 `outbox` 是发布队列、
+`published_at` 一写行就能清；registry 给的 `normal_retention_days` 是 14。于是「单调」
+这个前提没有持久化载体，而 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`
+（行 699）全靠它。
+
+**ATR-9** 是一次实际读代码才发现的：§6.3 行 747 的队列认领 SQL 里
+`tenant_id IN (SELECT tenant_id FROM tenant_training_enabled)`，可 §5 的数据模型
+（行 484–715）**从未创建这张表**，§5.6「不建的表」也没把它列为「不建」。
+「训练默认关」这个纪律是对的（§4.5 行 467 的 `TRAINING_NOT_ENABLED`），
+但它在库里没有落点，也就没有「谁为哪个租户开了训练」的审计路径。
+
+`metrics_summary` 是本文件唯一一个**完全不约束**的对象：计划给了三次、三个键集
+（§3.6 行 289–292 四个指标、§4.2 行 395–399 三个、§4.3 行 442 两个），没有一处说
+哪些必备，方向与量纲也没写，而 `evaluation_passed` 的全部依据就是它（ATR-5）。
+不收 `properties` 是刻意的：把可能的值写进契约会把一个计划明确留白的决定固化成约束。
+
+负向探针 27 例全部符合预期（九个必填字段缺一各拒、`state` 与 `adaptation_type` 越界拒、
+三种引用形状互换拒、`sha256:` 前缀拒、`artifact_ref` 写成四键拒、`gpu_seconds_consumed`
+负数与浮点拒、`data` 顶层多键拒），另单独在信封层复现了 ATR-1 与 ATR-11。
+**ATR-11** 值得单记：§4.3 的示例把 `causation_id` 写成 `null`，而信封要求
+`{"type": "string", "minLength": 1}` 且在 16 个必备键里——37 份带这个键的示例里
+本文件初稿曾是唯一的 `null`。`plans/` 下写 `null` 的共三篇（S48 行 431、S45、S46），
+动机都一样：「没有上游命令触发它」。动机合理，但信封没为根事件留出口。
 
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
@@ -828,7 +882,7 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 36 个 payload schema
+                                        └──data_schema_ref──▶ 37 个 payload schema
                                                               （见上表；其余 19 个 envelope-only）
 ```
 
@@ -842,11 +896,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（110 个 JSON 解析）、`payloads`（91 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 36 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（112 个 JSON 解析）、`payloads`（93 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 37 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（52 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（53 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
