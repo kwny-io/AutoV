@@ -561,6 +561,7 @@ README_CLAIMS = [
     ("payload topic", r"其中 (\d+) 个 topic 带 payload schema", "payloads", r"(\d+) topic\(s\) with a payload"),
     ("openapi file ref", r"(\d+) 处指向真实文件", "openapi", r"(\d+) naming a file"),
     ("topic field", r"55 个 topic 必须各带 (\d+) 个字段", "topics", r"(\d+) required field"),
+    ("secret class", r"(\d+) 个 secret class 的", "redaction", r"(\d+) secret class"),
     ("check_id", r"(\d+) 个\s*\n?`check_id` 是否符合", "checkids", r"(\d+) check_id"),
     ("links", r"`links`（(\d+) 条相对链接", "links", r"(\d+) local link"),
     ("stated invariant", r"自己声明的\s*\n?(\d+) 条 invariant", "families", r"(\d+) stated invariant"),
@@ -831,6 +832,81 @@ def check_topic_fields(name):
     return r
 
 
+def check_redaction_policy(name):
+    """`redaction-policy.v2.json` is internally coherent and its section refs resolve.
+
+    This is the one top-level contract no other check touched: `json` only proved
+    it parses. It is also the security-critical one -- six secret classes and the
+    rules for neutralising them -- and it is hand-authored (`generated_from` is
+    null), so nothing regenerates it into correctness.
+
+    Three things are enforced. A `must_match` pattern must be a regex Python can
+    compile: the file calls them "reference patterns, not the definition", so an
+    implementation need not use them, but a published pattern that cannot compile
+    is a bug in the document either way. Each class's `id` must equal its map key,
+    since `replacement_action` addresses classes by id. And every
+    `plans/<file>.md §N.N` in `applies_to[].rule_ref` must name a heading that
+    exists -- those plans are edited by other sessions and a renumbered section
+    would otherwise leave this table pointing at prose that no longer says it.
+
+    Binding a class id from `replacement_action` back to `secret_classes` is not
+    checked: that block groups by class_a / class_b, and the ids appear in prose
+    text rather than as keys, so a match there proves little.
+    """
+    r = Result(name)
+    path = os.path.join(CONTRACTS, "redaction-policy.v2.json")
+    if not os.path.exists(path):
+        r.note = "redaction-policy.v2.json not present"
+        return r
+    pol = json.loads(_utf8(path))
+    classes = pol.get("secret_classes", {}).get("classes", {})
+    bad_regex = []
+    for key, cls in classes.items():
+        if cls.get("id") != key:
+            r.fail(f"secret class key {key!r} declares id {cls.get('id')!r}")
+        pat = cls.get("must_match")
+        if not pat:
+            r.fail(f"secret class {key!r} has no must_match")
+            bad_regex.append(key)
+            continue
+        try:
+            re.compile(pat)
+        except re.error as e:
+            r.fail(f"secret class {key!r} must_match does not compile: {e}")
+            bad_regex.append(key)
+
+    checked = unresolved = 0
+    for entry in pol.get("applies_to", []):
+        ref, cur = entry.get("rule_ref", ""), None
+        # A ref reads "plans/S45-audit.md §2.2 (…), §2.5 (…), §3.3 (…)". Carry the
+        # last path forward, or only the first section of each entry gets checked.
+        for m in re.finditer(r"(plans/[\w\-]+\.md)|§([\d.]+)", ref):
+            if m.group(1):
+                cur = m.group(1)
+                continue
+            if not cur:
+                continue
+            checked += 1
+            sec = m.group(2)
+            tgt = os.path.join(ROOT, cur)
+            if not os.path.exists(tgt):
+                r.fail(f"{cur} §{sec}: file does not exist")
+                unresolved += 1
+            elif not re.search(rf"^#+\s*{re.escape(sec)}[\.\s]", _utf8(tgt), re.M):
+                r.fail(f"{cur} §{sec}: no heading with that number")
+                unresolved += 1
+
+    # "compiled" and "resolved" are claims about the run, so a failing run must not
+    # print them as totals -- same shape as the x-service-id note. Count what
+    # actually passed and name the shortfall.
+    r.note = (f"{len(classes)} secret class(es), "
+              f"{len(classes) - len(bad_regex)}/{len(classes)} regex(es) compiled"
+              + (f" ({len(bad_regex)} did not)" if bad_regex else "")
+              + f"; {len(pol.get('applies_to', []))} applies_to entr(ies), "
+              f"{checked - unresolved} of {checked} plan section ref(s) resolved")
+    return r
+
+
 def check_openapi_refs(name):
     """Every $ref in contracts/openapi.v2.yaml that names a file resolves.
 
@@ -1006,6 +1082,7 @@ CHECKS = [
     ("payloads", check_payload_refs, "every topic schema_ref/data_schema_ref names a real file"),
     ("openapi", check_openapi_refs, "every $ref in openapi.v2.yaml that names a file resolves"),
     ("topics", check_topic_fields, "every event topic carries the fields its readers use"),
+    ("redaction", check_redaction_policy, "redaction policy regexes compile and section refs resolve"),
     ("checkids", check_check_ids, "check_id values in the QC plans match the schema pattern"),
     ("links", check_links, "every relative markdown link resolves"),
     ("catalog", check_catalog, "service/topic ids agree across catalog, docs/02, topics"),

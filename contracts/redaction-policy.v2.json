@@ -88,7 +88,7 @@
       "private_key_material": {
         "id": "private_key_material",
         "description": "Any PEM private key block, raw key material, KMS plaintext, or a password field value",
-        "must_match": "(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]+?-----END [A-Z ]*PRIVATE KEY-----|(?i)\\b(?:password|passwd|pwd)\\b\\s*[:=]\\s*\\S{4,})",
+        "must_match": "(?is)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]+?-----END [A-Z ]*PRIVATE KEY-----|\\b(?:password|passwd|pwd)\\b\\s*[:=]\\s*\\S{4,})",
         "false_positive_risk": "low",
         "why_secret": "Irrecoverable disclosure; a leaked private key cannot be scoped down after the fact",
         "rotation_expected": true

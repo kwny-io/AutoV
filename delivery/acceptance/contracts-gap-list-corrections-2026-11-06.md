@@ -4066,3 +4066,55 @@ ok  topics    55 topic(s), 10 required field(s); 5 field(s) README calls constan
 1 种值 + 1 种 None。真实情况是「少了一个字段」，不是「这个字段有 2 种值」。
 函数已经为缺字段单独 FAIL 了，note 不该把它重复算进常量性统计。改成只比较在场的值后，
 失败状态下也印 `max 1`，和通过状态一致——**因为事实没变，变的只是错了什么**。
+
+### 补记五：`redaction-policy.v2.json` 里有一条正则根本编译不过
+
+`redaction-policy.v2.json` 是四个顶层契约里**唯一没有任何工具读过的**：
+`service-catalog` / `event-topics` / `mcp-tools` 都被检查或生成器读过，它没有。
+`json` 那一项只证明了它能 `json.load`。而它恰好是唯一的安全契约，且 `generated_from: null`
+——手写、无 schema 校验、无生成物比对。
+
+**实测抓到的错**：`secret_classes.classes.private_key_material.must_match` 里有
+`(?i)` 出现在表达式中间：
+
+```
+(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----(?i)\b(?:password|...)
+                                                                           ^^^^ 位置 80
+re.error: global flags not at the start of the expression at position 80
+```
+
+Python 3.11 起内联的全局 flag 必须在表达式最开头。这条正则**一次都没能编译**。
+文件自己写着这些是「reference patterns, not the definition」，实现方可以换用熵检测——
+但那不改变一件事：文档里印出来、挂着「minimum an implementation must do」的 pattern，
+编译不过是文档的错。
+
+**改法**：把 `(?i)` 提到最前，合并成 `(?is)`，两个分支都还在。三个分支各测：
+PEM 私钥块、`password=hunter2`、`pwd: xxxx` 全部命中。
+
+**新检查 `redaction`（`check_redaction_policy`）**，核三件事：
+
+```
+ok  redaction  6 secret class(es), 6/6 regex(es) compiled; 4 applies_to entr(ies), 13 of 13 plan section ref(s) resolved
+```
+
+1. 6 个 `must_match` 必须能被 `re.compile` 通过，`id` 必须等于所在的键名
+   （`replacement_action` 按 id 寻址）
+2. 4 条 `applies_to[].rule_ref` 里共 13 处 `plans/*.md §N.N`，必须命中真实标题
+   ——那三份 plan 正在被别的会话改，章节重编号会让这张表指向不再说那件事的段落
+3. `rule_ref` 的写法是「`plans/S45-audit.md §2.2 (…)`, §2.5 (…)」，路径只出现一次；
+   解析时必须把路径往下带，否则每条只核第一个 `§`
+
+| 探针 | 输出 |
+|---|---|
+| 把编译不过的原正则放回去 | `FAIL redaction 1` / `5/6 regex(es) compiled (1 did not)` |
+| `§2.2` 改成 `§99.99` | `FAIL redaction 1` / `12 of 13 plan section ref(s) resolved` |
+| `api_key` 的 `id` 改成 `api_key_typo` | `FAIL redaction 1`，正则那半仍报 `6/6` |
+| 全部还原 | 三项 ok，`git diff` 只剩那 1 行正则修正 |
+
+**第一版 note 又是同一个毛病**：写死了 `regexes compiled` / `N ... resolved`，
+于是探针 A 失败时照样印「regexes compiled」，探针 B 失败时照样印「13 ... resolved」。
+第三轮内这是第三次。现在改成打印**实际通过的数量**并显式点出缺口
+（`5/6 … (1 did not)`、`12 of 13`），三个探针各验一次。
+
+这也解释了为什么这个错能活这么久：**没有任何东西会去编译它**。
+和补记二三四一样，都是「文件在，字段在，但没人读」的变体。
