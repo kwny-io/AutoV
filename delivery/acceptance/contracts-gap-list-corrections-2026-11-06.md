@@ -3488,8 +3488,10 @@ tool scopes that S19's CHECK would reject: ['publish', 'review']
   -> ['drama.review.decide', 'drama.delivery.publish']
 ```
 
-按 [S19 §2.5](../../plans/S19-agent-runtime.md) 的原文，Agent 定义里每个工具都要落一行
-`agent_definition_tool`，列名就叫 `required_scope`、且是这个 4 值 CHECK。那么
+[S19 §2.6](../../plans/S19-agent-runtime.md) 的 `POST /agent-definitions/{id}/revisions`
+请求体里，`tools` 是个数组，每项都带 `required_scope`；[§5.1](../../plans/S19-agent-runtime.md)
+的 `agent_definition_tool` 表把同一个名字做成了列，且带这个 4 值 CHECK。所以每个工具
+都要落一行，而这一行的 `required_scope` 只能是那四个值之一。那么
 `drama.review.decide` 这个工具**在 S19 里根本注册不进去**——哪怕把 `publish` 的争议
 按 `execute` 解决掉，`review` 仍然会被拒。而 `review` 在 docs/13 和 S46 里都是合法档位，
 只有 S19 没有。
@@ -3517,5 +3519,7 @@ tool scopes that S19's CHECK would reject: ['publish', 'review']
 |---|---|---|---|
 | 1 | §2.1「四档都有实例」 | **五档每档都有实例**（`read` 4、`execute` 4、`plan` 1、`review` 1、`admin` 1） | 数的时候把 `review` 漏了。12 个工具的 scope 我列出过、表就在 §2 里，`drama.review.decide` 那一行明明白白写着 `review`——**表是对的，是我把列了 12 行的表"总结"成了 4**。概括时没有回表重数，等于亲手制造了一个与自己的证据相反的结论 |
 | 2 | §16.28 初稿「`required_scope` 的枚举只有三处声明」 | **四处**：docs/13 正文、S19 DDL、S46 DDL（列名是 `scope`）、mcp-tools JSON | 按 `required_scope IN (` 这个字段名搜，S46 的列叫 `scope`，没命中。**搜取值集合不能锚定在自己记得的列名上** |
+| 3 | 本节「按 **S19 §2.5** 的原文，Agent 定义里每个工具都要落一行 `agent_definition_tool`」 | 章节号 **§2.6**（§2.5 是 `POST /agent-tasks/{id}:cancel`）；且 §2.6 里**没有**「每个工具都要落一行」这句原话，是 `tools` 数组每项带 `required_scope`（§2.6 行 202–205）+ §5.1 把它做成表列（行 605–613）两条合起来才成立 | **写章节号没回读标题；写「原文」却写了一句自己拼出来的话。**`grep "### 2.5"` 一次就能看见错位，我上一轮是凭「工具那段大概在后面几节」直接填的数。引文类的句子必须 `sed -n` 把源行贴出来再写，不能 paraphrase 完还加引号 |
+| 4 | 本节「四处全仓搜过（排除 `.claude/worktrees/` 与 `docs/design-package/`）」 | 「四处」对；但第一遍的搜法漏了 `plans\S46`（字段名不是 `required_scope`），第二遍才补上。本节写下的这句只对最终结果成立 | 见第 2 行，同一类错。**纠正后必须重跑一遍确认结论仍然成立**，不能只改文字 |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
