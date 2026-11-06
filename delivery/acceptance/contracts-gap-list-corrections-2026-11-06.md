@@ -2245,11 +2245,18 @@ The qc-sdk validator enforces this at load time; a violating registry is rejecte
 | `validate_registry.py`（`validate()` 里 `allowed_by_family = set(chain)`） | 三个字段都拿 `set(chain)` 判 | chain |
 
 `x-cross-checks` 的 `why` 明说这些规则「enforced by the qc-sdk registry validator AT LOAD
-TIME」——也就是那份文件自己认定 `validate_registry.py` 是这些规则的实现。数一下出处：
-说「只有 `chain`」的有 **5 条语句、分布在 2 份文件**（`escalate_to.description` 1 条、
-`x-cross-checks.rules` 第 2/3/4 条共 3 条、`validate_registry.py` 的 `allowed_by_family`
-1 条）；说「`chain ∪ {fallback}`」的只有 **1 条语句、1 份文件**。所以那份文件的第 5 条是孤证。
-但按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」，这一轮不改任何一份，
+TIME」——也就是那份文件自己认定 `validate_registry.py` 是这些规则的实现。数一下**有规范效力
+的出处**（界定一个字段可以取哪些值的语句，不是引用它的行文）：说「只有 `chain`」的有
+**5 条、分布在 2 份文件**（`escalate_to.description` 1 条、`x-cross-checks.rules` 第 2/3/4
+条共 3 条、`validate_registry.py` 的 `allowed_by_family` 1 条）；说「`chain ∪ {fallback}`」的
+只有 **1 条、1 份文件**。所以那份文件的第 5 条是孤证。
+
+（口径说明：`grep 'chain ∪ {fallback}'` 在去掉 `docs/design-package/` 与 worktree 之后会命中
+**8** 行，其中只有 `action-families.v2.json` 那一行是规范语句，另外 7 行都是本节和
+`contracts/README.md` 里**引用**这条规则的说明文字。数「谁规定了什么」要按规范语句数，
+不能按字符串出现次数数——否则我上一条更正本身就会被算成 7 票。）
+
+按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」，这一轮不改任何一份，
 只把它测出来。
 
 #### 冲突有多宽：24 个 (族, 字段) 对
@@ -2344,6 +2351,7 @@ ok    families   14 family/families  [4 of the 5 stated invariants; the one abou
 | 4 | 本节初稿：探针第一次跑出 `'registry_version' is a required property`，我差点把它读成字段相关 | 错误信息里混了 schema 的形状错误，和字段相关的拒收分不开 | 补上 `registry_version` 重跑，让两次运行的**唯一差异**是 `escalate_to` | 探针要能证明因果关系，就必须只留一个变量；带噪的对照不算对照 |
 | 5 | 本节初稿：「四票对一票」 | 四票对一票 | **5 条语句、2 份文件** 对 **1 条语句、1 份文件** | 把「文件数」和「语句数」混成同一个计数；`x-cross-checks` 那 3 条规则是三条独立语句，塌成一份文件的一票会少算 |
 | 6 | 本节初稿：「6 个族两说一致（它们的 fallback 是链成员）」 | 用「fallback 是链成员」解释这 6 个 | 直接对每个族算 `(set(chain) \| {fallback}) == set(chain)`，得 6 相等、8 不等；另验「不等时多出来的值恰好都是 `human_review`」= True | 条件写对了不等于等价关系成立过；这一句是在解释一个我还没直接数过的相等性 |
+| 7 | 本节初稿：「说 `chain ∪ {fallback}` 的只有 1 条语句」没写口径 | 不带限定地写「1 条语句」 | 加上「有规范效力的」这一限定，并补上 `grep` 实得 8 行的口径说明 | 字符串出现次数 ≠ 规范语句数；本节和 README 引用这条规则的文字也会被 grep 到，不写口径就会被自己的引文重复计数 |
 
 **owner 决定（新增三条）：**
 
