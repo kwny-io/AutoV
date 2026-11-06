@@ -943,6 +943,11 @@ README_CLAIMS = [
     # description is still a hand-typed number.
     ("docsreadme count", r"`docs/README\.md` 的 (\d+) 条断言",
      "docsreadme", r"(\d+)/\d+ assertion\(s\) in docs/README\.md"),
+    # The count in `citerefs`'s own description is hand-typed like every other,
+    # so it is pinned the same way. It is small today (6) and that is the point:
+    # it is the denominator the "all named" claim is a fraction of, and a
+    # denominator that shrinks silently would make the fraction look better.
+    ("citerefs citation", r"今天共 \*\*(\d+)\*\* 处引用", "citerefs", r"(\d+) check_all\.py citation"),
 ]
 
 
@@ -1979,6 +1984,120 @@ def check_archive(name):
               + f"; {len(rows) - inside} row(s) name files imported elsewhere "
                 f"and are not compared")
     return r
+def check_citerefs(name):
+    """A citation into `check_all.py` names the function it means:
+    `check_all.py:check_payload_refs:1454-1464`, not `check_all.py:1454-1464`.
+
+    Line numbers rot silently. This file is the one that gets rewritten, so a
+    citation that lands in a `check_*` function today lands in a different
+    one after the next insertion above it -- and every range-only or
+    range-exists test still passes, because the file is as long as it ever
+    was. The citations this was written for had done exactly that: six of them
+    named ranges that had slid into a neighbouring function, one in
+    `contracts/README.md` (a live description of what a check does today) and
+    five in the corrections report.
+
+    A test that only asks "is this line inside *some* check_* function" does
+    not catch that, and this was verified by mutation: `763-772` slid from
+    `check_payload_refs` into `check_interactions` and passed, and `160-170`
+    slid into `check_links` and passed. Both were still inside a check. So the
+    function name is required, not optional: it is the only part of the
+    citation that does not move, and it is what the prose is actually
+    referring to. Anonymous `check_all.py:<line>` is a failure telling the
+    author to add the name.
+
+    Scope is deliberately just `check_all.py`. Other citations in prose look
+    like `plans/S35:1010` or `S38:241` -- shorthand for a plan or design-package
+    file, not a path -- so resolving them needs a name map that does not exist
+    and would make this check guess.
+
+    Fenced blocks are skipped, so a citation quoted as an example of the wrong
+    form belongs in a fence. Never weaken this to make a stale number pass:
+    the number is the thing that is wrong.
+
+    Whether the prose and the cited code say the same thing is not decidable
+    here and is not attempted; this settles that the named function exists and
+    that both ends of the range are inside it.
+    """
+    r = Result(name)
+    py = _utf8(os.path.join(ROOT, "tools", "check_all.py")).splitlines()
+
+    spans = []
+    for i, line in enumerate(py):
+        if line.startswith("def "):
+            spans.append((i + 1, line[4:].split("(")[0]))
+    defined = {fname for _, fname in spans}
+
+    def enclosing(n):
+        got = None
+        for start, fname in spans:
+            if start <= n:
+                got = fname
+            else:
+                break
+        return got
+
+    def mask_fences(text):
+        """Blank fenced blocks but keep the line count, so offsets stay
+        aligned with the file on disk."""
+        out, inside = [], False
+        for line in text.splitlines():
+            if line.lstrip().startswith("```"):
+                inside = not inside
+                out.append("")
+            else:
+                out.append("" if inside else line)
+        return "\n".join(out)
+
+    # A negative lookbehind on a path character keeps `x/tools/check_all.py`
+    # from also matching at the `check_all` offset. The optional name is
+    # captured so the anonymous form can be reported with its own message
+    # rather than silently ignored.
+    cite = re.compile(
+        r"(?<![\w./\-])(?:tools/)?check_all\.py:"
+        r"(?:(check_[A-Za-z0-9_]+):)?(\d+)(?:-(\d+))?"
+    )
+    total = 0
+    ok = 0
+    anonymous = 0
+    files = 0
+    for p in sorted(glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True)):
+        rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
+        if rel.startswith(("docs/design-package/", ".claude/", "_inbox/")):
+            continue
+        files += 1
+        text = mask_fences(_utf8(p))
+        for m in cite.finditer(text):
+            lo = int(m.group(2))
+            hi = int(m.group(3) or m.group(2))
+            where = f"{rel}:{text[: m.start()].count(chr(10)) + 1} cites {m.group(0)}"
+            total += 1
+            n = len(py)
+            if not (1 <= lo <= n and 1 <= hi <= n and lo <= hi):
+                r.fail(f"{where}: check_all.py has {n} line(s)")
+                continue
+            fname = m.group(1)
+            if not fname:
+                anonymous += 1
+                r.fail(f"{where}: name the function too, like "
+                       f"check_all.py:check_payload_refs:{m.group(2)}")
+                continue
+            if fname not in defined:
+                r.fail(f"{where}: check_all.py defines no {fname}")
+                continue
+            f_lo, f_hi = enclosing(lo), enclosing(hi)
+            if f_lo != fname or f_hi != fname:
+                r.fail(f"{where}: lines {lo}-{hi} are inside "
+                       f"{f_lo or 'module top'} .. {f_hi or 'module top'}, not {fname}")
+                continue
+            ok += 1
+
+    r.note = (f"{total} check_all.py citation(s) across {files} md file(s); "
+              f"{ok}/{total} name the function that covers their range "
+              f"({anonymous} unnamed)")
+    return r
+
+
 
 
 CHECKS = [
@@ -2001,6 +2120,7 @@ CHECKS = [
     ("plantopics", check_plan_topics, "plans/*.md name declared topics and pair them with their own events"),
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("docsreadme", check_docs_readme, "docs/README.md's counts about its own directory match the files"),
+    ("citerefs", check_citerefs, "prose line citations land on real lines of the file they name"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
 
