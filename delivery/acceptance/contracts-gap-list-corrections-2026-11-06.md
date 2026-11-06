@@ -3375,6 +3375,39 @@ docs/02-service-catalog.md       inbox size=5426  (manifest 5426)  hash_ok=True
 
 ---
 
+## 16.27 这一轮扫了 9 个不变量都没有错，只有 `docs/01 §3` 确实没人守
+
+前面几节都是「找到一处不对称 → 加检查」。这一轮先做的是反向工作：**把「每个结构性事实是否只有一个来源、是否有人比对」挨个量一遍**，结论是没有新的缺陷，但量出了一张「谁在守、谁没在守」的表。记下来是为了下一轮不要再把这 9 项重跑一遍。
+
+| # | 不变量 | 怎么量的 | 结果 | 有检查守着吗 |
+|---|---|---|---|---|
+| 1 | `plans/<SID>-<slug>.md` 与 catalog 的 id、slug 一一对应 | 48 个 plan 文件名 vs 48 个 `service_id`/`slug` | 两边都 48，缺 0、多 0、slug 不匹配 0 | 无（`plans/README.md` 规定命名，无程序核） |
+| 2 | `services/*/service.md` 与 catalog slug 一一对应 | 目录名 vs `slug` | 两边都 48，差集双向为空 | `scaffold` 生成 `service.yaml`，但目录/`service.md` 存在性无核 |
+| 3 | `schema_owner` 唯一（AGENTS.md 禁止两服务共享权威） | 48 条值计数 | 48 个不同值，0 个被多服务共用 | 无 |
+| 4 | `deployment_unit` 唯一 | 同上 | 48 个不同值 | 无 |
+| 5 | `docs/01 §3` 唯一写者表 ↔ catalog `data_owner` | 10 行逐行取 id，展开 `S11–S15` 区间，比对 `data_owner` 文本 | 10 行 = 7 个单 id + 2 个多 id（`S04/S06`、`S11–S15`）+ 1 个 `Temporal`；字面 id 11 个，展开后 14 个，全部是真实服务；7 个单 id 行内容实质一致 | **无 —— 这是本节唯一确认的空洞** |
+| 6 | 所有文档里的 `S\d{2}` 引用都指向真实服务 | `docs/`、`plans/`、`contracts/*.md`、`services/*/service.md` 共 116 文件 | 引用到 48 个不同 id，未知 id **0** | 无 |
+| 7 | catalog `published_events` ↔ 生成物 `publishes:` 块 | 55 个事件逐服务比对 | 55 = 55，48 个服务无一不一致 | `scaffold` 覆盖（重跑后 `git status` 干净即证） |
+| 8 | catalog ↔ `openapi.v2.yaml` 的重叠路由 | 21 个 operation 解析出 method+path+`x-service-id` | 10 条重叠路由 owner 全一致，0 冲突；86 条 catalog 路由不在 openapi（该文件自述非全量） | 无，且**不需要**：§9 已专门分析过 openapi |
+| 9 | 每个 catalog 条目的 16 个字段非空、键集统一 | 48 条逐字段检查 | 全部非空，48 条键集完全相同 | `scaffold` 隐式覆盖 |
+
+**唯一值得动手的是第 5 项，而它仍然不该现在动手。** `docs/01 §3` 是「唯一权威」的第一来源，`catalog.data_owner` 是第二份。今天两边一致，但没有任何东西在比对——改一边不会红。加检查需要把中文事实名映射到字段，这是模糊匹配，误报率会很高；而 7 行单 id 里已经有 4 行（S04/S06、S11–S15、Temporal）是「范围 + 例外」写法，正则表达不了。**所以这里记事实，不加检查**：一个只能靠人工映射的比对写进 CI，只会让人开始忽略它的输出。
+
+**另外三项「看起来该加、实际不该加」，一并记下免得下一轮重试：**
+
+- **第 3、4 项（`schema_owner`/`deployment_unit` 唯一）**：语义上很硬，但今天 0 冲突，加一条「unique」检查只要两行。没加的理由是它和 `depends_on` 不同——`depends_on` 错一个 id 会让生成物指向不存在的服务，而 `schema_owner` 撞车只是两个服务写同一个 schema 名，**且服务还不存在、schema 还没建**。等骨架落地、`migrations/` 真的有表了再加才有意义。
+- **第 8 项（openapi 路由比对）**：`command_api` 用 `POST /change-plans/{id}:apply`，openapi 用 `POST /change-plans/{plan_id}/apply`——**这是同一动作的两种写法，不是两个动作**。把两者当同一事实比对会把 11 条全部报成冲突。真正的冲突判断需要「这两个路径是否语义等价」的人工结论，不是脚本能定的。
+- **`home_cell` 无 enum**：55 个 topic 的示例全是 `cell_a1`，`event-envelope.v2` 只收 `minLength: 1`。这是占位符，docs/03 说 cell 是租户被分配的，值域由控制面决定——**不是本仓该锁的**。
+
+**更正表。**
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 「26 个 id 全部存在」（第 5 项） | **字面 id 11 个，展开 `S11–S15` 后 14 个**；10 行 = 7 单 id + 2 多 id + 1 `Temporal` | **把「写了多少行、每行看着有几个 id」估成了总数。**表里有 10 行，但我把「行数 × 直觉每行 id 数」当成了 26。写「N 个 id」必须 `findall` 数一遍再报 |
+| 2 | （本轮唯一一次脚本报错）`int('S11')` 抛 `ValueError` | 探针 bug，已改 `int(x[1:])` | 区间展开要剥掉 `S` 前缀。**未进入任何报告数字**，记在这里只是因为同轮出现过 |
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。
+
 ## 16.26 `depends_on` 的 125 条边，此前一条都没校验
 
 **为什么查这个。** `check_catalog` 核了 `service_id` 去重、`docs/02` 镜像、topic 的 `producer` 与 `published_events`，唯独没碰 `depends_on`——`grep -n "depends_on" tools/check_all.py` 在改之前**零命中**。也就是说 48 份 catalog 条目里这 125 条边，唯一的「要求」是整个文件能被 `json.load`。
