@@ -902,6 +902,10 @@ README_CLAIMS = [
      "interactions", r"(\d+) step\(s\)"),
     ("interaction endpoint", r"(\d+) 个端点必须都是真实",
      "interactions", r"(\d+)/(\d+) endpoint\(s\)"),
+    ("plantopics plan file", r"`plans/\*\.md` 是设计散文，(\d+) 份方案里",
+     "plantopics", r"(\d+) plan file\(s\)"),
+    ("plantopics topic mention", r"`drama\.\*\.vN` 是注册表专属命名空间——(\d+) 处提及今天",
+     "plantopics", r"(\d+) topic mention\(s\)"),
 ]
 
 
@@ -1163,6 +1167,114 @@ def check_topic_fields(name):
     r.note = (f"{len(topics)} topic(s), {len(required)} required field(s); "
               f"{len(constant_claimed)} field(s) README calls constant, "
               f"max {worst} distinct value(s)")
+    return r
+
+
+def check_plan_topics(name):
+    """`plans/*.md` names only topics `event-topics.v2.json` declares, and pairs
+    each one with an event that topic actually carries.
+
+    Both mistakes below were found by hand in `plans/S47-realtime-projection.md`,
+    and nothing read plan prose for either:
+
+    - An undeclared topic name. `drama.*.vN` is the registry's namespace, and no
+      plan invents one -- every one of the 58 mentions names a declared topic, so
+      an unknown name here is a typo rather than a proposal. S47 had two:
+      `drama.connector-observations.v2` and `drama.review.v2`. Their `event_type`
+      and 来源 columns were right, so nothing else noticed.
+    - A topic paired with an event that belongs to a different topic. S47 had
+      `drama.model-registry.v2` beside `model.route.selected`; that event lives on
+      `drama.model-routing.v2`, with the same producer (S25) both ways -- which is
+      exactly why the 来源 column agreed while the topic did not.
+
+    Not checked, deliberately: event names the registry does not declare. As
+    backtick tokens they are indistinguishable from permission actions
+    (`asset.voice.authorize`, `platform.tenant.provision`), and plans legitimately
+    propose new events and say so in the same line (`S04` 「新增，待登记」, `S06`,
+    `S44`). Flagging them would be mostly noise -- measured at 276 hits, nearly all
+    actions. The three such rows in S47 are recorded in its own §11 (C47-12/13/14).
+
+    Scope is `plans/` alone. `delivery/` holds the corrections reports, which have
+    to be able to quote a wrong name verbatim to say what was wrong.
+    """
+    r = Result(name)
+    topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
+    declared = {t["event_type"] for t in topics}
+    events_of = {}
+    for t in topics:
+        events_of.setdefault(t["topic"], set()).add(t["event_type"])
+
+    topic_re = re.compile(r"\bdrama\.[a-z0-9-]+\.v\d+\b")
+    # `{1,4}` not `{2,4}`: two-part event names are real (`artifact.ingested`,
+    # `prompt.compiled`), and requiring three parts silently read their cells as
+    # empty -- S47's `artifact.ingested` looked unjudgeable for exactly that.
+    _EVENT_IN_CELL = re.compile(r"`([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*){1,4})`")
+    files = sorted(glob.glob(os.path.join(ROOT, "plans", "*.md")))
+    mentions = 0
+    undeclared = 0
+    pair_lines = 0
+    mispaired = 0
+    unjudgeable = []
+    for p in files:
+        rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
+        for lineno, line in enumerate(_utf8(p).splitlines(), 1):
+            named = [m.group(0) for m in topic_re.finditer(line)]
+            mentions += len(named)
+            for t in named:
+                if t not in events_of:
+                    undeclared += 1
+                    r.fail(f"{rel}:{lineno} names topic {t!r}, which "
+                           f"event-topics.v2.json does not declare")
+            known = [t for t in named if t in events_of]
+            if not known:
+                continue
+            # A pairing claim is structural, not textual: one table cell holding
+            # only the topic, the next cell holding only event names. Prose that
+            # mentions a topic and other services' events in the same sentence
+            # claims no pairing -- S43 C8 and S44 C8 are gap-table rows doing
+            # exactly that, and line-scoped matching read them as pairs.
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            bare = [c.strip("`") for c in cells]
+            # Plans put the topic on either side of the event (S47 topic-then-
+            # event, S29 event-then-topic), so both neighbours are candidates.
+            for i, cell in enumerate(bare):
+                if cell not in events_of:
+                    continue
+                paired = None
+                for j in (i - 1, i + 1):
+                    if 0 <= j < len(cells) and j != i:
+                        picked = [m.group(1) for m in _EVENT_IN_CELL.finditer(cells[j])]
+                        claim = [e for e in picked if e in declared]
+                        if claim:
+                            paired = (picked, claim)
+                            break
+                if paired is None:
+                    # Only worth reporting if a neighbour actually holds an
+                    # event-shaped token; otherwise this cell is prose.
+                    shaped = []
+                    for j in (i - 1, i + 1):
+                        if 0 <= j < len(cells):
+                            shaped += [m.group(1) for m in
+                                       _EVENT_IN_CELL.finditer(cells[j])
+                                       if "." in m.group(1)]
+                    if shaped:
+                        unjudgeable.append(f"{rel}:{lineno} {cell} -> {shaped}")
+                    continue
+                picked, claim = paired
+                pair_lines += 1
+                stray = [e for e in claim if e not in events_of[cell]]
+                if stray:
+                    mispaired += 1
+                    r.fail(f"{rel}:{lineno} pairs {cell!r} with {stray}; the "
+                           f"registry puts that event on "
+                           f"{sorted(t for t, ev in events_of.items() if set(stray) & ev)}")
+    r.note = (f"{len(files)} plan file(s), {mentions} topic mention(s); "
+              f"{mentions - undeclared}/{mentions} name a declared topic; "
+              f"{pair_lines - mispaired}/{pair_lines} topic->event pairing(s) "
+              f"agree with the registry")
+    if unjudgeable:
+        r.note += (f"; {len(unjudgeable)} pairing cell(s) name no declared event "
+                   f"and could not be judged: {', '.join(unjudgeable)}")
     return r
 
 
@@ -1608,6 +1720,7 @@ CHECKS = [
     ("archive", check_archive, "docs/design-package/ matches the checksums in its MANIFEST"),
     ("safety", check_safety_switches, "runtime-safety.yaml keeps every production switch off"),
     ("interactions", check_interactions, "service-interactions.yaml names real services, topics and authorities"),
+    ("plantopics", check_plan_topics, "plans/*.md name declared topics and pair them with their own events"),
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]

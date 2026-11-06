@@ -77,10 +77,10 @@ UI 上的动作按钮（暂停、取消、接受）应该直接打**对应业务
 | `drama.orchestration.v2` | `orchestration.run.state-changed` | run 主状态、节点进度 | S21 |
 | `drama.orchestration.v2` | `orchestration.node.state-changed` | 单节点进度（可节流） | S21 |
 | `drama.generation-jobs.v2` | `generation.job.state-changed` | 供应商任务状态（`aggregate_id = provider_job_id`） | S26 |
-| `drama.model-registry.v2` | `model.route.selected` | 走哪个模型（用于 UI 显示"由 X 生成"） | S25 |
-| `drama.connector-observations.v2` | `connector.observation.received` | 供应商观测（限流、配额水位） | S27 |
+| `drama.model-routing.v2` | `model.route.selected` | 走哪个模型（用于 UI 显示"由 X 生成"） | S25 |
+| `drama.provider-connectors.v2` | `connector.observation.received` | 供应商观测（限流、配额水位） | S27 |
 | `drama.artifact-ingest.v2` | `artifact.registered` / `artifact.deleted` | 制品可用性 | S28 |
-| `drama.review.v2` | `review.decision.recorded` | 审核状态 | S40 |
+| `drama.human-review.v2` | `review.decision.recorded` | 审核状态 | S40 |
 | `drama.delivery.v2` | `delivery.package.sealed` | 交付进度 | S43 |
 | `drama.developer-integration.v2` | `integration.command.accepted` | 外部调用列表 | S46 |
 | `drama.budget-ledger.v2` | `budget.reservation.settled` | **只用于"已花费"展示，带水位** | S23 |
@@ -1072,8 +1072,15 @@ S47 只写少量审计意图：
 | **C47-9** | S42 `C3`（段级渲染进度事件需与 S47 共同定义）仍未决 | S47 无法显示渲染进度条 | S42 + S47 共同定义 |
 | **C47-10** | 无"投影可重建"的验收标准（重建耗时、重建期间的行为） | `service.yaml` acceptance 说"投影可重建"但没有量化 | `docs/16` E 条目或 S47 SLO |
 | **C47-11** | `GET /runs/{run_id}/events` 在 openapi 的 `x-service-id` 是 S47（S21 方案 C21-4 已确认），但 `service.yaml` 的 `api` 声明与 openapi 的 operation 定义字段可能不一致 | SDK 生成可能归错服务 | 核对 `service.yaml` 与 openapi |
+| **C47-12** | §2.1 原先写消费 `orchestration.node.state-changed`，但 `event-topics.v2.json` 里 S21 只登记 `orchestration.run.state-changed` 一条（S21 方案 C21-5 写明"把全部信息塞进这一个事件的 `data`"） | §3.4 的"node 级进度 200ms 合并"没有可消费的事件 | S21 要么单列 node 事件，要么 §3.4 改按 run 事件的 `data.node_states[]` 合并 |
+| **C47-13** | §2.1 原先写消费 `artifact.registered` / `artifact.deleted`，注册表里 S28 只有 `artifact.ingested`（S28 方案 C28-3 写明 tombstone/派生完成/访问拒绝全部折叠进 `artifact.ingested`） | "制品可用性"投影拿不到删除事实 | S28 + `contracts/event-topics.v2.json` |
+| **C47-14** | §2.1 原先写消费 `budget.reservation.settled`，注册表里 `drama.budget-ledger.v2` 只登记 `finance.ledger.entry-posted`（S23 方案 §1180 写明"只发这一种 event_type"，耗尽/告警走 `data.entry_type` + `data.budget_after.state`） | "已花费"水位要靠解析 `data.entry_type` 才能得到 | `contracts/event-topics.v2.json` 或 §5.6 明说 S47 不投影金额 |
 
 **C47-1、C47-2、C47-4 是阻塞级。** C47-2 尤其危险——它不影响编译，只会在运行时静默失效。
+
+C47-12/13/14 是同一类：**§2.1 的表里写出的事件名，在注册表中不存在，也不在 S21/S28/S23 任一方案里出现过。**
+三份上游方案都明说"只发一个事件、其余语义折叠进 `data`"，所以这不是注册表漏登，是本方案的订阅面写得比上游实际发布的多。
+处理方式三种，需 owners 定：上游拆事件 / 本方案改按 `data` 字段合并 / 明说不投影该项。**在此之前 §2.1 那三行按现状保留，不改写成读不出来的东西。**
 
 ---
 

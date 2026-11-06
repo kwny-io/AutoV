@@ -1483,7 +1483,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-十八项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+十九项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
@@ -1520,11 +1520,23 @@ schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity
 → `S23`，`acquire_permit`/`confirm_dispatch_permit`/`release_confirmed_terminal_permit` → `S22`，
 `request_acceptance_CAS` → `S08`）——发错就是 AGENTS.md 禁止的「绕过 S23/S22 直接付费」；
 `paid_admission` 的 7 条先后约束必须符合 `plans/S22:516-527` 的七步，
-其中 `reserve_budget` 必须先于 `acquire_permit`）、`readme`（上面这段里的数必须还是各检查真跑出来的数）、
+其中 `reserve_budget` 必须先于 `acquire_permit`）、`plantopics`（`plans/*.md` 是设计散文，49 份方案里
+散着 topic 名，此前没有任何检查读它们。`drama.*.vN` 是注册表专属命名空间——58 处提及今天**全部**
+指向已声明 topic，所以这里出现未声明的名字就是打错，不是提议新增（S42/S44/S46/S48 的「建议新增事件」
+那些行引用的也都是已登记的 topic 名）。S47 有两处打错：`drama.connector-observations.v2`、
+`drama.review.v2`；同行的 `event_type` 和 `来源` 列都是对的，所以没有别的东西看得出来。
+第二条是**配对**：一个格子里只放 topic、相邻格子只放事件名时，那事件必须真在这个 topic 上。
+S47 把 `drama.model-registry.v2` 和 `model.route.selected` 配在一起，而那事件在
+`drama.model-routing.v2` 上——两边 producer 都是 S25，这正是 `来源` 列看起来没问题而 topic 错了的原因。
+不判的东西也说清楚：**未声明的事件名不判**。作为反引号 token 它和权限动作名
+（`asset.voice.authorize`、`platform.tenant.provision`）分不开，实测 276 处里绝大多数是动作；
+且方案本来就会提议新事件并当场写明（S04「新增，待登记」、S06、S44）。S47 的三条、
+S29 的一条这类「写了但注册表没有」的行，在各自方案的缺口表里都记着，这里只报**不可判**的数量）、
+`readme`（上面这段里的数必须还是各检查真跑出来的数）、
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「十八项检查」这个数等于 `--list` 真列出的条数；二是把本段里 17 个手敲的数字逐条和
+「十九项检查」这个数等于 `--list` 真列出的条数；二是把本段里 19 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1533,17 +1545,17 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 17 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
+那 19 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
 topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
-interaction step 18、interaction endpoint 36。
+interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过十八个方向（上面 17 个数各改 1，再加开头「十八」改成「十」），
-十八次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
+反向测过二十个方向（上面 19 个数各改 1，再加开头「十九」改成「十」），
+二十次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
 每一个方向都由脚本改一处、跑一遍、读 `readme` 的输出，不是靠记忆归纳的。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。

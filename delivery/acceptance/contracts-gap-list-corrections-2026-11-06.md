@@ -4538,3 +4538,84 @@ restored exit=0
 最后那行 `19` 是脚本把 baseline 也记进了结果列表，**真的探针是 18 个**——
 正文现在写的是 18，不是脚本打印的 19。这个差额本身也值得记一笔：
 读脚本输出时要把「基线」和「探针」分开数，不然会跟着脚本的分母一起错。
+
+### 补记十一：S47 订阅表里有三个话题名是凭空写的，另有一个 topic 配错
+
+`plans/S47-realtime-projection.md` §2.1 那张表的 10 行，逐行回注册表核过，
+**6 行对、4 行不对**。四行分两类：
+
+| 行 | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| L80 | topic `drama.model-registry.v2` 配事件 `model.route.selected` | topic `drama.model-routing.v2` | `model.route.selected` 属于 `drama.model-routing.v2`（producer S25）；而 `drama.model-registry.v2` 上的事件是 `model.capability.changed`（producer S24）。**两边 producer 都写 S25**，所以「来源」列看起来是对的，只有 topic 名错 |
+| L81 | topic `drama.connector-observations.v2` | `drama.provider-connectors.v2` | 注册表里没有前一个名字。`connector.observation.received` 的 producer 是 S27，`drama.provider-connectors.v2` 也归 S27，同行 event_type 与来源列都对 |
+| L83 | topic `drama.review.v2` | `drama.human-review.v2` | 同上：`review.decision.recorded` 的 producer 是 S40，`drama.human-review.v2` 归 S40 |
+| L78 / L82 / L86 | 事件 `orchestration.node.state-changed` / `artifact.registered`+`artifact.deleted` / `budget.reservation.settled` | 注册表里根本没有这三个事件 | 这三行的 topic 名是对的，错在**事件名**。三条都不是注册表漏登：S21 C21-5 明说「把全部信息塞进这一个事件的 `data`」、S28 C28-3 明说 tombstone/派生/访问拒绝全部折叠进 `artifact.ingested`、S23 §1180 明说「只发这一种 event_type」。**是 S47 的订阅面写得比上游实际发布的多** |
+
+前两行的错法是同一种：**同行另外两列都是对的，只有 topic 名不对**，
+所以 `catalog`、`interactions`、`payloads` 没有一条能看见它们——那些检查读的是
+`contracts/`，而错发生在散文里。`plans/` 下 `drama.*.vN` 提及改前 57 处，
+不在注册表的恰好就是这 2 处；把 `delivery/` 也算上是 76 处、仍是这 2 处。
+
+后三行没有就地改，因为改成什么要看 owners 决定，写进 §11 当 C47-12/13/14：
+上游拆事件 / 本方案改按 `data` 字段合并 / 明说不投影该项，三条路都行，但不能由我选。
+
+### 补记十一之二：加 `plantopics` 检查，把这类错变成自动可抓
+
+改完手核，先做了两件度量，再决定规则：
+
+```
+plans: 49 file(s), 58 drama.*.vN mentions, not in registry: 0
+lines naming both a declared topic and a declared event: 32
+   of those, the line's events all belong to some other topic: 1
+```
+
+（改前同一把量尺是 57 处 / 2 处不在注册表；58 是修完 S47 之后。这一行输出是修完跑的。）
+
+第一条度量证明 **`drama.*.vN` 这个命名空间没有「提议新增」的先例**——
+58 处提及全部落在已登记 topic 上，连「建议新增事件」的 S42/S44/S46/S48 缺口行引用的也是已登记 topic 名。
+所以这里出现未知名字是打错，不是提案，可以直接判红。
+
+第二条度量最初是按「整行」撮合的，抓到 2 处，全是误报：
+S43 C8 与 S44 C8 是缺口表行，一个格子里同时提到 topic 和别家服务的若干事件，不是配对声明。
+改成**结构判定**（一个格子只有 topic，相邻格子只有事件名）后，误报消失，可判格数 8。
+
+检查本身 4 个子句，各配一个探针：
+
+| # | 断言 | 探针 | 输出 |
+|---|---|---|---|
+| 1 | 提及数与方案文件数 | 塞一个空方案 | `50 plan file(s)`，`readme` 报 `README says 49 for plantopics plan file, plantopics says 50` |
+| 2 | 全部提及都指向已声明 topic | 塞 `drama.no-such-topic.v2` | `58/59 name a declared topic` |
+| 3 | topic→event 配对 | 塞 `drama.model-registry.v2` + `model.route.selected`（把真错重放一遍） | `8/9 ... agree`，且 `pairs 'drama.model-registry.v2' with ['model.route.selected']; the registry puts that event on ['drama.model-routing.v2']` |
+| 4 | 不可判格数 | 塞 `drama.orchestration.v2` + `not.a.real.event` | `5 pairing cell(s) name no declared event` |
+
+其中 3 号探针就是把补记十一那个真错原样放回去——这是这条检查唯一值得存在的理由。
+
+写这条检查时踩了三次坑，都记下来：
+
+- **第一版 note 打的是 `0/0 pairing(s) agree`。** 配对子句一次都没进去，却印成一个通过的 0/0。
+  原因：`re.finditer` 取的是 `m.group(0)`，而正则带反引号，取出来的字符串两侧带 `` ` ``，
+  永远不在 `declared` 里。
+  这是「note 在失败时不能读成绿的」第七次同族——判定逻辑没写，note 却有话说。
+- **`artifact.ingested` 只有两段**，正则写成 `{2,4}` 意味着两段事件名根本抓不到，
+  于是 S47:82 被判成「无法判断」。放宽到 `{1,4}`，并确认注册表里真有两个两段事件
+  （`artifact.ingested`、`prompt.compiled`）。
+- **S29:800 的列序是「事件在前、topic 在后」**，只往右看 miss 掉。改成左右邻居都试。
+
+放宽段数这一改也顺手把一个**假**的「不可判」换成了真的：S47:82 原先因为抓不到
+`artifact.ingested` 而被记成不可判；修完后它仍不可判，但理由变成事件名本身没登记
+（C47-13），那才是真原因。两次都叫「不可判」，含义不同。
+
+### 补记十一之三：README 正文里「42 份方案」是我刚写错的
+
+加完这格检查、把计数从 18 提到 19、数字清单从 17 条补到 19 条之后，
+在 `contracts/README.md` 里描述 `plantopics` 的那句话写的是「42 份方案里散着 topic 名」。
+`readme` 当场报：
+
+```
+FAIL  readme     1 problem(s)
+      README says 42 for plantopics plan file, plantopics says 49
+```
+
+42 不是我数出来的任何一个数，是凭「48 个服务、去掉几份」的印象填的。
+这正是补记十第三行那个毛病的第二次：**新写的陈述里的数字，也必须先跑一遍再落笔。**
+现在正文是 49，由 `readme` 对着 `plantopics` 的 note 核。
