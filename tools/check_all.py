@@ -2396,8 +2396,15 @@ def check_docrefs(name):
                 items[cur] = n
         docs[m.group(1)] = (heads, items)
 
+    # Lookbehind, not a leading `[^A-Za-z0-9_]` character class. The class
+    # matches the newline before a ref that starts its own line, so every such
+    # ref reported a line number one too small -- 30 of them did, including the
+    # only `docs/07 §3` in S07's 4.5 that is not preceded by prose. Lookbehind
+    # asserts the same boundary without consuming a character, so the reported
+    # line and the quoted text agree. Match set is identical either way; this
+    # is purely about the number in the failure message being the right line.
     ref = re.compile(
-        r"[^A-Za-z0-9_]docs[\s/](\d{1,2})\s*§\s*(\d+(?:\.\d+)*)"
+        r"(?<![A-Za-z0-9_])docs[\s/](\d{1,2})\s*§\s*(\d+(?:\.\d+)*)"
         r"((?:\s*(?:[/、,，]|[-–~])\s*§?\s*\d+(?:\.\d+)*)*)"
     )
     EXEMPT = {"delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md"}
