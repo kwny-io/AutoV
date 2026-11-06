@@ -417,11 +417,17 @@ def check_maturity(name):
     return r
 
 
-# The numbers contracts/README.md quotes in its check summary. They are
-# re-derived here rather than read from the note strings, because the note
-# strings are formatted for humans and change shape; these are what the prose
-# actually promises. Each entry is (label as README says it, regex over the
-# README summary paragraph, the check whose Result supplies the truth).
+# The numbers contracts/README.md quotes in its check summary, pinned to the
+# numbers the checks produce. Each entry is (label as README says it, regex
+# over the README summary paragraph, the check whose Result supplies the truth,
+# regex over that check's note).
+#
+# The note regexes are the coupling risk: they are matched against strings
+# formatted for a human reading `ok examples ...`, so rewording a check's note
+# breaks this check even though nothing is wrong. It fails loudly and says
+# which label it could not read, rather than silently skipping it, because a
+# count that quietly stops being compared is the exact failure this check exists
+# to prevent. If a note changes shape, update the regex here.
 README_CLAIMS = [
     ("JSON 解析", r"`json`（(\d+) 个 JSON 解析）", "json", r"(\d+) file"),
     ("schema_ref", r"`payloads`（(\d+) 条 `schema_ref`", "payloads", r"(\d+) schema ref"),
