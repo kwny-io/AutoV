@@ -804,6 +804,13 @@ def check_openapi_refs(name):
     A `$ref` whose value starts with `#` is a local pointer, and it must name a
     component this file defines under `components:`; 32 of the 43 point into 3
     components (Error / Operation / Run).
+
+    The same line scan also checks `x-service-id`, which nothing else read: 21
+    occurrences name 13 services, and a retyped id (`S2` for `S02`, or a service
+    that was renumbered out of the catalog) would have stayed green. It is not an
+    error for a catalog service to have no operation here -- this document is
+    explicit that it is "核心API设计，非完整48服务实现" -- so only the direction
+    that can be wrong is enforced.
     """
     r = Result(name)
     path = os.path.join(CONTRACTS, "openapi.v2.yaml")
@@ -851,11 +858,25 @@ def check_openapi_refs(name):
         if name not in defined:
             r.fail(f"$ref -> {v} names no component under components/schemas")
 
+    known = {s["service_id"]
+             for s in json.loads(_utf8(os.path.join(CONTRACTS, "service-catalog.v2.json")))["services"]}
+    svc = re.findall(r"x-service-id:\s*['\"]?([^'\"\s]+)", text)
+    unknown = sorted(set(svc) - known)
+    for v in unknown:
+        r.fail(f"x-service-id -> {v} is not a service_id in service-catalog.v2.json")
+
     # An operation with a request body or a 200 response but no schema at all is
     # not this check's business; count only what was resolved, so the note cannot
-    # be read as "N operations verified".
+    # be read as "N operations verified". Same reason the unresolvable id is
+    # subtracted below: on a failing run the raw distinct count would print a
+    # number that includes the bad value, and "14 catalog services" would be
+    # wrong about both the total and the membership.
+    resolved = len(set(svc)) - len(unknown)
     r.note = (f"{len(refs)} $ref occurrence(s), {len(external)} naming a file, "
-              f"{len(local)} local pointer(s) into {len(defined)} component(s)")
+              f"{len(local)} local pointer(s) into {len(defined)} component(s); "
+              f"{len(svc)} x-service-id naming {resolved} catalog service(s)")
+    if unknown:
+        r.note += f", {len(unknown)} not in the catalog"
     return r
 
 

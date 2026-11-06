@@ -4009,3 +4009,24 @@ note 报「0 local pointer(s)」。改成 `[^'\"\s]+` 后才是 32。
 
 同时 `README_CLAIMS` 加了第 10 条（`openapi file ref`），README 开头的「十一项检查」
 改「十二项检查」，检查段落里 10 个手敲数字里多一个 11。
+
+### 补记三：同一份文件里的 `x-service-id` 也没有人核过
+
+补记二把 `$ref` 补上了，但那只覆盖了这份 YAML 的一半。同一份文件里还有 21 处
+`x-service-id`，指名 13 个服务，`grep -rn x-service-id tools/` **零命中**——没有任何
+检查读过它。这和补记二开头写的是同一个毛病：改坏一个 `S26` → `S260`，十二项检查全绿。
+
+现在 `check_openapi_refs` 多核一条：每个 `x-service-id` 必须是
+`service-catalog.v2.json` 里的 `service_id`。只核这一个方向——文档里写了 35 个 catalog
+服务没出现，那不是错误，`openapi.v2.yaml` 第 5 行自己写着「非完整48服务实现」。
+
+| 探针 | 输出 |
+|---|---|
+| 把一处 `x-service-id: S26` 改成 `S260` | `FAIL openapi 1 problem(s)` / `x-service-id -> S260 is not a service_id in service-catalog.v2.json`，exit 1 |
+| 还原 | `ok openapi 43 … naming 13 catalog service(s)`，`git diff --stat` 空 |
+
+**探针顺手抓出 note 自己的一个错**：第一版失败时的 note 印的是
+`21 x-service-id naming 14 catalog service(s)`——`set(svc)` 把那个不存在的 `S260` 也算进
+"catalog service" 里了。数没错，标签错：它在失败状态下标了一个通过状态才成立的说法。
+现在 unresolvable 的从总数里减掉，失败时追加 `, 1 not in the catalog`。
+这正是本仓反复强调的那条：**没核过的东西不能读成绿的**，note 也一样。

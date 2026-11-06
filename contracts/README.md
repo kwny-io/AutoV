@@ -1487,7 +1487,8 @@ python tools/check_all.py --only links,examples
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
-`#/components/...` 本地指针，必须命中本文件 `components/schemas` 下定义的 3 个组件）、`checkids`（四份 QC 方案里 99 个
+`#/components/...` 本地指针，必须命中本文件 `components/schemas` 下定义的 3 个组件；21 处
+`x-service-id` 必须是 catalog 里的 48 个 `service_id` 之一，但 catalog 服务不必都在这份文档里出现——它自称「非完整48服务实现」）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1329 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
