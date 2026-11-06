@@ -950,9 +950,24 @@ README_CLAIMS = [
     ("citerefs citation", r"今天共 \*\*(\d+)\*\* 处引用", "citerefs", r"(\d+) check_all\.py citation"),
     ("planrefs ref", r"`planrefs`（[^）]*?今天共 \*\*(\d+)\*\* 处引用",
      "planrefs", r"^(\d+) ref\(s\)"),
-    ("planrefs judged", r"其中 \*\*(\d+)\*\* 处受检",
+    ("planrefs judged", r"`planrefs`（[^）]*?其中 \*\*(\d+)\*\* 处受检",
      "planrefs", r"\((\d+) judged\)"),
+    # `481 个段号对，481/481 命中`: the two 481s are different quantities that
+    # happen to be equal (pairs, and resolved pairs). These two rows pin the
+    # hits (before the slash) and the denominator (after it). Neither pins the
+    # leading `481 个段号对` -- that number is written into the pattern itself,
+    # so editing only it in the README would go unnoticed. Left that way
+    # deliberately: a third row matching the bare prefix would also match any
+    # other `481 个段号对` sentence anyone adds later.
     ("planrefs pair", r"481 个段号对，(\d+)/\d+ 命中", "planrefs", r"(\d+)/\d+ resolve"),
+    ("planrefs pair hit", r"481 个段号对，\d+/(\d+) 命中", "planrefs", r"(\d+)/\d+ resolve"),
+    # The two "其中 N 处受检" sentences differ only by their lead-in, so each
+    # claim is anchored on text unique to its own paragraph. Matching the bare
+    # phrase let planrefs' 467 be read as docrefs' value.
+    ("docrefs ref", r"`docrefs`（[^）]*?共 \*\*(\d+)\*\* 处引用", "docrefs", r"^(\d+) ref\(s\)"),
+    ("docrefs judged", r"`docrefs`（[^）]*?其中 \*\*(\d+)\*\* 处受检", "docrefs", r"\((\d+) judged\)"),
+    ("docrefs pair", r"(\d+) 个段号对：(\d+) 个命中标题", "docrefs",
+     r"(\d+) section pair\(s\).*?(\d+) resolve to a heading"),
 ]
 
 
@@ -1340,6 +1355,18 @@ KNOWN_DANGLING_REFS = {
     "SUB.CUE.VERSION",
     "SUB.LAYOUT.CPS_EXCEEDED",
     "SUB.TIMING.CPS",
+}
+
+# `docs/NN §X` refs that name no heading and are left for the owner, by the
+# same rule as KNOWN_DANGLING_REFS above: recorded, not silently allowed, and
+# the entry is itself a failure once the ref disappears or starts resolving.
+# `docs/10 §1` is here because docs/10 has no numbered heading at all -- one
+# `# 10` title and seven flat paragraphs -- so §1 can only mean "the first
+# paragraph", a form that appears nowhere else in the corpus and that neither
+# AGENTS.md nor any doc settles. Naming it as accepted would be this check
+# choosing a side in a decision that is the owner's.
+KNOWN_UNRESOLVED_DOCREFS = {
+    "plans/S31-speech-production.md:5 cites docs/10 §1",
 }
 
 # The plans that own a check_id prefix, and the prefix each owns. A cited id is
@@ -2281,6 +2308,162 @@ def check_planrefs(name):
 
 
 
+def check_docrefs(name):
+    """`docs/NN §X` names a heading in `docs/NN-*.md`.
+
+    The same family as `planrefs`, with one difference worth stating: these
+    refs are almost always markdown links, `[docs/07 §1.5](../docs/07-...)`,
+    so `links` already proves the path resolves. This settles the other half
+    -- that the section number exists -- which no other check looks at.
+
+    489 section pairs across 17 docs. They resolve three ways:
+      - 485 to a real heading;
+      - 3 as `<top section>.<ordered item>`, `docs/07 §1.5` meaning item 5 of
+        §1. That is the same convention the corpus writes out in full as
+        `docs/07 §1 步骤 5` (9 occurrences), and the text at that position is
+        the sentence the citing line quotes, checked by hand. It is accepted
+        as a list-item reference and counted separately in the note, not
+        silently folded into "resolved to a heading".
+      - 1 that names neither: `docs/10 §1`. docs/10 has no numbered heading at
+        all (one `# 10` title and seven flat paragraphs), so `§1` can only mean
+        "the first paragraph". That form appears exactly once in the corpus and
+        the paragraph it names is not the one whose sentence is quoted, so it
+        is not treated as a convention. It is reported as a failure with the
+        open-decision wording, the way `planrefs` reports `Snn §行号`: the
+        owner has not said paragraph numbering is legal, and this check does
+        not decide that for them.
+
+    Two heading-reading bugs were made and fixed while measuring, and both are
+    the same mistake -- requiring more punctuation than the corpus writes:
+      - requiring `.` or `、` after the number cost nothing measurable: every
+        one of the 64 numbered headings in docs/ uses `.`, so 0 of the 489
+        pairs change verdict under that reading. Kept in the record anyway,
+        because "it happened to cost nothing" is not the same as "it was
+        right", and the shipped pattern is the one that states the real rule.
+      - requiring a space after the number dropped `## 3.跨集改稿`, which puts
+        none, and made docs/07 appear to have no §3 -- 7 correct refs (all
+        `docs/07 §3`) then looked like misses.
+    The pattern accepts all three shapes: `1. X`, `1.X`, `1 X`.
+
+    A level-1 `# NN · title` is the document header, not a section, and is
+    skipped by its own regex. Without that, docs/01-09 carry a phantom §"01"
+    and docs/10, 17 -- which have a header and no numbered section at all --
+    would appear to have exactly one heading, which is the opposite of the
+    fact the `docs/10 §1` wording above depends on. No ref uses a
+    zero-padded section number today, so this closed a false-pass door that
+    was open but never walked through.
+
+    Scope matches `planrefs`: `docs/design-package/` (read-only archive),
+    `.claude/` (other sessions' worktrees) and `_inbox/` are skipped, and
+    fenced blocks are masked so a quoted wrong form does not count. The
+    corrections report is exempt by path for the same reason as there, and
+    its refs are still counted in the total, not in the judged count.
+    """
+    r = Result(name)
+
+    def mask(text):
+        inside = False
+        out = []
+        for line in text.split("\n"):
+            if line.lstrip().startswith("```"):
+                inside = not inside
+                out.append("")
+            else:
+                out.append("" if inside else line)
+        return "\n".join(out)
+
+    docs = {}
+    for p in sorted(glob.glob(os.path.join(ROOT, "docs", "*.md"))):
+        m = re.match(r"(\d{2})-", os.path.basename(p))
+        if not m:
+            continue
+        heads = set()
+        items = {}
+        cur = None
+        n = 0
+        for line in _utf8(p).split("\n"):
+            if re.match(r"^#\s+\d+\s*[·•]", line):
+                continue  # `# NN · title` is the doc header, not a section
+            h = re.match(r"^#{1,5}\s*(\d+(?:\.\d+)*)[.、]?\s*\S", line)
+            if h:
+                cur = h.group(1)
+                n = 0
+                heads.add(cur)
+                items.setdefault(cur, 0)
+                continue
+            if cur is not None and re.match(r"^\d+\.\s", line):
+                n += 1
+                items[cur] = n
+        docs[m.group(1)] = (heads, items)
+
+    ref = re.compile(
+        r"[^A-Za-z0-9_]docs[\s/](\d{1,2})\s*§\s*(\d+(?:\.\d+)*)"
+        r"((?:\s*(?:[/、,，]|[-–~])\s*§?\s*\d+(?:\.\d+)*)*)"
+    )
+    EXEMPT = {"delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md"}
+
+    refs = judged = exempt_refs = 0
+    heading = listitem = 0
+    unresolved = []
+    for p in sorted(glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True)):
+        rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
+        if rel.startswith(("docs/design-package/", ".claude/", "_inbox/")):
+            continue
+        text = mask(_utf8(p))
+        for m in ref.finditer(text):
+            n_this = 1
+            refs += 1
+            if rel in EXEMPT:
+                exempt_refs += 1
+                continue
+            judged += 1
+            num = m.group(1).zfill(2)
+            line = text[: m.start()].count("\n") + 1
+            heads, items = docs[num]
+            xs = [m.group(2)] + re.findall(r"\d+(?:\.\d+)*", m.group(3))
+            for x in xs:
+                if x in heads or any(h.startswith(x + ".") for h in heads):
+                    heading += 1
+                elif "." in x:
+                    top, sub = x.split(".", 1)
+                    if top in heads and sub.isdigit() and int(sub) <= items.get(top, 0):
+                        listitem += 1
+                    else:
+                        unresolved.append(
+                            f"{rel}:{line} cites docs/{num} §{x}: docs/{num}-*.md "
+                            f"has no such heading or list item")
+                else:
+                    base = f"{rel}:{line} cites docs/{num} §{x}"
+                    unresolved.append((base,
+                        base + f": docs/{num}-*.md has no §{x}"
+                        + ("" if heads else
+                           f" (it has no numbered heading at all, so this can "
+                           f"only mean paragraph {x}; that form is not "
+                           f"established in this corpus and is an open owner "
+                           f"decision, like `Snn §行号`)")))
+    known_seen = set()
+    for key, msg in unresolved:
+        if key in KNOWN_UNRESOLVED_DOCREFS:
+            known_seen.add(key)
+            continue
+        r.fail(msg)
+    for k in sorted(KNOWN_UNRESOLVED_DOCREFS - known_seen):
+        r.fail(f"{k!r} is in KNOWN_UNRESOLVED_DOCREFS but no longer appears "
+               f"unresolved; remove the entry")
+
+    # heading + listitem + unresolved must equal the judged pair count, or the
+    # note reports a fraction whose denominator does not cover its parts --
+    # the same trap `planrefs` fell into by omitting the exempt refs.
+    r.note = (f"{refs} ref(s) ({judged} judged), "
+              f"{heading + listitem + len(unresolved)} section pair(s) across "
+              f"{len(docs)} doc file(s); {heading} resolve to a heading, "
+              f"{listitem} to an ordered list item, {len(unresolved)} resolve "
+              f"to neither; {exempt_refs} ref(s) in the corrections report not "
+              f"judged")
+    return r
+
+
+
 CHECKS = [
     ("json", check_json, "every contracts/**.json parses"),
     ("payloads", check_payload_refs, "every topic schema_ref/data_schema_ref names a real file"),
@@ -2303,6 +2486,7 @@ CHECKS = [
     ("docsreadme", check_docs_readme, "docs/README.md's counts about its own directory match the files"),
     ("citerefs", check_citerefs, "prose line citations land on real lines of the file they name"),
     ("planrefs", check_planrefs, "Snn §X in prose names a heading in plans/Snn-*.md"),
+    ("docrefs", check_docrefs, "docs/NN §X in prose names a heading in docs/NN-*.md"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
 

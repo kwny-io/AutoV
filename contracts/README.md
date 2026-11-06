@@ -1483,7 +1483,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-二十二项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+二十三项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
@@ -1544,7 +1544,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 另外 6 个数当时都是对的，这正是要补检查的理由——6 个对的和 1 个错的花在同一段里，
 读起来像一段校对过的文字）、
 `citerefs`（正文里引用 `check_all.py` 行号的地方，必须**连函数名一起写**，如
-`check_all.py:check_payload_refs:1366-1376`，且那个函数确实覆盖这几行；扫 139 个 md，
+`check_all.py:check_payload_refs:1383-1422`，且那个函数确实覆盖这几行；扫 139 个 md，
 今天共 **8** 处引用、8 处都指名。
 补这一格的理由是本轮实测到的：一批引用早已漂进**旁边的**函数里，而文件长度还够，任何只看
 「行号存在」的检查都会放过它们；其中一处就在本文件的 `links` 那一格里，是描述 `payloads`
@@ -1561,10 +1561,20 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 它的更正表故意把错误写法放进单元格，而没有任何词法特征能把它和活引用分开，实测过两种都不成立
 （遮行内代码会连 11 处真引用一起遮掉，遮 `「」` 又漏掉反引号里的那一处）。
 这是真缺口：报告之外的错引用会被拦住，报告里的不会。）、
+`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **465** 处引用，其中 **445** 处受检，
+489 个段号对：485 个命中标题、3 个命中有序列表项、1 个两样都不是（见下）。
+和 `planrefs` 同一族，但这类引用**几乎都写在 markdown 链接里**（`[docs/07 §1.5](../docs/07-…)`），
+路径由 `links` 验，这里只验段号——此前没有任何检查看这一段。
+`§N.M` 有两种落法：标题 `## N.M`，或者 §N 之下第 M 个有序列表项。后者是 `docs/07 §1.5` 的写法，
+语料里另有 9 处把它写全成 `docs/07 §1 步骤 5`，且那个位置正是引用行所引的句子，手工核过。
+**不判的一条**：`docs/10` 的 §1 单列为 `KNOWN_UNRESOLVED_DOCREFS`——docs/10 没有任何编号标题
+（一个 `# 10` 加七段平铺文字），`§1` 只能指「第 1 段」，而这种写法全仓只有这一处，
+既不写进检查也不替 owner 认下来。它和 `KNOWN_DANGLING_REFS` 一样：条目本身也会 FAIL——
+引用消失或开始能解析时，要求把条目删掉，免得清单变成永久静音。）、
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「二十二项检查」这个数等于 `--list` 真列出的条数；二是把本段里 28 个手敲的数字逐条和
+「二十三项检查」这个数等于 `--list` 真列出的条数；二是把本段里 32 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1573,20 +1583,21 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 28 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
+那 32 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
 topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
 plantopics unjudged tokens 720、plantopics filename tokens 239、
 plantopics versioned-doc tokens 60、plantopics event-or-action tokens 421、docsreadme count 9、
-citerefs citation 8、planrefs ref 502、planrefs judged 467、planrefs pair 481。
+citerefs citation 8、planrefs ref 502、planrefs judged 467、planrefs pair 481、planrefs pair hit 481、
+docrefs ref 465、docrefs judged 445、docrefs pair 489。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过二十八个方向（上面 28 个数各改 1），
-二十八次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
+反向测过三十二个方向（上面 32 个数各改 1），
+三十二次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
 每一个方向都由脚本改一处、跑一遍、读 `readme` 的输出，不是靠记忆归纳的。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
@@ -1621,7 +1632,7 @@ S38:241 的正文缩写，是三处已知悬空引用，列在 `KNOWN_DANGLING_R
 `links` 的只读存档条数（存档是冻结的，数它没有意义）、
 passed/skipped 的拆分（数据文件一落地就变）。
 
-二十二项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
+二十三项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
 结尾那行会把通过的项数减掉它，再把 `1 skipped (registry): nothing was verified there`
 单列在后面（具体几项随检查增减，以 `--list` 为准，不在这里写死——写死过两次，每次加检查就过期），
 那一格自己的状态也打成 `skip` 而不是 `ok`。这条和「一项没跑成不能读成绿灯」是同一条原则，
@@ -1824,7 +1835,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `contracts/**/*.json` 6 处（`execution-context` 5、`automation-policy` 1）。
    其中 6 个的唯一引用入口就是那 11 条 YAML。
 
-   `payloads` 检查只做正向：topic 指到的文件必须存在（`check_all.py:check_payload_refs:1366-1376`）。
+   `payloads` 检查只做正向：topic 指到的文件必须存在（`check_all.py:check_payload_refs:1383-1422`）。
    **反向那一半没有**——从不问「`contracts/` 下有没有 schema 没被任何 topic 指到」，
    所以这 8 个一直没人报。**`openapi.v2.yaml` 的 `$ref` 更是完全没有检查**：
    全仓只对它数过几个 `get:` / `post:`，把 11 条 `$ref` 里任意一条改成不存在的文件名，

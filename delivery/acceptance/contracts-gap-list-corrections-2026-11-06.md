@@ -3907,7 +3907,7 @@ YAML 那 11 处逐条：
 | 接口的请求/响应体 | 8 | `openapi.v2.yaml` 11 处 + 别的 schema 6 处，全部被引用 |
 
 **`check_payload_refs` 只查正向，查不出这个。** 它遍历 55 个 topic、把 `schema_ref` /
-`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:check_payload_refs:1366-1376`），
+`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:check_payload_refs:1383-1422`），
 从不反向问「contracts/ 下有没有哪个 schema 没被任何 topic 指到」。两个方向里缺了反向那一个，
 所以上面那个 8 从来没人报过，它也就一直被那行说明文字盖着。
 
@@ -3926,7 +3926,7 @@ YAML 那 11 处逐条：
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
 | 1 | 本节初稿「`contracts/*.schema.json` 有 63 个 payload schema，而 README 说 55 个，差 8 个」 | 63 里 55 个是 payload、8 个是接口的请求/响应体；被 topic 引用的共 56 个（多出的 1 个是 envelope）。两个数都没错，错的是把 64 个归成一类 | 先数了「文件数减 envelope」，再拿它直接和「payload schema 数」比。**两个口径的数相减之前，要先确认它们是不是同一类东西** |
-| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:check_payload_refs:1366-1376`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
+| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:check_payload_refs:1383-1422`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
 | 3 | 本节初稿「`execution-context` 被 13 个 JSON 引用、`episode-manifest` 被 16 个引用」 | 文件名被提到的次数是 **11** 和 **6**；`memory-claim` 是 **0**（只被 S16 方案与一个 example 用到）。但这仍是「提到」，不是「`$ref`」，见第 5 行 | 13 / 16 是上一轮 `grep -rl` 的**文件命中数**（含 md 与自引用），不是 `contracts/**/*.json` 里的引用数。两个口径混用了一次 |
 | 4 | 本节初稿「55 个 payload schema 全是过去分词或事件名词」 | 末段分布里 `ready` 有 8 个（形容词），`prompt.compiled` 的末段还带点号；只能说"绝大多数是过去分词" | 先下了"全是"这个强判断，再去找例子印证。**枚举类判断必须先数分布再写程度词** |
 | 5 | 上一轮修正后写「被别的 schema 用 `$ref` 挂着」并给出 11 / 6 / 3 / 3 / 2 / 2 / 1 / 0 | **真正 `$ref` 进去的只有 2 个目标文件**：`execution-context` 与 `automation-policy`，其余 6 个一条都没有。那 11/6/3… 是「文件正文里提到该文件名的次数」，多数是 `description` 里写「与 `episode-manifest` 的 `accepted_artifact_ref` 完全相同」这类散文对照 | **数引用边必须解析 JSON 取 `$ref` 的值，不能在原文里搜文件名。** 上一轮的更正已经指出过「两个口径混用」，我却把同一类错误又犯了一次：换成"数引用"这个动作，用的还是字符串搜索 |
@@ -3938,7 +3938,7 @@ YAML 那 11 处逐条：
 ### 补记：让 `payloads` 的绿说出这个数
 
 上面写了「`check_payload_refs` 只查正向，所以这 8 个从来没人报过」。把反向那一半补成**报数**
-（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:check_payload_refs:1366-1376`）
+（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:check_payload_refs:1383-1422`）
 现在顺带算一遍 `contracts/*.schema.json` 里没有出现在任何 topic 的 `schema_ref` /
 `data_schema_ref` 上的文件：
 
@@ -4948,7 +4948,7 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 | `99999` / `0` / 跨两个函数 / 反向区间 | FAIL，各自报自己的话 |
 
 漏掉的两条都是「漂进了旁边的 `check_*`」——**这恰恰是真实发生的那种错**。
-所以判定标准改成：**引用必须带函数名**，`check_all.py:check_payload_refs:1366-1376`，
+所以判定标准改成：**引用必须带函数名**，`check_all.py:check_payload_refs:1383-1422`，
 并核对该函数确实覆盖整个区间；匿名行号直接 FAIL，不给后门（注释里写明「别为了让
 陈旧数字通过而削弱它——数字才是错的那一半」）。
 
@@ -5222,3 +5222,94 @@ pointer」，是事件消费侧；§3.1 讲的是状态机本身。S19 引用它
 第 28 条 `README_CLAIMS`（`planrefs judged`）。
 **教训：一个检查报的数和一句话说的量不是一个东西。** 豁免/跳过/未判的条目从分母里剔除之后，
 剩下的那个数不能再用「共」来叙述——否则漏判越多，「共」就越小，看着越干净。
+
+### 补记十一之十七：`docs/NN §X` 补了同一族的检查，另有一条留给 owner
+
+`planrefs` 管的是方案引方案。同一族的另一半是文档引文档：`docs/NN §X` 共 **457** 处
+（`docrefs` 落地后含 README 自己新增的 3 处），其中 **445** 处受检，余下 12 处在豁免的更正报告里。
+这类引用和 `planrefs` 有一个结构差别：**它们几乎都写在 markdown 链接里**
+（`[docs/07 §1.5](../docs/07-production-workflows.md)`），路径由 `links` 验，所以这里只需要验段号——
+而在此之前，没有任何检查看这一段。
+
+**489 个段号对，485 个命中标题，3 个命中有序列表项，1 个两样都不是。**
+
+`§N.M` 有两种合法落法，这是回表核出来的，不是假设：一是标题 `## N.M`；二是 `§N` 之下第 M 个
+有序列表项——`plans/S37-audio-alignment.md:359` 的 `docs/07 §1.5` 就是这种，docs/07 的 §1 只有
+`## 1. 整集生产` 一个标题，下面 9 个编号项，第 5 项原文是「S21扩展shot子工作流，S31配音与
+S37字级对齐确定对白长度……不创建空音频假成功」，正是引用行引的那句。语料里另有 9 处把它写全成
+`docs/07 §1 步骤 5`。**同一种东西的两种写法**，都接受，且分开计数。
+
+**唯一没解决的是 `docs/10 §1`**（`plans/S31-speech-production.md:5`）。docs/10 没有任何编号标题——
+一个 `# 10` 加七段平铺文字。所以 `§1` 只能指「第 1 段」，而引号里那句「授权撤销事件禁止新调用」
+实际在第 5 段，**指代也不精确**。这种写法全仓只有这一处，既不足以立成约定，也不该由检查替 owner
+裁掉。按 `checkids` 的 `KNOWN_DANGLING_REFS` 同样的办法单列进 `KNOWN_UNRESOLVED_DOCREFS`：
+条目本身也会 FAIL，引用消失或开始能解析时要求删除条目——**免得清单变成永久静音**。
+这一条和 `Snn §行号` 是同一个待决问题：段落序号算不算合法引用形式，owner 没说过。
+
+**两个标题读法的 bug 都是同一个毛病——要求了语料里并不写的标点。** 第一次要求编号后必须有 `.`
+或 `、`；第二次要求编号后必须有空格，漏掉 `## 3.跨集改稿`（点号后直接接字），docs/07 看起来
+根本没有 §3，**7 个 `docs/07 §3` 的引用因此全被误判成未命中**（`plans/S07-change-management.md`
+37 / 655 / 1128、`plans/S09-lineage-impact.md:623`、`plans/S16-story-memory.md:154`、
+`plans/S31-speech-production.md` 5 / 411——脚本按两个读法分别解析 489 个段号对，逐条 diff 出来的）。
+`planrefs` 那边已经踩过第二种，这里是同一课的第二遍：**判据要覆盖语料实际写法，而不是我以为的写法。**
+
+定稿时回表复测第一个 bug，**它其实一处也没漏**：docs/ 的 64 个编号标题全写成 `## 1. 标题`，
+没有一个是「编号 + 空格」。所以那个方向是**为了对的理由改了、但没有可测的后果**——记下来，
+因为「碰巧没代价」不等于「它是对的」，而这也正是它当时没被单独抓出来的原因。
+同时补了一处同一族的假通过口子：`# NN · 标题` 是文档题头，不是小节，原先被读成 §"01"。
+今天没有引用写成 `§07`，这扇门开着但没人走过；不关的话，docs/10、17 这种「有题头、
+无编号标题」的文档会被认为恰好有一个标题，正好把上面 `docs/10 §1` 的判词变成反话。
+
+变异测试三个方向，全部报错：把 `docs/10 §1` 改成 `§7`（新引用被抓，且 known 条目因失效被要求删除）、
+把 `plans/S21-orchestration.md` 的 `docs/01 §3` 改成 `§9`（正确引用改错被抓）、
+删掉 known 条目（要求补回）。
+
+**定稿自查又抓到三处，都是我自己这一轮写下的：**
+
+| 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 本节上段 | 第一个标题 bug「漏掉 `## 2.1 从命令派生`（那里是空格），7 个正确引用被误判」 | 那个标题只存在于 `plans/S25-model-routing.md:54`，不在 docs/；第一个 bug 实测影响 **0** 个段号对。7 是**第二个** bug（`## 3.跨集改稿`）的数字 | 把这个 bug 的叙述挪到了另一个 bug 上，并给了一个不在语料里的例子——**「7 个」是真的，索性就没去核它属于谁** |
+| `check_all.py` 的 `check_docrefs` docstring | 「486 section pairs…484 to a heading」 | 489 pairs / 485 heading / 3 listitem / 1 neither | 计数写在函数写完之前，之后又加了两条新引用，docstring 没跟着改 |
+| `contracts/README.md` 的 `docrefs` 段与枚举列表 | `docrefs ref` 457 | 463 | 457 是**这一节还没写进来时**的数；本节的 6 条新引用（原 12 条 → 18 条）把总数抬到 463，只改了 note 没改 README |
+| `contracts/README.md:1556` | **误判为** `482/481 命中` 是 README 的错 | HEAD 上是 `481/481`，README 没错 | 停掉变异脚本时它正好把该行改成 482/481，并发的检查读到中间态。**判定之前先 `git show HEAD` 核一遍**，别把别人文件被临时改写当成内容错误 |
+
+其中第二条要更正一次判断：**README 里的 `481/481` 一直是对的**，我看到 482 是因为停掉一个
+还在跑的变异脚本时它恰好把这一行改成了 `482/481`，而检查读到了那个中间态。用 `git show HEAD` 核过，
+HEAD 上是 481/481。**不是 README 错，是我的读数错。**
+
+但它留下一个真结论：`planrefs pair` 那条 `README_CLAIMS` 只取了 `(\d+)/\d+ 命中` 的**分子**，
+分母没有任何东西在核。那次 `482/481` 全绿，正是因为分母比对缺失——**一个 101% 的比值可以整轮通过**。
+已加 `planrefs pair hit` 一条（`README_CLAIMS` 31 → 32），把分母钉到同一个 note 上——
+原 `planrefs pair` 取的是斜杠**前**的命中数，新条目取斜杠**后**的分母，两条合起来才覆盖 `N/M 命中`。
+`481 个段号对` 这个前缀仍写在正则里、没有第三行核它：那会让任何新写的 `481 个段号对` 句子一起命中。
+这也是「读到别人的中间态会同时伪造错误和掩盖错误」的一次实例。
+
+**同一格还有一处：`planrefs pair hit` 的注释把分子分母写反了。** 我写的是「新条目把分母钉住」，
+但两个正则分别是 `481 个段号对，(\d+)/\d+` 和 `481 个段号对，\d+/(\d+)`——前者抓斜杠前（命中数），
+后者抓斜杠后（分母）。分工已改正。同时记下一个**明知而留的缺口**：`481 个段号对` 这个前缀写在
+正则字面里，改它不会 FAIL；加第三行去核它，会让之后任何人写的 `481 个段号对` 句子一并命中。
+留缺口比留误报好，但要写下来，免得下一轮当成「已经核过了」。
+
+**反向测试 32 个方向，32 个全部被抓到**（`tmp-rev32.py`，每个方向只改 README 摘要段里对应的那一个
+数字 +1，跑一次全量检查，看 `readme` 是否 FAIL，改完立即还原）：
+
+```
+caught  JSON 解析 148->149      caught  planrefs ref 502->503
+caught  schema_ref 110->111     caught  planrefs judged 467->468
+caught  payload topic 55->56    caught  planrefs pair 481->482
+caught  openapi file ref 11->12 caught  planrefs pair hit 481->482
+caught  topic field 10->11      caught  docrefs ref 465->466
+caught  secret class 6->7       caught  docrefs judged 445->446
+caught  MCP tool 12->13         caught  docrefs pair 489->490
+caught  check_id 99->100        caught  docsreadme count 9->10
+caught  links 1330->1331        caught  citerefs citation 8->9
+caught  stated invariant 5->6   caught  plantopics 五项(49/58/720/239/60/421)
+caught  scaffold 118->119       caught  interaction 两项(18/36)
+caught  example 71->72          caught  archive match 51->52
+caught  unmapped example 1->2   caught  safety provider 8->9
+
+32 direction(s), 32 caught, 0 missed
+```
+
+这一轮开始前 README 已经写着「三十一次全部被抓到」，但那 31 个方向的后台测试是我自己中途停掉的，
+**没跑完就写了结论**。现在 32 个方向全部实跑过，那句话才有依据。
