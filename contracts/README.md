@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 45 个 topic 带**（10 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 46 个 topic 带**（9 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -110,6 +110,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `asset.scene.revision.accepted` | `asset.scene-revision-accepted.v2.schema.json` | S13 §5.3 |
 | `asset.prop.revision.accepted` | `asset.prop-revision-accepted.v2.schema.json` | S14 §5.3 |
 | `asset.character.revision.accepted` | `asset.character-revision-accepted.v2.schema.json` | S11 §5.3 |
+| `asset.costume.revision.accepted` | `asset.costume-revision-accepted.v2.schema.json` | S12 §5.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -1257,6 +1258,78 @@ envelope 侧 10 条负例全部被拒；正例 12 条（payload 11 + 信封 1）
 所以把 `source` 改成 `S14`、把 `type` 改成任意主题名、把 `traceparent` 写成垃圾串，两层校验都
 放行。本仓信封不钉生产者与主题的对应关系。
 
+### `asset.costume-revision-accepted.v2.schema.json`：为一个「必须发出去」的键，事件只发了三分之二
+
+S12 §5.3 行 530 写得斩钉截铁：「`variant_axes` 必须发出去。否则订阅方（S17 的期望状态校验）
+不知道『这一版支持哪些破损档』，就只能猜。」而行 522 的事件示例给的是
+`{"damage":[...],"wetness":[...]}`——两轴。§1.3 行 84–86 声明的是三轴，第三轴是 `makeup`
+（`natural` / `evening` / `injured_smudged`）；`variant_manifest` 的 DDL 注释（行 157）与 §4.1
+的起草命令（行 379）也都是三轴；§4.3 行 447 的读响应回显更是带 `makeup` 的。**事件是本服务
+唯一一处只发两轴的地方。** 一个为消除猜测而加的字段，在它自己身上制造了一次猜测（CCA-2）。
+
+**被点名要读它的 S17 对它和 `costume` 双双零命中。** `plans/S17-continuity.md`（532 行）全文
+对 `variant_axes`、`costume`、`asset.costume.revision.accepted` 的命中均为 **0**，且没有订阅表
+（对 `订阅` 的命中为 0）。它 §7.3 行 434 的视觉状态检查第二步是「从 S10 取 canonical 变体：
+S11 的角色外观 + S12 的服装 + S14 的道具」——**经过 S10**。而 S10 明说 `variant_selector` 由
+owner 解释、自己不知道变体叫什么（S10 行 224 / 252 / 829），所以走 S10 也拿不到「这一版支持
+哪些轴」。全仓对 `asset.costume.revision.accepted` 的命中 **3 处，全部在 S12 自己的方案里**。
+
+**九处把 `S33/S34` 当身份质检来源，而它们是音效生产与 BGM 制作。** 行 234 / 422 / 665 / 681 /
+686 / 697 六处字面 `S33/S34`，另有行 204 / 320 / 615 三处裸 `S33`，合计 **9 行**（资产族四篇合计
+25 行：S12 九、S14 八、S11 六、S13 二）。`service-catalog.v2.json`
+里 S33 是 `音效生产`、S34 是 `BGM与音乐`（DESIGN.md 行 159–160 同），两篇方案对 `costume` 的
+命中均为 0。改成真正做视觉质检的 S35/S36 **也接不上**：`QCReport v2` 的 `required` 里有顶层
+`shot_ref`（S35 行 195–203，定义在行 326–334 且四键全必填、`additionalProperties:false`），
+一张服装资产图没有 `shot_id` 也没有 `node_epoch`，过不了这个 schema；S35 与 S36 两篇方案对
+「入库」的命中也都是 **0**。于是 `costume_revision.quality_gate_ref`（行 162，`NOT NULL`）与
+`policy_auto` 的硬门（行 409–412）在当前文档树里**没有可执行的产出方**（CCA-1）。
+
+**两个判据在全仓各只出现一次。** `identity_invariance_check` 只出现在行 411 的事务伪代码里，
+`costume_candidate`（行 229–240）没有这一列，取值只见过 `'pass'`；`IDENTITY_CHANGED` 只出现在
+行 640 的 E24-C2，不在 S35/S36 任一份 check 表里——S36 行 187 的真实 id 是
+`VIS.IDENTITY.FACE_SWAP_WITHIN_SHOT`（`blocker`）。所以这条质量门在两个方向上都没有可执行的
+定义：判据读一个不存在的东西，断言产出一个不存在的 id（CCA-5）。
+
+**`unverified_refs` 四处提到、零处定义元素形状。** 行 391 / 479 / 523 / 537 都提它，没有一处
+说它长什么样；`costume_revision` 的 16 列里没有它，`costume_candidate` 里也没有——它只活在
+事件与 HTTP 响应里，接受事务之后不可回查。与之对应的表叫 `revision_reference`（§2.6 行 267）
+是另一个名字。声明的消解方 S14 对 `unverified_refs` 的命中是 **0**，于是「允许悬空 + 事后消解」
+这条折中在生产侧发出去、在消费者侧不存在（CCA-3）。
+
+**10 个 revision 列不进事件，`unverified_refs` 这种无列派生值占了一个键位。** `costume_revision`
+16 列（行 149–164），事件 8 键（行 517–524）：缺席的是 `payload` / `outfit` / `material_palette` /
+`accessories` / `variant_manifest` / `source_kind` / `parent_revision` / `quality_gate_ref` /
+`accepted_at` / `accepted_by`；事件另有 6 键不是 revision 列（`costume_ref` 折叠四列、
+`character_ref` 与 `costume_kind` 来自 `costume` 表、`became_canonical` 与 `canonical_revision`
+来自 `canonical_pointer`、`unverified_refs` 无来源表）。这个折算是合法的——事件是通知不是镜像
+——但 `decision_kind`（行 249 的真三值 CHECK）不进事件，于是「这一版凭什么成了权威」在
+`became_canonical=true` 里看不见，而 `policy_auto` 溜过去正是最需要被看见的那种成法（CCA-4）。
+
+逐键收窄的依据：`costume_kind` 收四值 `enum`（行 118–119 是真 CHECK）、`costume_ref.content_hash`
+收 64 位小写 hex（行 152 `char(64)` + 行 166 `costr_hash_len`）、`revision` 收 `minimum: 1`
+（行 151 真 CHECK）、`became_canonical=true` 时 `canonical_revision` 不许为 `null`（行 128 的
+`canonical_within_head` 只给上界，这条 if/then 是本 schema 的补充判断）。**`variant_axes` 的键
+与值都不收 `enum`**（行 158 只有注释、无 CHECK；§11.2 行 704 把「变体轴是否全局固定」列为未决并
+选「可扩展」），`source_kind` 的四值 CHECK（行 160）不在事件里所以无从收，`rights_ref` 与
+`unverified_refs` 都只收结构——前者全文无键集（行 159 只有 `jsonb NOT NULL`），后者连元素
+形状都没有。
+
+本文件 `x-needs-owner` 六条、`x-conflicts` 七条（CCA-1..CCA-7）。探针实测 89 条、0 失败：
+payload 侧 68 条负例（7 个必填各缺一次；根与 `costume_ref` 各多一个键；`costume_ref` 四子键
+各缺一次；`costume_ref.service_id` 给 `S1` / `s12`，`id` 给空串，`revision` 给 0/-1/1.5/字符串
+/`true`，`content_hash` 给 3 字符/63 位/65 位/大写/非 hex/`null`；`character_ref` 给缺键、
+多键、空 id、`S111`、字符串；`costume_kind` 给六种非法值；`became_canonical` 给字符串/数字/
+`null`；`canonical_revision` 给 0 与 `became_canonical=true` 两组合；`variant_axes` 给空对象/
+空数组/非数组/空串/重复值/数字/`null`；`unverified_refs` 给 `{}` 元素/字符串元素/`null`/对象；
+`rights_ref` 给 `{}`/`null`/字符串；`schema_version` 给 `1.0` 或缺键）全部被拒；envelope 侧
+5 条负例全部被拒；正例 16 条（payload 15 + 信封 1）全过，其中关键的是四组「不选边」形态放行
+——`character_ref` 给 `null`、`variant_axes` 带第三个未声明轴（`makeup`）或未列名的轴名/取值、
+`unverified_refs` 任一开对象元素、`rights_ref` 任意两键。
+
+一条**已知漏检**，与 S11 / S13 / S14 四条同源：信封对 `source`/`type`/`traceparent` 都只收非空
+字符串，所以把 `source` 改成 `S11`、把 `type` 改成任意主题名、把 `traceparent` 写成垃圾串，两层
+校验都放行。本仓信封不钉生产者与主题的对应关系。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -1354,7 +1427,7 @@ service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
                                         └──data_schema_ref──▶ 45 个 payload schema
-                                                              （见上表；其余 10 个 envelope-only）
+                                                              （见上表；其余 9 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1367,11 +1440,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（128 个 JSON 解析）、`payloads`（100 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 45 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（130 个 JSON 解析）、`payloads`（101 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 46 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（61 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（62 个示例对
 schema 校验，另 1 个刻意不映射）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

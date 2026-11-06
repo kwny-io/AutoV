@@ -84,6 +84,7 @@ SCHEMA_OF = {
     "asset-scene-revision-accepted": "event-envelope.v2.schema.json",
     "asset-prop-revision-accepted": "event-envelope.v2.schema.json",
     "asset-character-revision-accepted": "event-envelope.v2.schema.json",
+    "asset-costume-revision-accepted": "event-envelope.v2.schema.json",
     "breakdown-revision-created": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }

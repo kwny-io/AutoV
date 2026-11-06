@@ -137,6 +137,7 @@
       "topic": "drama.costume-assets.v2",
       "producer": "S12",
       "schema_ref": "event-envelope.v2.schema.json",
+      "data_schema_ref": "asset.costume-revision-accepted.v2.schema.json",
       "partition_key": "tenant_id:aggregate_id",
       "delivery": "at_least_once",
       "normal_retention_days": 14,

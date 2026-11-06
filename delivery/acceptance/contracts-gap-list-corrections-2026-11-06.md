@@ -612,3 +612,124 @@ envelope 负例 10/10、envelope 正例 1/1，**FAILS = 0**。
 
 ---
 
+
+---
+
+## 13. S12 这一轮：`variant_axes` 自己就没发全，而点名读它的订阅方零命中
+
+S12 是本轮最省事的一篇——`plans/S12-costume-assets.md` 708 行，§5.3 的事件示例把 8 个键
+逐行列了出来，`costume_revision` 的 DDL 也把 16 列列齐了。所以「事件发了什么、没发什么」
+可以纯脚本比对，不需要推。结果是：**键集可以对上，但方案自己给出的理由对不上。**
+
+### 13.1 修正第 12 轮留下的一条数
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | §12.1 第 8 条（`CRC-6` 的 `why_it_matters`） | 「S14 七处、S12 **六处**、S11 五处、S13 两处」 | **S12 九（6 对 + 3 单）、S14 八（7 对 + 1 单）、S11 六（5 对 + 1 单）、S13 二（2 对，无单写），合计 25** | 那四个数里，S11 是上一轮刚把「成对 + 裸」双口径改正过的，另外三个都是从 `git grep -F "S33/S34"` 的命中数抄来的**成对口径**。本轮逐篇扫，S12 另有行 204 / 320 / 615 三处单写 `S33`，**S14 有行 571、S11 有行 537** 各一处单写——四篇里三篇被漏数。**同一个错在同一份报告里刚改完一次，紧接着又在其他三篇上犯了一遍** |
+
+`CRC-6` 正文里的四个数我**没有改**（那是 S11 那份 schema 的 `x-conflicts`）；本节这一行是
+本轮逐篇实测的口径，后续若统一，以本行为准。
+
+
+### 13.2 本轮脚本输出（不沿用第 12.4 节的中间结果）
+
+```
+S12 S33/S34 相关行
+  total lines mentioning S33 or S34 : 9
+  literal "S33/S34"             : 6  [234, 422, 665, 681, 686, 697]
+  bare S33 not in the pair       : 3  [204, 320, 615]
+
+costume      112–126 : 12 data columns
+costume_revision 148–164 : 16 data columns
+event data keys 517–524  : 8
+  ['costume_ref','character_ref','costume_kind','became_canonical',
+   'canonical_revision','variant_axes','unverified_refs','rights_ref']
+
+revision columns not carried by the event : 10
+  ['payload','outfit','material_palette','accessories','variant_manifest',
+   'source_kind','parent_revision','quality_gate_ref','accepted_at','accepted_by']
+event-only keys (not a revision column)    : 6
+  ['costume_ref','character_ref','costume_kind','became_canonical',
+   'canonical_revision','unverified_refs']
+
+axes declared in §1.3 (行 84–86) : 3  ['damage','wetness','makeup']
+axes in event example (行 522)   : 2  ['damage','wetness']
+```
+
+全仓单次出现（`git grep -F`）：
+
+```
+identity_invariance_check  ->  1 处（plans/S12-costume-assets.md:411）
+IDENTITY_CHANGED           ->  1 处（plans/S12-costume-assets.md:640）
+asset.costume.revision.accepted -> 3 处，全部在 plans/S12-costume-assets.md（418 / 511 / 683）
+unverified_refs 在 plans/S14-prop-assets.md -> 0
+variant_axes   在 plans/S17-continuity.md   -> 0
+costume        在 plans/S17-continuity.md   -> 0
+costume        在 plans/S33-sound-effects.md / plans/S34-music.md -> 0 / 0
+入库           在 plans/S35-technical-qc.md / plans/S36-semantic-qc.md -> 0 / 0
+UNIQUE (…aggregate…) 形态的 outbox DDL 行（48 篇方案逐一扫）
+  36 篇：UNIQUE (aggregate_id, aggregate_sequence|aggregate_seq, event_type)  无 tenant_id
+   2 篇：UNIQUE (tenant_id, aggregate_id, aggregate_seq)                     S03:366 / S04:366
+  10 篇：没有这张表的 DDL 行，无法判定（S07 S09 S16 S17 S21 S27 S41 S42 S43 S44）
+inbox PRIMARY KEY (consumer, event_id)：35 篇，无一带 tenant_id（另 13 篇无此 DDL 行）
+```
+
+这一轮的计数与第 12.4 节的关系（同一个恒等式，两边各加 1）：
+
+```
+topics total          = 55          （不变）
+with data_schema_ref  = 46          （45 + 1，本轮加了 costume）
+envelope-only         =  9          （10 − 1）
+payload refs          = 101         （100 + 1）
+
+contracts/**/*.json        = 130   （128 + 2：1 schema + 1 example）
+contracts/*.schema.json    =  55   （ 54 + 1，新 schema 落在根级）
+contracts/**/*.schema.json =  62   （ 61 + 1）
+contracts/examples/*.json  =  63   （ 62 + 1）
+
+130 − 55 = 75,   63 + 12 = 75   ✓
+```
+
+`links` 仍是 1321——新增的 README 小节与本节都没引入新的相对链接。
+
+### 13.3 本轮改了哪些文件
+
+| 文件 | 动作 |
+|---|---|
+| `contracts/asset.costume-revision-accepted.v2.schema.json` | 新增。8 个载荷键，`x-needs-owner` 6 条、`x-conflicts` 7 条（CCA-1..CCA-7） |
+| `contracts/examples/asset-costume-revision-accepted.json` | 新增。按 §5.3 行 507–528 的示例补上 `data.schema_version`（全仓统一约定），两个 hash 用 `hashlib` 生成（`assert len==64`） |
+| `contracts/event-topics.v2.json` | `asset.costume.revision.accepted` 加 `data_schema_ref`，位置紧随 `schema_ref`（与相邻四项同形） |
+| `tools/validate/validate_examples.py` | `SCHEMA_OF` 加 `asset-costume-revision-accepted` |
+| `contracts/README.md` | 线表加一行；第 61 行 45/10 → 46/9；三条关系图与入口说明里的 45→46、10→9、128→130、100→101、61→62；`asset.character` 小节之后新增 S12 小节 |
+| `delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md` | 本节 |
+
+### 13.4 本轮发现的问题（都写进了 schema 的 `x-conflicts`，不在这里选边）
+
+七条里有三条是资产族共有的，不是 S12 独有：
+
+- **`S33/S34` 当质检（CCA-1）**——资产族四篇都错，合计 25 行（S12 九、S14 八、S11 六、S13 二）。**改编号修不好**：S35/S36 的
+  `QCReport v2` 要求顶层 `shot_ref`，资产图没有 `shot_id`/`node_epoch`，过不了 schema。所以
+  `quality_gate_ref`（`NOT NULL`）在今天没有可执行的产出方。
+- **canonical 在零事件下移动（CCA-4）**——`:set-canonical` 不产生 revision 也不产生事件，
+  而 `decision_kind` / `prior_canonical` 从不进事件。S11 / S13 / S14 / S12 四个服务同一形状。
+- **outbox 唯一键不含 `tenant_id`（CCA-6）**——§2 开头那句「所有表的主键/唯一约束含
+  `tenant_id`（E28）」在 36 篇方案里对 outbox 不成立、在 S03 / S04 两篇成立。规则句与模板从源头
+  就不一致，而且今天已经有两种落地。
+
+S12 独有的四条：`variant_axes` 少一轴（CCA-2）、`unverified_refs` 无形状且消解方零命中
+（CCA-3）、两个判据全仓各只出现一次（CCA-5）、`canonical_revision=null` 的规则只在散文里
+（CCA-7）。
+
+### 13.5 探针
+
+`_tmp_probe_s12.py`（已删，输出记在此处）：89 条，payload 负例 68、payload 正例 15、
+envelope 负例 5、envelope 正例 1，**failures = 0**。正例里 4 条是刻意的「不选边」放行：
+`character_ref=null`、`variant_axes` 带未声明的第三轴或未列名的轴名/取值、
+`unverified_refs` 任一开对象、`rights_ref` 任意两键。这四条都不是疏漏——它们正是
+schema 拒绝替 owner 决定的那几处。
+
+与 S11 / S13 / S14 同源的一条已知漏检仍未消除：信封对 `source`/`type`/`traceparent` 只收
+非空字符串，两层校验都放行生产者与主题不匹配的实例。
+
+`python tools/check_all.py` 九项全过：`json 130`、`payloads 101 / 46`、`checkids 99`、
+`links 1321`、`catalog 48 / 55`、`families 14`、`scaffold 120`、`examples 62`、`registry` 跳过。
