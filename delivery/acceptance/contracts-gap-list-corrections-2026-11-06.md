@@ -4863,3 +4863,47 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 |---|---|---|
 | `cells 240 mismatch 144` | 三列 144 格 0 mismatch；两列映射双射 | 用中文显示名比英文 slug，且 `schema` 比到了 `data_owner` |
 | `scaffold` 漏检 `service.md` | 已逐字节比对，4/4 探针全中 | 探针判定按 `/` 匹配 Windows 的 `\` 路径 |
+
+### 补记十一之十一：`links` 自己承认的「意外」边界，改成断言了
+
+`check_links` 的 docstring 原本写着：`glob("**/*.md")` 不进点目录，**这恰好**排除了
+`.claude/worktrees/`（别的会话的检出），但「这是 `glob` 的副产品，不是决定」。
+
+那句话本身是对的，问题在于它是**唯一的记录**：它写在 docstring 里，没有代码保证。
+哪天某个工具在 `.cache/` 或 `.vscode/` 或 `.claude/` 根下放一个 md，`links` 会静默跳过它，
+而 note 里那个链接总数**看起来仍然是「全仓的都算了」**。这正是本模块反复踩的
+「数了一个子集，措辞像全体」。
+
+连走的边界都量过，`glob` 是完整的：
+
+| 范围 | md 数 |
+|---|---|
+| `os.walk` 全树，去掉 `.git` | 1236 |
+| `glob("**/*.md")` | 268 |
+| 差集 | 968 |
+| 差的这 968 个在哪 | 全部在 `.claude/worktrees/` 下（`.claude` 之外的点目录一个都没有） |
+| `.claude/worktrees/` 之外、`glob` 与 `walk` 的差集 | 0 |
+
+于是把「意外」提成断言：`check_links` 现在另外走一遍 `os.walk`，凡是被 `glob` 漏掉、
+又不在 `.claude/worktrees/` 下的 md，直接 `fail`。note 也带上这三个数
+（`1236 md walked, 968 hidden by dot-dirs (968 under .claude/worktrees/, 0 elsewhere)`），
+分母写出来，就不再靠读者相信。
+
+四个方向的探针，每个都让 note 或判定变化：
+
+| 制造的情况 | 结果 |
+|---|---|
+| 什么都不藏（基线） | ok，0 failure |
+| `.cache/notes.md`（点目录、非 worktrees） | FAIL：`.cache/notes.md: hidden from the glob by a dot-directory…` |
+| `.vscode/todo.md` | FAIL，两个文件同时报 |
+| `.claude/settings-notes.md`（在 `.claude` 下但不在 worktrees） | FAIL，三个文件同时报 |
+| 全部删除后 | 恢复 0 failure，note 回到 `0 elsewhere` |
+
+最后一条是关键：`.claude/` **整棵**都不能豁免，只有 `.claude/worktrees/` 可以——
+因为 `.claude/` 根下将来可能放本仓自己的 markdown（技能、agent 定义），那些是本检出内容，
+被藏起来就是漏检。
+
+`contracts/README.md` 里 `links` 那一格同步补了这条断言（原文只写「1330 条相对链接全部可达」
+和存档跳过，没说点目录这件事）。`readme` 的提取正则不受影响，仍取到 1330。
+
+本轮无既有错误，纯属补一处「检查自己在注释里承认没有保证」的缺口。

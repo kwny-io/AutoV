@@ -110,7 +110,9 @@ def check_links(name):
     - `glob("**/*.md")` does not descend into dot-directories. That happens to
       exclude `.claude/worktrees/` -- other sessions' checkouts, which are not
       this checkout's content -- but it is an accident of the glob, not a
-      decision. `_tmp`-style scratch directories would also hide there.
+      decision. So the loop below walks the tree separately and requires every
+      md the glob missed to be under `.claude/worktrees/`; anything else hidden
+      in a dot-directory fails instead of going unread.
     """
     r = Result(name)
     fence = re.compile(r"```.*?```", re.S)
@@ -157,10 +159,32 @@ def check_links(name):
             if not os.path.exists(os.path.normpath(os.path.join(base, target))):
                 line = text[: m.start()].count("\n") + 1
                 r.fail(f"{rel}:{line} -> {target}")
+    # What the glob could not see, counted rather than assumed. A dot-directory
+    # is skipped by `glob("**/*.md")`; that is only acceptable for
+    # `.claude/worktrees/` (other sessions' checkouts). Anywhere else, an md
+    # would sit unchecked and read as covered.
+    scanned = {os.path.relpath(p, ROOT).replace(os.sep, "/")
+               for p in glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True)}
+    walked = set()
+    for dirpath, _, filenames in os.walk(ROOT):
+        rel_dir = os.path.relpath(dirpath, ROOT).replace(os.sep, "/")
+        if rel_dir == ".git" or rel_dir.startswith(".git/"):
+            continue
+        for fn in filenames:
+            if fn.endswith(".md"):
+                walked.add(os.path.relpath(os.path.join(dirpath, fn), ROOT).replace(os.sep, "/"))
+    hidden = walked - scanned
+    stray = sorted(h for h in hidden if not h.startswith(".claude/worktrees/"))
+    for h in stray:
+        r.fail(f"{h}: hidden from the glob by a dot-directory, so its links "
+               f"are unchecked (only .claude/worktrees/ may hide)")
+
     r.note = (f"{total} local link(s)"
               f"; docs/design-package/ ({skipped_files} md, {skipped_links} link(s)) "
               f"is read-only archive, not checked"
-              + (f" -- {len(skipped_broken)} broken there" if skipped_broken else ""))
+              + (f" -- {len(skipped_broken)} broken there" if skipped_broken else "")
+              + f"; {len(walked)} md walked, {len(hidden)} hidden by dot-dirs "
+                f"({len(hidden) - len(stray)} under .claude/worktrees/, {len(stray)} elsewhere)")
     return r
 
 

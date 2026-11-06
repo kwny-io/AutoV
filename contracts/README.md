@@ -1497,7 +1497,9 @@ topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 
 `len(tools)`：12 个工具的 `readOnlyHint` 必须与 `required_scope` 在只读/写入上一致、
 `required` 的键必须在 `properties` 里、3 处跨文件 `$ref` 必须指向真实 schema；6 个 scope
 取值只报不判——`publish` 不在 `docs/13` 的五档闭集内是授权决策，见缺口 2）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1330 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1330 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数；
+还走遍全树核对「有多少 md 被 `glob` 藏起来」——点目录里只允许 `.claude/worktrees/` 里的 md 不被扫，
+别处出现一个就报错，此前这是 `glob` 的副作用而非断言）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
