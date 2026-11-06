@@ -1486,7 +1486,8 @@ python tools/check_all.py --only links,examples
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1321 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
-（服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
+（服务 id / topic `producer` / `published_events` / `docs/02` 五列镜像 / `depends_on`
+指向 一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
 schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity` 与 `services/*/src/`
 里到底有没有代码一致）、`readme`（上面这段里的数必须还是各检查真跑出来的数）、
