@@ -1929,3 +1929,16 @@ grep -rn "README L[0-9]\|README 行 [0-9]" contracts/ docs/ plans/ delivery/ too
 十分钟前我刚错过一次。现在这条也进了这一轮的核对清单。
 
 九项仍全过；`scaffold` 仍 120 个生成物一致（这次只改了两份 schema 的描述文字，未碰生成物）。
+
+**这一节自己又犯了一次。**改 #1 的时候我写的是「README 行 1477 已改成…」——在同一节里
+刚说完「行号引用在同一个提交里就会烂」，转头又给了一个裸行号。这一轮核验发现后改成不带行号的
+「README 里 `check_all` 那一节已改成…」。**立完规矩当轮就用它扫一遍自己写的字**，不是下一轮。
+
+现在全仓只剩一处按行号引 README 的：`continuity.check-completed.v2.schema.json` 的
+`README 行 132–136`。它只改行号、不改被引内容就没事，所以留着；复查命令：
+
+```
+grep -rn "README 行 [0-9]\|README L[0-9]" contracts/ docs/ plans/ delivery/ tools/
+```
+
+预期只剩这一条（外加本报告里引它当证据的两行）。
