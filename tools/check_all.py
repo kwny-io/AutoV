@@ -41,13 +41,29 @@ CONTRACTS = os.path.join(ROOT, "contracts")
 
 
 class Result:
+    """One check's outcome.
+
+    `skipped` is for a check that is wired up and correct but had nothing to act
+    on: `registry` with no data file, for instance. It is not a failure (there is
+    nothing wrong with the repo) and it is not a pass either — nothing was
+    verified. The distinction has to survive into the summary line, because
+    "{N} check(s) passed" that counts a no-op check as passed is exactly the
+    "a check that did not run must never read as green" failure this module's
+    docstring warns about.
+    """
+
     def __init__(self, name):
         self.name = name
         self.failures = []
         self.note = ""
+        self.skipped = False
 
     def fail(self, msg):
         self.failures.append(msg)
+
+    def skip(self, why):
+        self.skipped = True
+        self.note = why
 
 
 def _utf8(path):
@@ -394,7 +410,7 @@ def check_registry(name):
     r = Result(name)
     path = os.path.join(CONTRACTS, "quality", "check-registry.v2.json")
     if not os.path.exists(path):
-        r.note = "no check-registry.v2.json yet; nothing to validate"
+        r.skip("no check-registry.v2.json yet; nothing to validate")
         return r
     spec = importlib.util.spec_from_file_location(
         "validate_registry", os.path.join(CONTRACTS, "quality", "validate_registry.py")
@@ -534,6 +550,7 @@ def main():
 
     env_problem = False
     failed = False
+    skipped = []
     for name, fn, desc in selected:
         try:
             r = fn(name)
@@ -548,6 +565,9 @@ def main():
                 print(f"        {f}")
             if len(r.failures) > 20:
                 print(f"        ... and {len(r.failures) - 20} more")
+        elif r.skipped:
+            skipped.append(name)
+            print(f"skip  {name:10} {r.note}")
         else:
             print(f"ok    {name:10} {r.note}")
 
@@ -557,7 +577,14 @@ def main():
         return 2
     if failed:
         return 1
-    print(f"{len(selected)} check(s) passed")
+    # A skipped check verified nothing, so it is not counted as passed. Saying
+    # "10 check(s) passed" while one of the ten never executed is the same
+    # over-claim as a stale docstring promising broader coverage than it has.
+    ran = len(selected) - len(skipped)
+    line = f"{ran} check(s) passed"
+    if skipped:
+        line += f", {len(skipped)} skipped ({', '.join(skipped)}): nothing was verified there"
+    print(line)
     return 0
 
 

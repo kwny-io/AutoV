@@ -2561,3 +2561,87 @@ contracts/examples/quality-technical-completed.json 3  qc_01J9Z4Q2K7M3N8P5R1S6T0
 | 3 | §16.13 owner 决定 #3 的括号 | 「对上 4 个示例值就会红」 | 前半句对（4 个示例、10 处确实超大写字面），但缺「且它们会被 qc-report.v2 校验」这个前提 | 同 #2；数字对、结论跳步 |
 
 十项仍全过。
+
+### 16.18 `registry` 那格什么都没跑，却和其他九格一起算进「十项全过」
+
+§16.16 加了第十项检查后，我一路写「十项全过」。这一轮重读输出才发现第十项是这么打印的：
+
+```
+ok    registry   no check-registry.v2.json yet; nothing to validate
+...
+10 check(s) passed
+```
+
+`ok` 加上「计进 passed」，而那一格**一个断言都没执行**。`tools/check_all.py` 自己的模块
+docstring 第 13–15 行写的就是反面：
+
+```
+Exit 0 = every check passed. Exit 1 = at least one failed. Exit 2 = a check
+could not run (missing dependency, missing file), distinct from "found a
+problem", because a check that did not run must never read as green.
+```
+
+这是同一条原则的第三种形态，前两种都处理了：跑挂了 → `ERROR` + exit 2，
+发现问题 → `FAIL` + exit 1。**没有东西可跑**这一种没处理，默认落进了 `else` 分支的 `ok`。
+
+#### 为什么这不是措辞问题
+
+`contracts/README.md` 同一节里有一段专门讲这件事，讲的是 `families`：
+
+> 那第 5 条…归 `registry` 那格；而那个数据文件至今不存在，`registry` 只打印
+> 「no check-registry.v2.json yet」。也就是说**第 5 条今天一次都没执行过**，
+> 写「5 条 invariant」会让这一格读起来比实际覆盖得更多。
+
+README 用一整段说明「别把没执行的算成覆盖」，而它上面十行的摘要行正把没执行的那格
+算成通过。同一个文件，隔了不到二十行。
+
+#### 改法与负向测试
+
+`Result` 新增 `skipped` 标志和一个 `skip(why)` 方法；`check_registry` 在没有数据文件时
+调 `skip`；`main()` 分开统计并单独打印。现在的结尾是：
+
+```
+skip  registry   no check-registry.v2.json yet; nothing to validate
+
+9 check(s) passed, 1 skipped (registry): nothing was verified there
+```
+
+退出码仍是 **0**——仓库没坏，这是「没东西可跑」，不是「没跑成」（后者是 exit 2）。
+三态区分保持：0 = 没发现问题，1 = 有问题，2 = 某项没跑成。
+
+负向测试（写了临时 registry 文件、跑 `--only registry`、删掉）：
+
+```
+--- A. no data file ---
+    skip  registry   no check-registry.v2.json yet; nothing to validate
+    0 check(s) passed, 1 skipped (registry): nothing was verified there
+
+--- B. one conforming entry ---
+    ok    registry   contracts/quality/check-registry.v2.json
+    1 check(s) passed                  ← skip 转成了真 ok，不再是 skip
+
+--- D. allowed_actions 里塞 human_review ---
+    FAIL  registry   1 problem(s)
+            registry rejected at load time
+    1 problem(s)                       ← 真错误仍然是 FAIL，没被 skip 吞掉
+```
+
+B 关键：文件一存在，`skip` 就变成会计数的 `ok`，说明这个标志是**状态**不是**豁免**。
+
+（探针自己前两版不合法，被 schema 拒掉：`check_id` 写成三段 `TECH.PROBE_OK`，
+pattern 要求 `^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$`，即至少三段；
+`window_scope` 写成了对象，schema 里是 7 个枚举字符串之一，`window_max_frames` 是同级
+的另一个 required 字段。改对之后才有上面 B。这两次失败恰好说明 schema 层在真干活。）
+
+#### 由此带来的变化
+
+`contracts/README.md` 三处：摘要行「十项检查」那段补了 `9 passed / 1 skipped` 的说明、
+`families` 那段的「只打印 no check-registry.v2.json yet」改成「打的是 `skip` 不是 `ok`」、
+末段「报还没有文件而不是失败」改成「报 `skip`（不是失败，也不是通过）」。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | §16.16 结尾、§16.17 结尾 | 「十项全过」 | **9 过 1 跳过**：`registry` 没有数据文件，一格都没校验 | **把「这个检查没报错」当成「这个检查通过了」。**`check_all` 的三态里原本只区分了「失败」和「没跑成」，`main()` 的 `else` 分支把「没东西可跑」也收进了 `ok`；我读的是那行绿字，没看它在检查什么 |
+| 2 | `tools/check_all.py` / `check_registry` docstring | 「reports "not present" rather than failing」 | 保留这半句，并说明它现在通过 `skip()` 表达、不计入 passed | 原 docstring 描述的是行为，但没提这个行为会让摘要行多算一票 |
+
+十项里 9 项真跑过、1 项没有。

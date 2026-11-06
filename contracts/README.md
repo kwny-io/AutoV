@@ -1491,6 +1491,12 @@ python tools/check_all.py --only links,examples
 schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity` 与 `services/*/src/`
 里到底有没有代码一致）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
+十项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
+结尾那行现在是 `9 check(s) passed, 1 skipped (registry): nothing was verified there`，
+那一格自己的状态也打成 `skip` 而不是 `ok`。这条和「一项没跑成不能读成绿灯」是同一条原则，
+只是形态不同——前者是跑失败了，这里是没东西可跑。按旧写法「十项全过」会把一个空转的格子
+算成一票通过，而这个文件里恰好有一段（下一节）在说 `families` 那第 5 条一次都没执行过。
+
 `maturity` 这一格是后补的，补之前那两句话没有任何东西在核：本文件开头的 README 说
 「所有服务的 `maturity` 均为 `design_only`」，而 `maturity` 的值是 `scaffold` 从 catalog
 照抄的——它说的是**编 catalog 的人当时的意图**，不是磁盘上的事实。两边都可能歪：代码先到而
@@ -1504,8 +1510,8 @@ README 与目录不符）。
 `families` 为什么是 4 条而不是 5 条：那第 5 条（`registry entries MUST NOT name an action
 outside families[defect_type].chain ∪ {fallback}`）说的是**登记项**，只能对着
 `check-registry.v2.json` 才能判，所以它归 `registry` 那格；而那个数据文件至今不存在，
-`registry` 只打印「no check-registry.v2.json yet」。也就是说第 5 条今天一次都没执行过，
-写「5 条 invariant」会让这一格读起来比实际覆盖得更多。
+`registry` 打的是 `skip` 不是 `ok`，结尾也不把它算进 `passed`。也就是说第 5 条今天一次都没
+执行过，写「5 条 invariant」会让这一格读起来比实际覆盖得更多。
 
 `examples` 这一格的数一直随加示例往上走，所以比别的格更容易过期：这里曾经写 63、写 66，
 而磁盘上已经是 71 校验 + 1 无 schema = 72 个文件。数法固定为校验器自己打印的那句
@@ -1529,7 +1535,7 @@ outside families[defect_type].chain ∪ {fallback}`）说的是**登记项**，�
 
 写这个入口之前，这些检查是几条各自为政的命令，没人一起跑，也就等于「族校验必须在加载期
 自动执行」这句话没有执行入口——校验器只有在被调用时才约束任何东西。
-`registry` 这一项现在报「还没有文件」而不是失败，因为 99 条 check 的字段确实还没补齐
+`registry` 这一项现在报 `skip`（不是失败，也不是通过），因为 99 条 check 的字段确实还没补齐
 （缺口 4）；文件一落地，加载期校验立刻生效，不需要再接线。
 
 `checkids` 里三条 `TECH.*_FRAME` 走白名单放行——改名要动 `E24-T4/T5` 验收项，是 S35
