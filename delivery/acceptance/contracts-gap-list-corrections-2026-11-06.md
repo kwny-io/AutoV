@@ -3300,10 +3300,9 @@ content columns carrying catalog data: 4
 | 2 | 本节标题与正文「**五行**内容」 | **四列**内容（ID 是键），拆成 5 项比对、共 240 项 | 把表头列数当成了受检项数。表头 5 列里 `ID` 是查找键不是被比对的内容；而「服务」一列同时装名称与链接，拆成两个字段。**列数 ≠ 比对项数**，两者写成同一个数是概念没分清 |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
+## 16.25 `docs/design-package/MANIFEST.md`：115 条一条不缺，但只有 51 条在仓库里
 
-## 16.25 `docs/design-package/MANIFEST.md` 的 115 条里，51 条能在存档内对上
-
-**为什么查这个。** `docs/16` 的 E01–E40 编号齐全（40 个，无缺号），顺着它的引用往上走会碰到 `docs/design-package/MANIFEST.md`——一份「文件 → 字节数 → SHA-256」的校验清单。这份清单是存档自带的，而仓库里没有任何检查在读它，所以「它还对得上吗」一直没人知道。
+**为什么查这个。** `docs/16` 的 E01–E40 编号齐全（40 个，无缺号），顺着它的引用往上走会碰到 `docs/design-package/MANIFEST.md`——一份「文件 → 字节数 → SHA-256」的校验清单。这份清单是存档自带的，仓库里没有任何检查在读它，所以「它还对得上吗」一直没人知道。
 
 **先说一个假警报。** 中途我看到 `docs/16` 是 3933 字节而清单写 7357，以为文档被截短了。重测：
 
@@ -3311,37 +3310,65 @@ content columns carrying catalog data: 4
 docs/16-migration-acceptance.md 7357 4ac74dc45bd8848fffe5d80c4d84cc034114d532d99871b71ac495016bb29a6b
 ```
 
-**7357 字节、哈希完全吻合**。3933 是我在同一个 python 进程里复用了上一轮循环的变量名，读到了别的文件——不是文档有问题，是我读错了。记在这里是因为如果不重测，这个假警报很可能会被我当成本轮的一个「发现」写下去。
+**7357 字节、哈希完全吻合**。3933 是我在同一个 python 进程里复用了上一轮循环的变量名，读到了别的文件——不是文档有问题，是我读错了。
 
-**真实测量。** 按清单的 `rel` 路径分别在 `docs/design-package/` 内和仓库根查：
+**真实测量。** 清单里 115 条的相对路径落在**三个**位置，逐条按「字节数 + SHA-256」核对：
 
 ```
-archive: 51
-repo-root: 33
-nowhere: 25
-drifted: 6
-total entries: 115
+MANIFEST entries: 115
+  archive (docs/design-package): 51
+  repo-root: 33
+  inbox only (_inbox/autov-design): 31
+  sum: 115
 ```
 
-- **archive 51**：文件就在存档内，字节数与哈希都对得上。
-- **repo-root 33**：清单里的相对路径（`contracts/xxx.schema.json`、`services/xxx/service.md`）指的是设计包**交付到仓库后**的落位，这些在仓库根能对上且哈希正确。这是清单的本意，不是错。
-- **nowhere 25**：`diagrams/*.mmd`、`examples/*.json` 之类，在存档内和仓库根都不存在。
-- **drifted 6**：两侧都能找到同名文件但内容已变（`README.md`、`DESIGN.md`、`contracts/README.md`、`service-catalog.v2.json`、`event-topics.v2.json`、`docs/02-service-catalog.md`）。
+**115 条全部可定位、全部哈希正确，一条不缺。** 三个位置的读法：
 
-**为什么这项不加进 `check_all.py`。** 三点：
+- **`docs/design-package/`（51 条）**：存档本身，文件原地未动。
+- **仓库根（33 条）**：清单写的相对路径（`contracts/xxx.schema.json`、`services/xxx/service.md`）指设计包**交付进仓库后**的落位，在仓库根对得上且哈希正确。这是清单的本意。
+- **`_inbox/autov-design/`（31 条）**：`diagrams/*.mmd`、`examples/*.json`、`layout.html` 这些从未进入本仓的部分，原件仍在这个收件目录里，117 个文件，哈希与清单一致。
 
-1. `docs/design-package/` 按 AGENTS.md 是**只读存档**，`check_links` 已经因为同样的理由跳过它。存档内部的 `nowhere` 与 `drifted` 是「存档记录的是交付当时的样子」，不是本仓可以修的漂移——把 25 + 6 条变成红色告警，红的会是历史，不是缺陷。
-2. `drifted` 的 6 个文件全是**设计包之后又被本仓正常演进过的**：`service-catalog.v2.json` 从 43310 长到 43573 字节，来自 `4f1bdcb`（2026-11-05）为 S42/S43/S44 补登记方案实际发布的事件；`contracts/README.md` 与 `docs/02-service-catalog.md` 则来自本报告 §16.21–§16.24 反复更正摘要与镜像。要求它们与存档哈希一致，等于要求本仓停止改进。
-3. 清单的**用途**是「证明设计包交付时是完整的」，这个证明在交付那一刻就已经完成；此后本仓的演进不该被它约束。
+**这一点值得单独说：设计包原件的完整性依赖一个 gitignore 的目录。**
 
-所以这里记的是**边界**而不是缺陷：存档清单 115 条中 51 条仍可在存档内侧核对，33 条对应仓库根且哈希正确，25 条所指的目录从未进入本仓，6 条是本仓有意演进过的。将来若要判断「设计包原件是否还完整」，只能核对 51 条那一侧——这一点此前没有写下来过。
+```
+$ git ls-files _inbox | wc -l
+0
+$ git check-ignore -v _inbox/autov-design/layout.html
+.gitignore:33:_inbox/	_inbox/autov-design/layout.html
+```
+
+`_inbox/` 被 `.gitignore` 第 33 行排除，**不在版本控制里**。也就是说：清单声称「设计包交付时是完整的」，而支撑这个声称的 31 条证据只存在于某台机器的某个未跟踪目录中。换一台机器 clone 下来，这 31 条会全部变成「哪都找不到」——**但清单不会因此报任何错，因为它根本不会被检查。**
+
+这不是我该修的东西：`_inbox` 里放什么、要不要纳入版本控制，是仓库所有者的决定，不是我可以替它定的。这里把事实记下来。
+
+**`drifted` 那个类别消失了。** 上一版我报了「6 条 drifted」（README、DESIGN、contracts/README、catalog、event-topics、docs/02 两侧同名但内容已变）。加上 inbox 这个位置重测后，这 6 条在 `_inbox/autov-design/` 里**全部哈希正确**：
+
+```
+DESIGN.md                        inbox size=73898 (manifest 73898) hash_ok=True
+README.md                        inbox size=3943  (manifest 3943)  hash_ok=True
+contracts/README.md              inbox size=2152  (manifest 2152)  hash_ok=True
+contracts/event-topics.v2.json   inbox size=18584 (manifest 18584) hash_ok=True
+contracts/service-catalog.v2.json inbox size=43310 (manifest 43310) hash_ok=True
+docs/02-service-catalog.md       inbox size=5426  (manifest 5426)  hash_ok=True
+```
+
+仓库里那 6 个文件的「漂移」不是档案损坏，是**本仓在交付之后正常演进**：`service-catalog.v2.json` 从 43310 长到 43573 字节，来自 `4f1bdcb`（2026-11-05）为 S42/S43/S44 补登记方案实际发布的事件；`contracts/README.md` 与 `docs/02-service-catalog.md` 来自本报告 §16.21–§16.24 的更正。原件完好地留在 inbox 里，这正是「存档只读」应有的样子。
+
+**为什么这项不加进 `check_all.py`。** 两点：
+
+1. `docs/design-package/` 按 AGENTS.md 是只读存档，`check_links` 已经因为同样的理由跳过它。存档记录的是交付当时的样子，拿它去要求本仓当前的 `contracts/` 与之一致，等于要求本仓停止改进。
+2. 更实际的原因：`_inbox/` 不在版本控制里。一个检查只要依赖未跟踪目录才能通过，就在 CI 或另一台机器上必然失败——那不是检查，是环境假设。
+
+所以这里记的是**边界**：清单 115 条在本机全部可核对（51 存档内 + 33 仓库根 + 31 inbox），但其中 31 条的载体不进版本控制；仓库自身能长期保证的只有前两类 84 条。
 
 **更正表。**
 
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
 | 1 | 「`docs/16` 是 3933 字节，但 MANIFEST 写 7357」 | **7357 字节，SHA-256 完全吻合** | 同一个 python 进程里复用了上一轮循环的变量名，`open()` 读的是残留路径。**跨文件比对前必须重取路径**，不能靠记忆里的变量 |
-| 2 | 「MANIFEST 的 61 条缺失」 | 按落位分类后是 **archive 51 / repo-root 33 / nowhere 25 / drifted 6**，真正「哪都找不到」的只有 25 | 一开始只拿存档目录当基准，于是「交付到仓库根」的 33 条全被算成缺失。**清单的路径有两套落位，只查一处必然错** |
+| 2 | 「MANIFEST 的 61 条缺失」 | 按落位分类后是 **51 / 33 / 31 / 0**，没有缺失 | 一开始只拿存档目录当基准，于是「交付到仓库根」的 33 条全被算成缺失。**清单的路径有多套落位，只查一处必然错** |
 | 3 | 「catalog 从 43310 长到 43573，是因为 §16.23 加了 `published_events` 字段」 | 来自 `4f1bdcb`（2026-11-05），为 S42/S43/S44 补登记方案实际发布的事件 | **把「我最近做过的事」当成了原因。**§16.23 只加了一条比对检查，没有改任何 catalog 数据。写归因前应当 `git log -- <file>`，不能凭印象 |
+| 4 | 「nowhere: 25 条——`diagrams/`、`examples/` 在仓库里任何地方都不存在」 | **只在 `_inbox/autov-design/` 里，31 条，哈希全部正确** | **只查了两个位置就下了「哪都找不到」的结论。**`_inbox/` 是第三个位置，且是设计包原件的实际保存地。说「不存在」之前必须先把所有可能的位置查遍；25 与 31 之差也不是同一条目集合——漏掉的不只是 examples/diagrams，还有 `layout.html` |
+| 5 | 「drifted: 6 条，本仓有意演进过的」 | **drifted 类别不成立**：这 6 条在 inbox 里哈希全对，仓库侧的差异是有意演进 | 与前一条同源：把「存档侧和仓库侧不一致」直接当成漂移，没有查第三处是否有原件。**「两侧不同」不等于「内容已变」**，可能只是副本所在位置变了 |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
