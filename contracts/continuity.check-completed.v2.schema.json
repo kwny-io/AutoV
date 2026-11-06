@@ -27,7 +27,7 @@
         "defects",
         "abstained"
       ],
-      "description": "来源：§1.2 DDL 行 63（`verdict text NOT NULL,  -- pass|pass_with_warnings|defects|abstained`，四值竖线枚举）+ §5.2 行 348（示例 `defects`）+ §9.4 行 507（「coverage = 0.6 → verdict 最高 `pass_with_warnings`，不能 `pass`」）。**四值不许压成布尔**，`pass_with_warnings` 与 `defects` 的区别是「有告警」与「有需要修的缺陷」，而 `abstained` 是「没检查」，三者对下游的含义完全不同（§1.2 行 77：「『没发现问题』和『没检查』必须能被区分」）。收 enum 的依据是 DDL 注释的逐一列举，与本仓库 S40 `status` 的处理同口径（README 行 101–102）。**与 S39 的 `decision` 词表不通用**，见 x-conflicts CCT-7。"
+      "description": "来源：§1.2 DDL 行 63（`verdict text NOT NULL,  -- pass|pass_with_warnings|defects|abstained`，四值竖线枚举）+ §5.2 行 348（示例 `defects`）+ §9.4 行 507（「coverage = 0.6 → verdict 最高 `pass_with_warnings`，不能 `pass`」）。**四值不许压成布尔**，`pass_with_warnings` 与 `defects` 的区别是「有告警」与「有需要修的缺陷」，而 `abstained` 是「没检查」，三者对下游的含义完全不同（§1.2 行 77：「『没发现问题』和『没检查』必须能被区分」）。收 enum 的依据是 DDL 注释的逐一列举，与本仓库 S40 `status` 的处理同口径（README 行 132–136）。**与 S39 的 `decision` 词表不通用**，见 x-conflicts CCT-7。"
     },
     "severity_max": {
       "type": "string",

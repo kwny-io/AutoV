@@ -1899,3 +1899,33 @@ ok    catalog    48 service(s), 55 topic(s)  [producer-only: no topic declares c
 写清这条分支从没执行、谁来决定加 `consumers`。
 
 九项仍是全过，`scaffold` 仍是 120 个生成物与 catalog 一致（这次没碰生成物）。
+
+### 16.11 上一轮改 README 时把两份 schema 里的引用改成了过期行号
+
+§16.10 改了 `contracts/README.md` 行 1477 那一句（「topic 生产消费方」→「topic `producer`」），
+但仓里有两份 schema 按行号引用 README 的段落。改完没回头看它们。这一轮回源核对时发现两处已失效，
+第三处（`contracts/README.md 行 206`）是对的，一并记下来免得再有人重查。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `policy.revision-published.v2.schema.json` / `why_it_matters` | 「…声称『服务 id / topic 生产消费方 / `docs/02` 三方一致』（**README L1445–1446**），实际只校验了 `producer`」 | 行 1445–1446 是 README 里 `KEYFRAME_MAX_FRAMES` 那段；被引的那句在**行 1477**，且已被 §16.10 改成「topic `producer`」。引用改为不带行号的「曾声称…」，并点明 README 行 1477 现有措辞 | 同 #2：`L1445–1446` 在 `ff99c4e^` 时就已经不对（那时真值也是 1477），不是这一轮改坏的——但这一轮改了被引的原文却没回头核行号，等于把一个旧错留在原处又叠了一层 |
+| 2 | `continuity.check-completed.v2.schema.json` / `verdict` | 「与本仓库 S40 `status` 的处理同口径（**README 行 101–102**）」 | 行 101–102 是事件表里 `model.capability.changed` / `model.route.selected` 两行；讲 S40 `status` 收成 `enum` 的是**行 132–136** | 引的是表格行，不是散文行——与本报告 §16.1 #3 同一类：**表行与散文行在同一个行号空间里，不能凭印象给数字** |
+| 3 | `policy.revision-published.v2.schema.json` / `dead_check` | 「`check_catalog`（**L134–136**）有：`for c in t.get("consumers", []) or []: ...`」，且同句称 `catalog` 报的是「48 service(s), 55 topic(s)」 | §16.10 那一改把分支挪到了 **L135–140**，形态也变了（`consumers = t.get(...)` / `if consumers:` 两层）；现在的 note 也不再是纯 `48 service(s), 55 topic(s)` | 同一个 PR 里改了代码又留了按行号的引用。**行号引用在同一个提交里就会烂**——要么写符号名（`check_catalog` 的 consumers 分支），要么改完就回头核 |
+
+第 1 与第 2 条是**旧错**，不是这一轮引入的：`git show ff99c4e^:contracts/README.md` 里
+「三方一致」也在 1477 行。第 3 条才是这一轮制造的。两者都该在同一张表里，因为对被引的人来说
+区别没有意义——他照着行号去翻，翻到的都不是那句话。
+
+顺带确认第三条**本来就是对的**：`contracts/README.md 行 206` 正是讲
+`continuity.check.completed` 的 `aggregate_id` 是 `series:branch:episode` 的那一句，
+`validate_examples.py:149` 与 §16.8 的表格里的引用都不用改。
+
+**可以推广的一条**：改一份被按行号引用的文件之前，先
+
+```
+grep -rn "README L[0-9]\|README 行 [0-9]" contracts/ docs/ plans/ delivery/ tools/
+```
+
+十分钟前我刚错过一次。现在这条也进了这一轮的核对清单。
+
+九项仍全过；`scaffold` 仍 120 个生成物一致（这次只改了两份 schema 的描述文字，未碰生成物）。
