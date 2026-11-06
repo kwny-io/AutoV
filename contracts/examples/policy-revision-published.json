@@ -1,0 +1,28 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCPP3N8Q2R4T6V8W0X2Y4Z6",
+  "source": "S02",
+  "type": "policy.revision.published",
+  "subject": "policy/policy_demo",
+  "time": "2026-11-06T10:00:00Z",
+  "tenant_id": "tenant_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "policy_demo",
+  "aggregate_sequence": 3,
+  "correlation_id": "cmd_01JCPP3M6P0Q2R4T6V8W0X2Y4",
+  "causation_id": "cmd_01JCPP3M6P0Q2R4T6V8W0X2Y4",
+  "traceparent": "00-7b2e04d9a1c63f58e0b4d7c2a9f15e83-9c4a1f7d3b6e8025-01",
+  "data": {
+    "schema_version": "2.0",
+    "policy_ref": {
+      "service_id": "S02",
+      "id": "policy_demo",
+      "revision": 3,
+      "content_hash": "b58d22a880d1ab6602fc3c582871252161f93ecde976594a2a5ce0a98e4815bb"
+    },
+    "effective_at": "2026-10-29T20:00:00+08:00",
+    "created_by": "admin_demo"
+  },
+  "data_ref": null
+}

@@ -86,6 +86,7 @@ SCHEMA_OF = {
     "asset-character-revision-accepted": "event-envelope.v2.schema.json",
     "asset-costume-revision-accepted": "event-envelope.v2.schema.json",
     "breakdown-revision-created": "event-envelope.v2.schema.json",
+    "policy-revision-published": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }
 

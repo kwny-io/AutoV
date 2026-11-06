@@ -733,3 +733,285 @@ schema 拒绝替 owner 决定的那几处。
 
 `python tools/check_all.py` 九项全过：`json 130`、`payloads 101 / 46`、`checkids 99`、
 `links 1321`、`catalog 48 / 55`、`families 14`、`scaffold 120`、`examples 62`、`registry` 跳过。
+
+---
+
+## 14. S02 这一轮：事件的全部规格只有一行，而那一行里的名字没有定义
+
+S12 那一轮最难的是把散文里的键拼出来。S02 相反：**方案里没有任何事件 JSON**。
+`plans/S02-governance-policy.md` 824 行，`specversion` 0 次、`"data"` 0 次、`data_ref` 0 次。
+事件的全部规格是 §10.2 行 718 的一行发布说明，加上行 713 的两条 aggregate 赋值：
+
+> `- 发布：`policy.revision.published`（topic `drama.governance-policy.v2`，partition key `tenant_id:aggregate_id`），与 DB 提交同事务写 Outbox。`
+>
+> `` `aggregate_id = policy_revision_id`，`aggregate_sequence = revision`。 ``
+
+所以这一轮和前面几轮的性质不同：前面是「方案给了形状、契约层没有承载」，这一轮是
+**方案给了主题名和分区键，其余全是判断**。schema 里四个键，每一条都在 description 里写明
+「挂在哪一句上」还是「按全仓约定补的」——区分这两者，比键集本身重要。
+
+结果是：**能纯脚本比对的只有 aggregate 那两条赋值，而它们恰好是全篇最站不住的地方。**
+
+### 14.1 修正前几轮留下的六条数
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | 本节 schema 的 `schema_version` description、`POL-10` 三处 | 「46 份 topic 载荷」「46 份 schema」「160 处」 | **47 份 / 167 处** | 46 与 160 是**本轮写 schema 之前**的口径。本轮新增的那份 schema 自身含 7 处 `^[0-9a-f]{64}$`（1 处真 `pattern` + 6 处 description 里引用的字面量），160 + 7 = 167；文件数 46 + 1 = 47。**这与第 13 轮同一类错**：在一个会随本轮改动的分母上引用了本轮之前的值 |
+| 2 | `POL-10` 的 `repo_wide_form` | 「含 `sha256:` 的有 12 份」 | **13 份** | 同上——本轮那份 schema 的 description 里写了 `sha256:`，自己进了这个集合。12 → 13 是我改过的、不是源的 |
+| 3 | `policy_ref` description、`POL-2` 的 `but_the_event_hides_it` | 「`policy_id` 在 §10.1 里出现 4 次」「全文出现 4 次」 | **全篇 9 次；§10.1 里 6 次** | 4 是只数了 §10.1 的 DDL **行**（而非出现次数），且漏了行 650 / 655 两处 `PRIMARY KEY (tenant_id, policy_id)` 与行 208 的 `load_revision(layer.policy_id, …)`。实测 9 次 = 6（DDL）+ 3（散文/示例） |
+| 4 | `POL-1` 的 `only_revision_shaped_aggregate` | 「覆盖 34 个方案」 | **28 篇方案** | 34 是服务数量（S01–S48 里绝大多数），不是**含 `aggregate_id = X` 语句的方案篇数**。35 处语句分布在 28 篇里——S06 一篇有两处（`storyboard_id` / `shot_id`），另有 20 篇根本没有这句话 |
+| 5 | `POL-8` 的 `summary`、`the_block` | 「8 处 `NOT NULL`」 | **8 行、共 16 个列** | `NOT NULL` 是**列级**约束，而 §10.1 的 3 张真 DDL 把多列挤在一行（行 700 一行就有 3 个）。按行数是 8，按受约束的列是 16。两者都对，但只能说一个——本轮统一写「8 行共 16 个列」 |
+| 6 | 本节 §6 探针的 `bare-column tables` | 第一版输出 6 张，漏 `safety_tightening` | **7 张** | 探针正则写成 `^(\w+)\($`（要求行尾就是左括号），而 `safety_tightening(` 后面跟了行尾注释 `-- 紧急收紧，绕过常规 checkpoint`。**这是探针的错，不是方案的错**：7 这个数在 schema 正文里从一开始就是对的，错的是我拿一个不完整的探针去核它 |
+
+第 6 条值得单独一句：**探针给出的数比正文小时，先怀疑探针。** 这一条的探针输出当时
+少了 1，而正文的 7 是对的——如果按「以脚本为准」照改正文，就会把一个正确的数改错。
+规矩是「每个数都用脚本算」，不是「脚本无论算什么都对」。
+
+### 14.2 本轮脚本输出（不沿用第 13.2 节的中间结果）
+
+`_tmp_probe_s02.py`（已删）：
+
+```
+plans/S02-governance-policy.md : 824 lines
+
+--- 1. plan-side occurrence census (whole plan) ---
+  specversion                0  []
+  "data"                     0  []
+  data_ref                   0  []
+  policy_revision_id         2  [699, 713]
+  sha256:                    4  [338, 480, 484, 520]
+  scope_binding              3  [147, 384, 658]
+  effective_window           4  [235, 351, 376, 566]
+  effective_at               1  [649]
+  policy_id                  9  [139, 208, 355, 382, 648, 650, 654, 655, 659]
+  audit                      0  []
+  审计                         0  []
+  E31                        0  []
+  published_by               0  []
+  policy_switch_request      1  [608]
+  current_revision           1  [654]
+  INSERT                     1  [651]
+  UPDATE                     2  [651, 714]
+
+--- 2. title convention across contracts/*.schema.json ---
+  payload v2       43
+  <name> v2         9
+  的 data 载荷         4
+        asset.character-revision-accepted.v2.schema.json
+        asset.costume-revision-accepted.v2.schema.json
+        asset.prop-revision-accepted.v2.schema.json
+        asset.scene-revision-accepted.v2.schema.json
+
+--- 3. aggregate_id = X  sentences across all plans ---
+  distinct targets : 26
+  total sentences  : 35
+  targets containing 'revision' : 1  ['policy_revision_id']
+     analysis_id              S09-lineage-impact.md:754
+     breakdown_id             S05-breakdown.md:475
+     budget_id                S23-budget-ledger.md:483
+     episode_id               S03-project-catalog.md:664
+     export_id                S45-audit.md:443
+     grant_id                 S01-tenant-access.md:520
+     job_id                   S48-adaptation-training.md:421
+     manifest_id              S08-revision-snapshot.md:643
+     operation_id             S46-developer-integration.md:369
+     permit_id                S22-scheduler-quota.md:235
+     plan_id                  S07-change-management.md:858
+     policy_revision_id       S02-governance-policy.md:713
+     provider_job_id          S26-generation-jobs.md:1014
+     repair_plan_id           S39-repair-planning.md:744
+     report_id                S36-semantic-qc.md:390
+     review_task_id           S40-human-review.md:634
+     route_id                 S25-model-routing.md:504
+     run_id                   S21-orchestration.md:841
+     script_id                S04-narrative.md:711
+     shot_id                  S06-storyboard.md:862
+     storyboard_id            S06-storyboard.md:545
+     subscription_id          S47-realtime-projection.md:431
+     task_id                  S19-agent-runtime.md:524
+     timeline_id              S41-editorial.md:612
+     track_id                 S38-subtitles.md:162
+     voice_id                 S15-voice-assets.md:441
+
+--- 4. depends_on containing S02 (service-catalog) ---
+  declare S02 : 7
+     S07  ['S08', 'S09', 'S18', 'S02']
+     S19  ['S02', 'S26']
+     S21  ['S08', 'S02', 'S22', 'S23']
+     S25  ['S24', 'S20', 'S02']
+     S39  ['S35', 'S36', 'S37', 'S09', 'S02']
+     S40  ['S01', 'S02', 'S08']
+     S46  ['S01', 'S02', 'S07', 'S21']
+
+--- 5. which plans mention the topic, vs depends_on ---
+  plans mentioning topic : 7  {'S02': 5, 'S07': 1, 'S08': 1, 'S29': 1, 'S33': 2, 'S34': 1, 'S40': 1}
+  depends_on S02 but never mentions topic : ['S19', 'S21', 'S25', 'S39', 'S46']
+  mentions topic but no depends_on S02   : ['S02', 'S08', 'S29', 'S33', 'S34']
+
+--- 6. §10.1 DDL block census (lines 646-711) ---
+  block lines : 66
+  CREATE TABLE : 3  -> ['governance_policy.idempotency_record', 'governance_policy.outbox', 'governance_policy.inbox']
+  NOT NULL     : 8  lines [689, 690, 692, 699, 700, 701, 707, 708]
+  CHECK        : 1  lines [690]
+  bare-column tables : 7  ['automation_policy_revision', 'policy_publish_pointer', 'policy_scope_binding', 'gate_instance', 'policy_decision', 'policy_exception', 'safety_tightening']
+
+--- 7. §10.1 table line numbers ---
+     L647  automation_policy_revision(
+     L653  policy_publish_pointer(
+     L658  policy_scope_binding(
+     L663  gate_instance(
+     L670  policy_decision(
+     L678  policy_exception(
+     L683  safety_tightening(                        -- 紧急收紧，绕过常规 checkpoint
+
+--- 8. contract inventory (this round) ---
+  topics                     55
+  with data_schema_ref       47
+  envelope-only              8
+  rows declaring consumers   0
+  contracts/**/*.json        132
+  contracts/*.schema.json    56
+  contracts/**/*.schema.json 63
+  contracts/examples/*.json  64
+
+--- 9. openapi paths and S02's ---
+  total paths : 21
+  S02 paths   : ['/projects/{project_id}/effective-policy', '/policies/{policy_id}/revisions']
+  has /policy-decisions:evaluate          : False
+  has /policy-decisions:resolve-effective : False
+  effective-policy 200 schema_ref present : True
+
+--- 10. hex pattern census ---
+  '^[0-9a-f]{64}$' : 167 occurrences across 47 files
+  schema files mentioning sha256: : 13
+  sha256: inside any "pattern" value : 0
+```
+
+NOT NULL 的列数另算（`_tmp_nums2.py`，已删）：
+
+```
+--- NOT NULL: lines vs columns in the §10.1 block ---
+  lines with NOT NULL : 8  -> [689, 690, 692, 699, 700, 701, 707, 708]
+  columns bearing NOT NULL : 16
+```
+
+第 5 段那个 `{'S02': 5, ...}` 里 S02 自己算了进去，所以「7 篇提到」= S02 + 六篇消费方；
+`mentions topic but no depends_on S02` 那一行的 5 个里有 S02 自己是生产者，不是消费方没声明依赖——
+真正的「消费方没声明 S02 依赖」是 **S08 / S29 / S33 / S34 四个**。
+
+这一轮的计数与第 13.2 节的关系（同一个恒等式，两边各加 1）：
+
+```
+topics total          = 55          （不变：payload schema 不新增 topic）
+with data_schema_ref  = 47          （46 + 1）
+envelope-only         =  8          （ 9 − 1）
+payload refs          = 102         （101 + 1）
+
+contracts/**/*.json        = 132   （130 + 2：1 schema + 1 example）
+contracts/*.schema.json    =  56   （ 55 + 1，新 schema 落在根级）
+contracts/**/*.schema.json =  63   （ 62 + 1）
+contracts/examples/*.json  =  64   （ 63 + 1）
+
+132 − 56 = 76,   64 + 12 = 76   ✓
+```
+
+`links` 仍是 1321——本节没引入新的相对链接（schema 与 README 里的都是行号引用，不是链接）。
+`catalog` 仍是 48 / 55——payload schema 不改变服务元数据。
+
+### 14.3 本轮改了哪些文件
+
+| 文件 | 动作 |
+|---|---|
+| `contracts/policy.revision-published.v2.schema.json` | 新增。4 个载荷键（`schema_version` / `policy_ref` / `effective_at` / `created_by`），`x-needs-owner` 10 条、`x-conflicts` 10 条（POL-1..POL-10） |
+| `contracts/examples/policy-revision-published.json` | 新增。17 个 envelope 键 + `data` + `data_ref: null`；`content_hash` 用 `hashlib` 生成（`assert len==64`），其余取自 `contracts/examples/automation-policy.json` 的同一份策略 |
+| `contracts/event-topics.v2.json` | `policy.revision.published` 加 `data_schema_ref`，位置紧随 `schema_ref` | 
+| `tools/validate/validate_examples.py` | `SCHEMA_OF` 加 `policy-revision-published`（放在 `breakdown-revision-created` 之后、`capacity-plan` 之前） |
+| `contracts/README.md` | 线表加一行；L61 46/9 → 47/8；L801、L864、L922 三处「今天剩 N 个」10 → 8；L1429 那条**本来就错的 45 → 47**、9 → 8；L1443–1447 的入口数字（130→132、101→102、46→47、62→63） |
+| `delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md` | 本节 |
+
+`contracts/README.md` L1429 是这一轮的额外收获：它写着 `data_schema_ref ──▶ 45 个 payload schema`，
+与同一份文件 L61 的「46 个 topic 带」**在本轮之前就已经差 1**（L1430 还写着「其余 9 个」，
+而 46 + 9 = 55 才是对的，45 + 9 = 54）。**同一份 README 里两个数互相矛盾，而九个检查没有一项核对它们**——
+`check_all.py` 的 `payloads` 从 `event-topics.v2.json` 算，README 里的散文没有人管。
+
+### 14.4 本轮发现的问题（都写进 schema 的 `x-conflicts`，不在这里选边）
+
+十条里，**六条是 S02 这一篇独有的**，四条是跨服务的。
+
+S02 独有的六条：
+
+- **`policy_revision_id` 没有定义（POL-1）**——全仓 2 次命中，一次是 outbox 的列注释、一次是赋值句。
+  `automation_policy_revision` 的 8 个列里没有它。它是全仓 **26 个 `aggregate_id` 目标里唯一带
+  `revision` 字样的那个**，其余 25 个都指向稳定聚合身份（`manifest_id` / `run_id` / `shot_id` /
+  `budget_id` …）；资产族即便事件以 revision 为单位，`aggregate_id` 也是 `costume_id` 这类稳定值。
+- **`aggregate_sequence = revision` 的分母在事件里（POL-2）**——`revision` 是 per-`policy_id`
+  的（`policy_publish_pointer` 主键 `(tenant_id, policy_id)`），而事件的原始规格一个 `policy_id`
+  都不发。于是 E12-06（行 812）「指针单调（不回退）」在订阅方没有可比的聚合。本 schema 用
+  `policy_ref.id` 把它补上，但因果是我加的。
+- **`scope_binding` 无定义、无写路径、而指针 TTL 只有 5 秒（POL-3）**——它是发布指针的缓存键
+  （行 384）、`LayersFor` 的第一步（行 147）、一张表的主键段（行 658），三处全部在 S02，键集
+  从未定义；`policy_scope_binding` 没有任何写入描述，`policy_publish_pointer.current_revision`
+  也从不被推进。**用一个 at-least-once、保留 14 天的事件去失效一个 5 秒就自己过期的缓存**，
+  而事件本身说不出哪些 scope 受影响。
+- **`effective_at` 可未来时而不 gate 任何东西（POL-4）**——真正被判的 `effective_window.until`
+  在 `automation-policy.v2.schema.json` 里**没有来源字段**（§11 G2 行 739 自己记了这一半），
+  另一半没人记：从未说过「未到 `effective_at` 时旧 revision 仍有效」。
+- **`policy_switch_request` 只活在一条箭头里（POL-9）**——行 608 写「S02 写
+  `policy_switch_request(run_id, new_revision, requested_checkpoint)`」，全篇 1 次；§10.1 的 10 张表
+  里没有它，也没有任何列叫 `run_id`；§11 的 G1–G7 也没记这条。
+- **`POST /policy-decisions:evaluate` 没有路径（POL-7）**——catalog 把它写成 `query_api`，
+  `openapi.v2.yaml` 的 21 个路径里没有；已有的 `/projects/{project_id}/effective-policy`
+  200 响应 `$ref` 的是**存储文档** `automation-policy.v2.schema.json`，而 §5 描述的
+  `EffectivePolicy` 有 `provenance` / `explain` / `gate_plan` / `computed_at` 等键，
+  其中 `reviewer_roles` / `allowed_actions` / `locked` / `effective_window` 四项在存储文档根级
+  根本不存在。
+
+跨服务的四条：
+
+- **`consumers` 键 55 个 topic 一个都没有（POL-5）**——`check_all.py` 的 `catalog` 有校验它的分支
+  （L134–136），因键恒缺而从未执行。本 topic 的消费方名单只活在六篇散文里，且两边互不覆盖：
+  `depends_on` 含 S02 的 7 个里只有 S07 / S40 提到它，S19 / S21 / S25 / S39 / S46 零命中；
+  而 **S08 / S29 / S33 / S34 四个消费方没声明 S02 依赖**。
+- **S33 / S34 与 S02 的生效范围表冲突（POL-6）**——两篇消费行都写这个事件「可能导致 take 变
+  void」，而 S02 §9.2 行 627 明写「已产出的 artifact 与已接受的指针**不追溯重判**」、行 630
+  「历史产物是否重做：默认不重做」。**S33 自己 L507 也说过这个事件「说的是策略，不是『这个素材
+  已经不可用』」**——同一篇里两处结论方向相反。
+- **§10.1 的 7 张表没有类型与约束（POL-8）**——10 张表里只有 3 张真 DDL，8 行 16 列的 `NOT NULL`
+  与唯一 1 处 `CHECK` 全在那 3 张里；本事件的主表 `automation_policy_revision` 是裸列清单之一，
+  「只 INSERT 永不 UPDATE」（行 651）没有任何机制承载。`content_hash` 也没有 `char(64)`——
+  所以「64 位十六进制」这条约束在 S02 自己的 DDL 里不存在，只借自 `policy_ref` 的形状。
+- **`sha256:` 在 4 个示例里与全仓的裸 hex 冲突（POL-10）**——行 338 / 480 / 484 / 520；
+  行 326 与行 338 是同一对象、相隔 12 行、两种写法。全仓 `^[0-9a-f]{64}$` 167 处，`sha256:`
+  在**任何 `pattern` 的值里命中 0**（13 份提到它的 schema，逐份查了 `pattern`）。本 schema 按裸
+  hex 收，让错误在生产者侧暴露，而不是在跨服务比较里静默失败。
+
+另有一条没有升成 conflict、但值得记下：**S02 全篇不提审计**——`审计` 0 次、`E31` 0 次、
+`published_by` 0 次。而它是策略权威，S45 要能追溯「这条收紧是谁下的、依据什么」。
+本 schema 用 `created_by` 补了这一半（DDL 行 649 的列名），另一半靠 `x-needs-owner`。
+
+### 14.5 探针
+
+`_tmp_probe_s02.py` 的正例/负例对 schema 本体跑过一轮，用 `Draft202012Validator` 直接验：
+
+```
+baseline ok: True
+REJECTED sha256: prefix
+REJECTED revision 0
+REJECTED extra key document
+REJECTED bad service_id
+REJECTED missing created_by
+REJECTED extra in policy_ref
+```
+
+六条负例全部按预期拒绝，基线通过。第二条（`sha256:` 前缀）是这一轮最要紧的一条：
+它证明 `POL-10` 不是纸面观察，而是 schema 真的会拦住。
+
+`python tools/check_all.py` 九项全过，`python tools/validate/validate_examples.py` 报
+`63 example(s) valid, 0 failing, 1 without a schema`。
+
+与 S11 / S13 / S14 / S12 同源的一条已知漏检仍在：信封对 `source` / `type` / `traceparent`
+只收非空字符串，所以本 schema 的两层校验都放行「`type` 写成别的主题、`source` 写成别的服务」
+的实例。本事件多一层具体的暴露：**envelope 的 `aggregate_id` 与 `data.policy_ref.id`
+本 schema 要求是同一个 `policy_id`，但没有任何工具能交叉校验同一份文档里的这两个位置**——
+`additionalProperties: false` 只管键，不管两处值的关系。这属于 schema 层表达不了的东西
+（要 `$data` 或 codegen 校验器），记在这里。
