@@ -1252,18 +1252,18 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 值之间的关系。本轮的示例靠人工保持一致（`aggregate_id` 与 `data.mix_job_id` 都写成
 `mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2`），下一步做 codegen 校验器时应当把这类约束一起表达。
 
-## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十一处错
+## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十二处错
 
 第 15 轮把 S42 剩下两条补齐之后，`envelope-only` 归零的最后一格是 S43 与 S44 的六条事件。
 这一轮把六条都写成 payload schema，`event-topics.v2.json` 的 `data_schema_ref` 从 49 条涨到
 **55 条**，`envelope-only` 从 6 降到 **0**。六份 schema 各 3 条 `x-needs-owner`、各 3 条
 `x-conflicts`（前缀 PDC / PDS / PDF / AMS / AEC / ACP），共 36 条新编号。
 
-这一节的 §16.1 是**本轮自己写错的数**——十一处，其中四处在写完这一轮报告时才发现、属于
-「引用了不存在的行」，另外三处是我在这一节的初稿里又写错的 ref 计数。§16.2 起是把源表重新数
-一遍的脚本输出，不沿用 §15.2 的任何中间结果。
+这一节的 §16.1 是**本轮自己写错的数**——十二处，其中四处在写完这一轮报告时才发现、属于
+「引用了不存在的行」，另外三处是我在这一节的初稿里又写错的 ref 计数，第十二处（#12）是本节点
+自检时才发现的：散文里的「本仓」没写分母。§16.2 起是把源表重新数一遍的脚本输出，不沿用 §15.2 的任何中间结果。
 
-### 16.1 修正本轮自己写错的十一条数
+### 16.1 修正本轮自己写错的十二条数
 
 | # | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|---|
@@ -1278,6 +1278,7 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 | 9 | `post.mix-completed.v2` / `repair_plan_ref` 的 `description` | 「与仓内 **52 处**同形引用一致」 | 按四重条件（`type=object` + `properties`/`required` 恰为四键 + `additionalProperties: false`）数 `contracts/*.schema.json`（64 个文件）得 **53 处 / 31 个文件** | 52 是**上一轮写完 `post.mix-completed` 之前**的口径（`git show HEAD~3` 数得 52）。**在一个会随本轮改动的分母上引用了旧值**——与 §15.1 第 3 条同一类错，那一轮修了一次，这一轮又犯 |
 | 10 | `post.mix-completed.v2` / `MIX-2` 的 `why_it_matters` | 「仓内 **55 处**严格四键 closed 引用（另有 **2 处**同形但允许 null，**都在本文件**）」「脚本按 `properties`+`required`+`additionalProperties:false` **三重**条件数 `contracts/*.schema.json`，其中 **3 处**就是本文件」 | **55 处 / 32 个文件**（递归 glob）/ **53 处 / 31 个文件**（顶层 glob），差的 2 处都在 `contracts/quality/qc-report.v2.schema.json`；可空同形 **6 处 / 4 个文件**（`episode-manifest.v2` 1、`event-envelope.v2` 的 `data_ref` 1、`generation-command.v2` 2、`post.mix-completed.v2` 2）；**本文件贡献 1 处严格（`source_video_ref`）** | 一处句子里叠了四个错：(a) 宣称的 glob（`contracts/*.schema.json`）数不出 55；(b) 「三重条件」漏了 `type=object`，于是把 `continuity.check-completed.v2` 里一个 `required` 只有两项的开放形状算进了 33 个文件；(c) 「可空都在本文件」漏了另外三个文件；(d) **「3 处就是本文件」把 1 处严格 + 2 处可空加在了一起**，那是两个不相加的数 |
 | 11 | `post.mix-completed.v2` / `MIX-2` 的三条出路 (2) | 「与仓内其余 **54 处**不同形」 | 其余 **54 处**（严格 55 − 本文件 1；按递归 glob），若按顶层 glob 则是 52 | 与 #9 同源：分母口径没写死就减 |
+| 12 | §16.5 行 1591 的散文 | 「**本仓** 264 处 `"pattern"` 里 139 处是 `^[0-9a-f]{64}$`」 | 264 / 139 是按 `contracts/**/*.schema.json`（71 个文件）数出来的；放宽到 `contracts/**/*.json`（148 个文件）是 274 / 143，多出的 10 处来自 `redaction-policy.v2.json`（6 处，无一是 sha）与 `mcp-tools.v2.design.json`（4 处，全是 sha） | **「本仓」不是分母**。同一个报告的第 4 节括注了 glob，散文里却退回「本仓」——§16.2 刚立的口径规则，自己在 270 行后就违反了 |
 
 第 10 条值得单独一句：**「本文件贡献几处」这种归属计数必须把严格与可空分开数**。我第一版
 修完写成「本文件贡献 0 处严格、只贡献 2 处可空」，回读时发现 55 − (其余文件) 对不上，才
@@ -1313,8 +1314,13 @@ topics total                  = 55
 
 === 4. hash pattern forms across contracts/**/*.schema.json ===
   "pattern" entries            = 264
-  of which == ^[0-9a-f]{64}$   = 139
+  of which == ^[0-9a-f]{64}$   = 139  (in 53 files, 0 inside an x- extension)
   "pattern" containing sha256: = 0
+  -- widened to contracts/**/*.json (148 files) --
+  "pattern" entries            = 274
+  of which == ^[0-9a-f]{64}$   = 143
+     redaction-policy.v2.json     +6 patterns, +0 sha
+     mcp-tools.v2.design.json     +4 patterns, +4 sha
 
 === 5. event types ending in .failed ===
   n = 2 ['post.render.failed', 'delivery.publish.failed']
@@ -1588,11 +1594,18 @@ probes: 41 PASS / 41 run, 7 skipped
   jsonschema version = 4.26.0
 ```
 
-第二条很重要：本仓 264 处 `"pattern"` 里 139 处是 `^[0-9a-f]{64}$`，这些**是被强制的**
+第二条很重要：`contracts/**/*.schema.json`（71 个文件）264 处 `"pattern"` 里 139 处是
+`^[0-9a-f]{64}$`（139 处分布在 53 个文件，0 处落在 `x-` 扩展里，即全部处于强制校验位置），这些**是被强制的**
 （`pattern` 不是 `format`）；而所有 `"format": "date-time"` 一处都不生效。**六份 schema 里
 每一个时间字段写 `format: date-time` 都只是文档约定**，若真要在 CI 里挡住畸形时间戳，需要装
 `rfc3339-validator` 或改用 `pattern`。这是全仓既有的约定，不是本轮引入的缺陷，但它解释了
 为什么探针里没有一条「坏时间戳」的负例——加了也不会被拒。
+
+补一句口径：264 / 139 这两个数是按 `contracts/**/*.schema.json` 数出来的。若把范围放宽到
+`contracts/**/*.json`（148 个文件），会得到 274 / 143。多出的 10 处 `"pattern"` 全在两个文件里：
+`redaction-policy.v2.json` 贡献 6 处（都是描述「哪类字段用什么模式」的文本，无一是 `^[0-9a-f]{64}$`），
+`mcp-tools.v2.design.json` 贡献 4 处（都是 `^[0-9a-f]{64}$`，于是 sha 那一栏 139 → 143 的差正好全部来自它）。
+这两个文件都不是 JSON Schema，它们的 `"pattern"` 不参与任何示例校验，所以引用这两个数时必须说明分母用的是哪个 glob。
 
 `python tools/check_all.py`：九项全过。
 
@@ -1624,3 +1637,44 @@ ok    registry   no check-registry.v2.json yet; nothing to validate
 本轮六个示例靠脚本逐对断言（`aggregate_id == data.<主键字段>`）保持一致，**但那条断言
 只在我的临时脚本里，没有进仓库**。与 §15.6 末段记的是同一件事，下一步做 codegen 校验器
 时应把它变成常驻检查。
+
+### 16.7 定时自检回合：把第 16 节的每个数重新数一遍
+
+提交之后按定时任务跑了一遍全量回顾。九项检查全过，三个 scaffold 生成器重新跑完
+`git status` 干净。然后**不沿用 §16.2 的任何输出**，把第 16 节里的每个数从源表重数：
+
+```
+contracts/examples/*.json                 = 72
+topics total                              = 55   (event_type 去重 55，无重复)
+  with data_schema_ref                    = 55
+  envelope-only                           = 0
+  schema_ref + data_schema_ref            = 110
+  topics having "consumers"               = 0
+event types ending in .failed             = 2 ['delivery.publish.failed', 'post.render.failed']
+kafka topics distinct                     = 48
+README rows that are event types          = 55   (absent=0, extra=0)
+
+strict 4-key closed refs   top glob       = 53 in 31 files
+                           recursive      = 55 in 32 files
+nullable same-shape refs                  = 6 in 4 files
+partial (4 props + closed, required short) = 2 in 1 file  (continuity.check-completed.v2)
+
+conflict ids                              = 303 | distinct prefixes = 55 | duplicates = 0
+pattern entries (contracts/**/*.schema.json, 71 files) = 264 | sha = 139 (53 files, 0 in x-)
+pattern entries (contracts/**/*.json, 148 files)       = 274 | sha = 143
+   delta: redaction-policy.v2.json +6/+0 ; mcp-tools.v2.design.json +4/+4
+```
+
+六份新 schema 的 props / required / x-needs-owner / x-conflicts 也与 §16.2 第 2 节逐份对上
+（10/10/3/3、10/10/3/3、13/10/3/3、17/17/3/3、13/13/3/3、10/10/3/3，只有 metric-snapshot 带 `allOf`）。
+
+只有一处不符：§16.5 行 1591 的散文写「**本仓** 264 处」，而 264 是按
+`contracts/**/*.schema.json` 数的；放宽到 `contracts/**/*.json` 是 274。这条已补进 §16.1 #12。
+顺带记一个新增口径：那 139 处 sha 模式**全部落在强制校验位置**（0 处位于 `x-` 扩展子树内，
+即不是「只是注释」），所以「这些是被强制的」这句话本身站得住，缺的只是分母。
+
+**探针口径也要说清**：`nullable` 的 6 处用两种算法都能得到——只认 `type: ["object","null"]`
+的窄检测器得 2 处（全在 `post.mix-completed.v2`），加上 `oneOf`/`anyOf` 包 null 的宽检测器得 6 处。
+**窄检测器会漏掉 `episode-manifest.v2`、`event-envelope.v2`、`generation-command.v2` 那 4 处**；
+反过来，宽检测器若把整个 `oneOf` 节点当成一个可空引用、不再下钻，严格数会从 55 掉到 51。
+两个数各自都对，但**必须写清用的是哪个算法**——这与 §16.2 对 glob 的要求是同一类。
