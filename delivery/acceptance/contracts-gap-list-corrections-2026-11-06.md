@@ -2467,3 +2467,97 @@ ok    maturity   48 service(s): 48 design_only; 0 with code in src/
    这一轮没有替它定，只用了「非 `design_only` 即需要有代码」这个最小判据。
 
 十项全过。
+
+### 16.17 §16.13 的 owner 决定 #3 前提是错的：改 `recursive=True` 不会让 `examples` 转红
+
+§16.13 把「7 个 schema 从未被加载」变成了常驻提示，然后把要不要修这件事留成决定 #3，
+理由原文是「改之前得先定上面 1，**否则 `examples` 会由绿转红**」。这句话没验过。这一轮验了。
+
+#### 一、`local_registry()` 的 docstring 是硬错
+
+`tools/validate/validate_examples.py` 开头写着：
+
+```
+Only execution-context.v2.schema.json is referenced from other files today, but the
+registry loads all nine so the next cross-file reference needs no change here.
+```
+
+「nine」是 `65791d8` 写下这句话时的规模，可那时仓里已经有 **16** 个 schema。现在的数字：
+
+```
+local_registry() glob contracts/*.schema.json -> 64 file(s)
+docstring claims: 'the registry loads all nine'
+```
+
+六个字里两个数字都对不上，而且方向是**高估覆盖面**——它让下一个要加交叉引用的人以为
+「注册表已经把该装的都装了，我直接写 `$ref` 就行」。实测这个假设会炸：
+
+```
+local_registry() can resolve:
+  OK   execution-context.v2       -> $id https://drama.example.invalid/contracts/execution-context.v2.schema.json
+  FAIL quality/qc-report.v2       -> NoSuchResource: 'https://drama.example.invalid/contracts/quality/qc-report.v2.schema.json'
+  FAIL quality/check-registry.v2  -> NoSuchResource: 'https://drama.example.invalid/contracts/quality/check-registry.v2.schema.json'
+
+what happens when an example's schema $refs a subdirectory schema:
+  _WrappedReferencingError: Unresolvable: quality/qc-report.v2.schema.json
+```
+
+两句都要改：`execution-context` 那句（今天确实是唯一一个跨文件引用，实测 3 处 `$ref` 全指向它，
+吻合）可以留；「loads all nine」必须删，改成它真实覆盖的范围。
+
+#### 二、决定 #3 的前提不成立
+
+§16.13 说改成 `recursive=True` 会让 `examples` 转红，依据是「`qc-report.v2` 的
+`^qc_[a-z0-9]{26}$` 对上 4 个示例值就会红」。前半句对，后半句缺一个环节：**没有示例会被
+`qc-report.v2` 校验**。三道门全部拦死：
+
+1. `SCHEMA_OF` 的目标全是顶层文件（`event-envelope.v2` 55 次，其余 8 个各 1–2 次），
+   没有一个是子目录里的；
+2. `event-topics.v2.json` 的 `schema_ref` / `data_schema_ref` 里，指向子目录的 **0 个**；
+3. 全仓 `$ref` 的跨文件目标只有 `execution-context.v2` 一个（3 处），没有任何 schema
+   把 `qc-report.v2` 拉进来。
+
+也就是说 `qc-report.v2` 装不装进 registry，与示例能不能过完全无关。直接跑两遍对照：
+
+```
+top-level glob (today): ok=71 fail=0 skipped=1
+recursive  glob (proposed): ok=71 fail=0 skipped=1
+```
+
+**一模一样。** 改 `recursive=True` 的作用只是让那两个 `$id` 能被解析，它不会新增任何一条
+校验——因为没有任何校验点在用它们。§16.13 担心的「先修根因再扩覆盖，顺序不能反」这件事
+**在这个方向上不存在**。
+
+那 `^qc_[a-z0-9]{26}$` 和 4 个示例值（10 处）的大小写冲突当然还是真的，它只是要在
+`qc-report.v2` 真的开始校验之后才会咬人。今天咬不到。
+
+```
+all `qc_...` string literals under contracts/ (value position only):
+contracts/examples/post-subtitle-ready.json         1  qc_01J9Z7C5N1Q6R2S8T4U9V3W7X5
+contracts/examples/quality-alignment-completed.json 3  qc_01J9Z6B4M9P5Q1R7S3T8U2V6W4
+contracts/examples/quality-semantic-completed.json  3  qc_01J9Z5A3L8N4P9Q6S2T7U1W5X3
+contracts/examples/quality-technical-completed.json 3  qc_01J9Z4Q2K7M3N8P5R1S6T0V4W2
+                                                     —— 4 个示例文件、10 处，全部大写
+```
+
+（`qc_trigger_requested` / `qc_report_ref` / `qc_decision` / `qc_layer` 是字段名不是 id 值，
+按词边界排除；上面 10 处是真正的 id。）
+
+#### 三、由此带来的变化
+
+只改 docstring 那句错话。`recursive=True` 仍然不自己改——但决定的**理由**要换掉，
+从「改了会红」换成「改了没用」。这仍然是一个 owner 决定：
+
+9. `local_registry()` 要不要改成 `recursive=True`？**实测表明它不会让任何检查变红也不会变绿**
+   ——今天没有任何校验点引用子目录 schema。所以这不是「现在改不改」的问题，而是
+   「要不要让 64 → 71 的覆盖面在**将来**第一次被引用时自动生效」。选不加：下一个写
+   `$ref` 到子目录的人会遇到 `Unresolvable`，报错很直白，改一行就能修；选加：覆盖面
+   悄悄扩大到 7 个从未执行过的 schema，而它们的 `pattern` 里还有已知冲突（见决定 #1）。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `tools/validate/validate_examples.py` 模块 docstring | "the registry loads all nine" | 实际 64 个；改成如实描述覆盖面 | 写下这句话时仓里已有 16 个 schema，「nine」从一开始就不对，之后只涨不修 |
+| 2 | §16.13 owner 决定 #3 的理由 | 「否则 `examples` 会由绿转红」 | 实测 **不会**：71 ok / 0 fail，与今天逐条一致 | **把「文件没被加载」当成「一加载就会校验它」。** 装载（registry 里有）和校验（有校验点引用它）是两件事，中间还差一个 `$ref` 或一条映射；我把前者当成了后者，于是一个不会发生的后果被写成了不敢改的理由 |
+| 3 | §16.13 owner 决定 #3 的括号 | 「对上 4 个示例值就会红」 | 前半句对（4 个示例、10 处确实超大写字面），但缺「且它们会被 qc-report.v2 校验」这个前提 | 同 #2；数字对、结论跳步 |
+
+十项仍全过。

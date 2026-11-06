@@ -11,8 +11,13 @@ package forbids that ("解析使用本地注册表；不允许联网拉取未知
 fetch fails anyway because the host does not exist — so a naive validation run
 crashes on the first cross-file reference instead of reporting example problems.
 This builds the local registry the package assumes exists. Only
-execution-context.v2.schema.json is referenced from other files today, but the
-registry loads all nine so the next cross-file reference needs no change here.
+execution-context.v2.schema.json is referenced from other files today (three
+`$ref`s, all to it). The glob is not recursive, so the registry holds the 64
+top-level schemas and not the 7 in contracts/domain-v1/ and contracts/quality/:
+a `$ref` to one of those raises `Unresolvable` rather than reaching the network,
+so the offline guarantee holds, but the reference does not work. Nothing
+validates against those 7 today — no SCHEMA_OF entry, no `data_schema_ref`, and
+no `$ref` names them.
 
 Exit 0 = every mapped example validated. Exit 1 = at least one failed.
 Exit 2 = environment problem (jsonschema missing, or an example with no mapping).
