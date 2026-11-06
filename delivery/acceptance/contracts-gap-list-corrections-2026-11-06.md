@@ -396,3 +396,117 @@ json(all) − schema files = examples + 12
 
 这个恒等式能当校验和用，而「差值恒定」不能——因为 `examples` 在涨。上一节该说的话是这句，
 我却在它的位置上写了一个更差的错误结论。
+
+## 11. S14 这一轮：41 处行号引用指错了行
+
+这一轮加 `asset.prop-revision-accepted.v2.schema.json` 与它的示例。schema 与示例都一次写成，
+但**位置引用大量指错**——这是本轮真正的工作量。
+
+### 11.1 行号引用：写出时凭记忆，回读时靠脚本
+
+初稿写完后用 `tools/_tmp_lineref.py` 把 schema 里**每一条** `行 N` / `行 N–M` 都解到
+`plans/S14-prop-assets.md` 的实际那一行，把该行内容打出来人工核对；`tools/_tmp_pincheck.py`
+再用一份断言表复述一遍（每条断言 `(行号, 该行必须含的子串)`），两轮结论一致。
+最终 `tools/_tmp_fixrefs.py` 落了 **44 条替换，其中 42 条真正改变了文本**，涵盖
+**41 处行号重映射**（另两条一改键数、一条是文案）。
+
+一处口径先说明：`行 N` 在本 schema 里出现 **233 次**，去重后是 **108 个不同行号**。
+「修了 41 处」数的是**重映射的种类**，不是出现次数——同一个错行号复制到 7 个字段上，
+只算一处错，但要改 7 次。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `prop_revision` 建表引用 | `§2.1 行 161–178` | `§2.1 行 160–178` | 起点少 1。我把「`CREATE TABLE` 下面那行」当成建表行，实际的 `CREATE TABLE` 在它上一行 |
+| 2 | `:accept` 命令体 | `行 439` | `行 436` | 差 3。命令体是 `:accept`（435）之后的第三个代码围栏行，我从围栏内的第一条内容往回数，把中间的空行漏了 |
+| 3 | 四处 `text_fingerprint = sha256(canonical_text)` | `行 183`（7 处） | `行 189` | 差 6。这条说明在 `prop` 建表语句之后的段落里，不在建表语句内。7 处全部同错，因为我是复制粘贴的同一句 |
+| 4 | 告警规则 | `行 651` | `行 639` | 差 12。§7 有两段：metrics（630–635）和 alarms（639）。我把「metrics 之后第 16 行」当成了告警，实际告警开头就在 639 |
+| 5 | `weapon` 反例（未决第 4 条） | `行 760` | `行 761` | 差 1。这条由 `_tmp_recheck.py` 的断言表抓出——我为了让 `prop_kind` 的 `enum` 有依据，去读 §11.1 的未决清单，把标题行当成了内容行 |
+
+其余重映射（脚本原样，不逐条列）：`行 437→442`（接受事务范围）、`行 103→102`（§1.3 起）、
+`行 211→212`（主键）、`行 163→162`（`prp_` 注释）、`行 180→183` 与 `行 180→187`（同一处
+错号被两个字段引用，指向两个不同的正确行）、`行 454→455`、`行 287→289`、`行 535→534`、
+`行 445→446`、`行 456→457`、`行 202→203`、`行 204→224`、`行 390→419`（差 29，最大的一处）、
+`行 421→420`、`行 358→348`、`行 682→665`、`行 233→236`、`行 655→646`、`行 656→647`、
+`行 220→222`、`行 5→8` 与 `行 11→10`（这两条指 S35，不是我原先以为的行）。
+
+修法：`tools/_tmp_fixrefs.py`，每条替换都带 `assert s.count(old) == 1`，改完 `json.loads`
+重新解析成功才落盘。这个脚本失败过三次：
+
+- 一次 0 命中——我写的旧串和新串在空格上有差异，`assert` 直接拦下，没有静默跳过；
+- 一次 3 命中——我把长串写在短串之后，短的先把长的切开了。改成**长串优先**；
+- 一次是批量 `行 183` → `行 189` 的 heredoc 已经把其中三条先改了。删掉已应用的条目。
+
+**这三条不是脚本的毛病，是「改引用」这件事本身要求替换必须唯一且可验证。** 没有
+`assert count == 1`，第 2 种失败会静默改错两处。
+
+### 11.2 两个我自己数错的数字
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 6 | §5.3 事件 `data` 的键数 | 「12 个 data 键」 | **11 个** | 我的计数循环把 `"data":{` 这一行本身也算成了一个键。方案 L554–566 的 `data` 内是 11 个键，`schema_version` 是本仓约定加的第十二个 `required` |
+| 7 | `prop_revision` 的列数 | 「15 列」 | **17 列** | 我数的是「有注释的列」，漏了 `revision` 与 `quality_gate_ref` 两条没带行尾注释的。L195–211 逐行数才是 17 |
+
+### 11.3 差值恒等式：我又把口径混了一次
+
+中途核对 `contracts/**/*.json` 与 `contracts/**/*.schema.json` 时算出
+`126 − 60 = 66`，然后拿它去比 `61 + 12 = 73`，差 7，一度以为有 7 个文件丢了。
+
+错在**两个数用了不同的作用域**：`126` 是递归统计的，`60` 也是递归的，但恒等式
+`examples + 12` 里的 `12` 是按**根级**非 schema JSON 数出来的（4 个根级 + 3 个
+`quality/` + 5 个 `domain-v1/`）。同口径下应该拿根级 schema 数：
+
+```
+contracts/*.schema.json        = 53   （根级，非递归）
+contracts/**/*.json            = 126  （递归）
+contracts/examples/*.json      = 61
+126 − 53 = 73,  61 + 12 = 73  ✓
+```
+
+递归 schema 是 60，多出的 7 个是 `quality/`(3) + `domain-v1/`(5) 里那些**不在** `12` 里的
+文件——两边的 7 恰好相等，所以差值才是 7。这不是新错误，第 9 节已经记过一次同类；
+区别是那次是「恒等式写错」，这次是「套用时忘了换回根级」。**恒等式能用，前提是两个数同口径。**
+
+### 11.4 本轮真实数字（脚本输出）
+
+```
+topics total          = 55
+with data_schema_ref  = 44
+envelope-only         = 11
+payload refs (schema_ref + data_schema_ref) = 99
+contracts/**/*.json   = 126
+contracts/*.schema.json = 53
+contracts/examples/*.json = 61
+payload schemas (title ends with 「的 data 载荷」) = 2, all require schema_version: True
+```
+
+`python tools/check_all.py`：
+
+```
+ok    json       126 file(s)
+ok    payloads   99 schema ref(s), 44 topic(s) with a payload schema
+ok    checkids   99 check_id(s), 3 known non-conforming
+ok    links      1321 local link(s)
+ok    catalog    48 service(s), 55 topic(s)
+ok    families   14 family/families
+ok    scaffold   120 generated file(s)
+60 example(s) valid, 0 failing, 1 without a schema
+ok    examples   contracts/examples/
+ok    registry   no check-registry.v2.json yet; nothing to validate
+
+9 check(s) passed
+```
+
+探针（`tools/_tmp_probe_prop.py`）：payload 正例 8/8、负例 18/18、`allOf` 4/4、envelope 4/4，
+`ALL PROBES PASS`。
+
+### 11.5 顺带修掉的一处：`contracts/README.md` 的三层图与检查摘要
+
+README 里 `data_schema_ref` 的计数是 43，检查摘要是 `124 / 98 / 43 / 59`，三层图也写 43 / 12。
+本轮全部按上表重数后改为 `44 / 11 / 126 / 99 / 60`。
+
+散文里另有三处提到 envelope-only 的**历史**数量（行 797 的 17、行 861 与行 918 的 16）。
+**这三处不是错的**——它们写的是「当时」。我没有把它们递减成 10/9，而是在原处注明
+「今天剩 11 个」。递减会把一段带时间锚点的观察改成一句当下的错话。
+
+---
+

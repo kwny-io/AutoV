@@ -1,0 +1,51 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCN4T8X0Z2B4D6F8H0J2K4M",
+  "source": "S14",
+  "type": "asset.prop.revision.accepted",
+  "subject": "prop/prop_vault_key",
+  "time": "2026-10-31T09:00:00Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "prop_vault_key",
+  "aggregate_sequence": 3,
+  "correlation_id": "cmd_01JCN4R6Q8S0U2W4Y6A8C0E2G",
+  "causation_id": "cmd_01JCN4R6Q8S0U2W4Y6A8C0E2G",
+  "traceparent": "00-1b8f2c4d6a0e3f5789b1d3c5e7a9f0b2-4c6e8a0d2f4b6c81-01",
+  "data": {
+    "schema_version": "2.0",
+    "prop_ref": {
+      "service_id": "S14",
+      "id": "prop_vault_key",
+      "revision": 3,
+      "content_hash": "bd17561a9f3eb14ce966638cb56416c1e5e373723bc2c2efe8730790437a14be"
+    },
+    "prop_kind": "story_prop",
+    "story_critical": true,
+    "became_canonical": true,
+    "canonical_revision": 3,
+    "text_changed": false,
+    "text_fingerprint": "64a8d50eb95e733a5ae2eed3ce1bd83f1a3baf80b7a212f545822d836625ff51",
+    "variant_axes": {
+      "condition": [
+        "intact",
+        "worn",
+        "broken"
+      ],
+      "open_state": [
+        "closed",
+        "open"
+      ]
+    },
+    "required_variants_covered": true,
+    "impact_plan_ref": null,
+    "rights_ref": {
+      "rights_owner": "S02",
+      "rights_id": "rights_prop_vault_key",
+      "rights_revision": 1,
+      "rights_hash": "f8b076b5dafae9870d4eae6c5f2b28c37af8d1681fd3aa1ba179d25a0cc2e450"
+    }
+  },
+  "data_ref": null
+}

@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/asset.prop-revision-accepted.v2.schema.json",
+  "title": "asset.prop.revision.accepted 的 data 载荷",
+  "description": "S14 道具资产一版 revision 被接受时发布的载荷。来源是 plans/S14-prop-assets.md §5.3 行 547–568 的事件块（11 个 data 键）+ §2.1 行 160–178 的 prop DDL + §2.2 行 194–215 的 prop_revision DDL + §4.2 行 442–458 的接受事务 + §1.3 行 102–122 的文字细节。\n\n**这个事件的命名与 S11–S13 同构，但它有两个各只服务一个订阅方的键，而两个订阅方在各自方案里都读不到它。** `text_fingerprint`/`text_changed` 是给 S19/S33 的，`variant_axes` 是给 S17 的（行 571 明写）。三份方案的全文命中均为 0。本 schema 能校验的是载荷形状；它校验不了的是这个事件是否真被它宣称的订阅方消费——见 PRP-2、PRP-6。\n\n收紧与否逐键按 DDL 判定：`prop_kind` 收五值 enum（行 166–167 是真 CHECK）、`prop_ref.content_hash`/`text_fingerprint` 收 `^[0-9a-f]{64}$`（行 213 `pr_hash_len` 是真 CHECK、行 199 是 `char(64)`）、`variant_axes` 的键与值都**不收 enum**（行 205 只有一句注释，没有 CHECK）。`text_fingerprint` 允许 null（行 199 注释 `NULL = 无文字`），这一点与 `text_changed` 的布尔并存构成 PRP-3。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "载荷版本，与 envelope 的 `schema_version` 分开。全仓库统一为 `2.0`。\n\n**本事件的方案示例里没有这个键**：行 548 的 `\"schema_version\":\"2.0\"` 在 envelope 层（与 `specversion` 并列），行 554 的 `data` 块直接从 `prop_ref` 开始。这里仍然收为必填，因为全仓 52 份载荷 schema 无一例外（脚本核对过 `schema_version` 出现在全部 52 份的 `properties` 里、且都在 `required` 里），示例文件也据此补上了它。这是本仓既定的统一约定，不是从 S14 的散文推出来的——所以它是**补进去的必填键**，不是抄下来的。"
+    },
+    "prop_ref": {
+      "type": "object",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false,
+      "description": "四键引用。出处：§5.3 行 555 `{\"service_id\":\"S14\",\"id\":\"prop_key\",\"revision\":3,\"content_hash\":\"…\"}`；与 S11/S12/S13 的事件同形。`revision` 的最小值 1 来自 §2.2 行 197 `revision integer NOT NULL CHECK (revision >= 1)`；`content_hash` 的 hex 长度来自行 198 的 `char(64)` 与行 213 的 `pr_hash_len`；主键 `(tenant_id, prop_id, revision)`（行 212）说明三键合起来唯一确定一行。\n\n**id 前缀与 DDL 注释不一致**：`prop` 表行 162 的注释写 `prop_id text NOT NULL, -- 'prp_01J...'`，而事件示例（行 550/552/555）用 `prop_key`、没有前缀。同一类问题在 S13 也出现过（SCN-8）。本字段只收 `string, minLength: 1`，不设 pattern——两种写法都能过，因为没有任何一处文档能裁定该用哪个。\n\n**`aggregate_sequence` 与本处的 `revision` 是两个位置的同一个数**：行 544 定 `aggregate_sequence = revision`。JSON Schema 无法跨 `data` 边界比较，所以「两个数必须相等」只能由生产者保证。"
+    },
+    "prop_kind": {
+      "type": "string",
+      "enum": [
+        "hero_prop",
+        "story_prop",
+        "set_dressing",
+        "background_prop",
+        "wearable_prop"
+      ],
+      "description": "道具类别。出处：§5.3 行 556 `\"prop_kind\":\"story_prop\"`；DDL 行 166–167 的真 CHECK `prop_kind IN ('hero_prop','story_prop','set_dressing','background_prop','wearable_prop')`。\n\n**收 enum 有 DDL 依据**，与 `variant_axes`（同文件、只有注释）形成对照。`prop_kind` 与 `story_critical` 是两个独立维度：行 166 的 CHECK 给的是类别，行 168 的 `story_critical boolean NOT NULL DEFAULT false` 给的是门强度，而事件同时带两者（行 556–557）。所以「一个 `story_prop` 却 `story_critical=false`」在数据上是合法的，且不是矛盾——§2.1 行 183 只把「钥匙、证据、信物」举例为 `story_critical=true`，没有规定它必须是某个 `prop_kind`。本 schema 因此**不**在两者之间加 if/then。\n\n§11.2 行 761 的未决第 4 条问「是否需要 `weapon` 独立一类」——若加了，本 enum 要跟着改，这是 owner 的决定。"
+    },
+    "story_critical": {
+      "type": "boolean",
+      "description": "是否为剧情线索道具。出处：§5.3 行 557；DDL 行 168 `story_critical boolean NOT NULL DEFAULT false`。\n\n**这个布尔决定了本事件三个键的门槛，而事件本身无法表达那个决定**：(a) 文字变更时 `story_critical=true` → 必须带 `impact_plan_ref`（行 449 的 `story_critical AND impact_plan_ref IS NULL → 422 IMPACT_PLAN_REQUIRED`）；(b) 变体覆盖是硬门（行 187「变体必须覆盖 S16 可能要求的全部状态」）；(c) canonical 变更必须 `human_approved`（行 149）。所以下游若只读本事件，会把一个「走严格门」的 revision 与一个「走普通门」的 revision 当作同级对象。\n\n它自身也随资产可变（列在 `prop` 表上，不在 `prop_revision` 上），于是同一条旧 revision 的历史事件里报的是当时的声明值，而 `GET /props/{id}` 今天给的是当前值。方案没说两者不一致时以哪个为准。"
+    },
+    "became_canonical": {
+      "type": "boolean",
+      "description": "这次接受是否同时把该 revision 设成 canonical。出处：§5.3 行 558；来源是接受命令参数 `set_canonical`（行 436 的命令体），事务第 7 步（行 455）在它为真时 supersede 旧 pointer、插新 pointer。\n\n**DDL 里没有这一列**：`canonical_pointer`（行 289–304）记的是 `revision`/`text_fingerprint`/`decided_at`/`decided_by`/`decision_kind`/`reason_text`/`prior_canonical`/`superseded_at`，没有「本次是否新设」这个布尔。所以该字段是事件现场算出来的派生值，不是可回查的事实。行 558 的示例给 `true`，而 `set_canonical=false` 的接受同样发本事件、同样被本 schema 接受。`decision_kind`（行 296 的 CHECK 三值）不进事件——见 PRP-4。"
+    },
+    "canonical_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ],
+      "description": "该道具当前的 canonical revision。出处：§5.3 行 559（示例值 3）；DDL 行 170 `canonical_revision integer,`（**可空**），行 177 的 `prop_canonical_within_head` 只约束 `canonical_revision <= current_revision`。\n\n**`became_canonical=false` 时它是 `null`、还是「别的 revision」两种读法都成立**：行 177 允许 NULL（新登记的道具尚无 canonical），行 170 没有 NOT NULL。事件里只有一个数，无法区分「3 是因为 3 一直是 canonical」与「3 是因为这一版刚成为 canonical」。当 `became_canonical=true` 时它应当等于 `prop_ref.revision`，但 JSON Schema 无法表达跨字段相等。\n\n**更关键的是没有事件的那条路**：`POST /props/{id}:set-canonical`（行 534）是独立命令，能不产生新 revision 就改 canonical；`event-topics.v2.json` 里 `producer: \"S14\"` 只有本主题一条。与 S13 的 SCN-2 完全同构——canonical 可以在零事件的情况下移动，按本事件缓存 canonical 的消费方会永久陈旧。见 PRP-4。"
+    },
+    "text_changed": {
+      "type": "boolean",
+      "description": "相对 parent revision 的 `canonical_text` 是否变了。出处：§5.3 行 560。\n\n**DDL 里没有这一列**：`prop_revision`（行 194–212）只有 `text_fingerprint`（行 199），没有 `text_changed`。该值必须在接受事务内由 `new_fp != prop.text_fingerprint` 算出（行 446–447 的两行伪代码），而事务只把**结果**写进 outbox（行 457），`prop_revision` 不存它。于是：`text_changed` 是一个只存在于事件里的派生布尔，无法回查、也无法重算（重算需要 parent revision 的 `text_fingerprint`，而事件不带 `parent_revision`——见 PRP-5）。\n\n**`text_fingerprint` 为 null 时它是怎样算的，方案没说**：行 199 注释 `text_fingerprint char(64), -- NULL = 无文字`。一个「上一版无文字、这一版有文字」的接受，`new_fp != NULL` 在 SQL 里求值为 NULL 而不是 TRUE，伪代码（行 446）用的是 Python 风格的不等号。这条边界决定了「给一把钥匙加上刻字」是否会被判为文字变更、是否需要人审与影响计划——而它是从「无文字」变成「有文字」的最常见情形（§1.3 的信件、铭文）。见 PRP-3。"
+    },
+    "text_fingerprint": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      ],
+      "description": "该 revision 的文字指纹。出处：§5.3 行 561 `\"text_fingerprint\":\"…\"`；DDL 行 199 `text_fingerprint char(64), -- NULL = 无文字`；§2.1 行 189 定义 `text_fingerprint = sha256(canonical_text)`「用于跨 revision 快速比对『文字变了没有』，不暴露原文（对 `sensitive` 道具尤其重要）」。\n\n**收 `null` 有 DDL 依据**：行 199 的注释明确 NULL 表示「无文字」。方案示例（行 561）给的是字符串，但那是 `story_critical` 且带铭文的例子；一个纯装饰道具合法地没有文字。\n\n**hex 形态有依据**：行 199 的 `char(64)` 是真列类型，行 189 说它是 `sha256` 的输出。与 S13 的 `topology_hash`（有 CHECK）不同，这里没有 `~ '^[0-9a-f]{64}$'` 约束——`char(64)` 只是定长填充，理论上可以存任意 64 字符。本 schema 收 hex 是因为行 189 定义了它算的是 sha256，属于**从算法定义推出的形态**，而不是从 DDL 推出的。\n\n**它读的是什么原文，方案有一处缺口**：行 189 说指纹是 `canonical_text`（单数）的 sha256，而事务伪代码（行 445）写 `new_fp = fingerprint(payload.text_details)`——`text_details` 是数组（行 203 的注释 `[{surface,content_kind,canonical_text,...}]`，§1.3 行 106–116 给的是单个对象）。一个道具可以有多个面（正面铭文 + 背面印刷），单值指纹要么拼接、要么只取一面，两种都会让「另一面改了」不触发 `text_changed`。见 PRP-3。"
+    },
+    "variant_axes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "uniqueItems": true
+      },
+      "description": "本 revision 支持的变体轴与取值。出处：§5.3 行 562 `{\"condition\":[\"intact\",\"worn\",\"broken\"],\"open_state\":[\"closed\",\"open\"]}`；DDL 行 205 `variant_axes jsonb NOT NULL, -- 本 revision 支持的轴与取值`。\n\n**键与值都不收 enum，且这是有意的**：行 205 只有一句注释，`prop_revision` 的建表语句**没有任何 CHECK** 约束它。轴名在方案里出现过三个（`condition`/`open_state` 见行 562，`burnt` 见行 220 的「如果将来新增轴」），值集则完全由 §2.3 的 `required_variant` 表按需求增删。收 enum 等于替 S14 把「变体轴是闭集」定死，而方案明确说它要可扩。所以这里只收结构：`object` → `array of non-empty string`。\n\n**`minProperties: 1` 与每轴 `minItems: 1` 的依据是语义而非 DDL**：一个空对象等于「这一版不支持任何变体」，而 `variant_manifest` 列（行 204）与 §2.2 行 224「变体必须全部有 artifact」都要求声明的轴能落到 artifact 上。空轴数组则是「声明了这个轴但一个值都没有」，在行 419 的覆盖校验里恒真，没有意义。这两个下限是本 schema 的**判断**，不是抄来的；若 S14 要允许「无变体道具」用空对象表达，这两行要改。\n\n**`uniqueItems: true`**：同一轴同一取值出现两次没有语义，且 `required_variant`（行 231–239）的主键 `(tenant_id, prop_id, axis, required_value, required_by)` 把「轴+值」当唯一键，说明结构上是集合。\n\n**S17 读不到它**：行 571 说本键必须在事件里，「S17 需要知道这一版支持哪些状态」。S17 方案全文对 `variant_axes` 的命中为 0，且它的视觉状态检查（§7.3 行 428–444）走的是「S16 取期望 → S10 取 canonical 变体 → 结构化 VQA」，S10 的 `variant_selector`（行 224）明说「由 owner 解释，S10 不知道变体叫什么」。见 PRP-2。"
+    },
+    "required_variants_covered": {
+      "type": "boolean",
+      "description": "接受时本 revision 是否已覆盖所有外部登记的必需变体。出处：§5.3 行 563 `\"required_variants_covered\": true`；来源是 §2.3 的 `required_variant` 表（行 231–239，由 S09/S02/人工按 `required_by` 登记）与 §4.1 行 420 的第 3 条校验（未覆盖 → 422 `REQUIRED_VARIANT_MISSING`）。\n\n**DDL 里没有这一列**：`prop_revision` 没有 `required_variants_covered`；该布尔只能在接受那一刻算出来（查 `required_variant` 与本次 `variant_manifest` 的交集），事件发完就无从复算——因为 `required_variant` 是可增删的活表，今天的覆盖情况与当时可能不同。\n\n**它恒为 true 的可能性很高，那样它就只是一个装饰**：行 420 第 3 条是**拒绝式**校验——未覆盖就 422，不会进到接受。所以在所有成功接受的路径上，这个字段按构造必然为 `true`；行 563 的示例也是 `true`。方案没有给出任何会发布 `false` 的场景。这不像 `became_canonical` 那样有真分支（`set_canonical` 可假），它更像把「事务里已经校验过」这件事重新广播一遍。若确实如此，收下它无害，但下游不应把它当作可读的信号。见 x-needs-owner 第 3 项。"
+    },
+    "impact_plan_ref": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "service_id": {
+              "type": "string",
+              "pattern": "^S[0-9]{2}$"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "service_id",
+            "id",
+            "revision"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "文字变更时的影响计划引用。出处：§5.3 行 564 的示例 `\"impact_plan_ref\": null,`；命令体行 436 `{command_id, expected_current_revision, set_canonical, decision_kind, reason_text, impact_plan_ref}`；事务行 449 `story_critical AND impact_plan_ref IS NULL → 422 IMPACT_PLAN_REQUIRED`；§3.3 行 380「`story_critical` 时必须带 `reason_text` 与（若已用于已交付集）`impact_plan_ref`」。\n\n**三处说的是三种不同的必填条件**：(a) 行 449 是「`story_critical` 且文字变更」；(b) 行 380 是「`story_critical` 且**已用于已交付集**」——后者更窄，且「是否已用于已交付集」在 S14 的 DDL 里没有列、也不是本事件能表达的；(c) 行 564 的示例是 `story_critical=true`（行 557）、`text_changed=false`（行 560）、`impact_plan_ref=null`，与 (b) 相容但与 (a) 的宽读法不相容。三者能同时成立，只因为行 449 的判定被 `text_changed` 短路了。本 schema 的 if/then（见顶层 `allOf`）按行 449 的**窄**读法表达：只有 `story_critical=true` **且** `text_changed=true` 时要求它是对象。\n\n**它指向谁和 S13 的 SCN-1 是同一个未决问题**：字段名、命令体位置、三键形状都与 S13 一模一样，而 S13 那处已记录「`service_id` 写 S09、S09 说那是 S07 的 `change_plan`、S07 的主键是 `plan_id`、示例前缀 `impact_` 哪个都不是」。S14 同样没写键集、也没写服务端。本 schema 不重复那整段论证，只记录同一缺口在道具侧同样存在。\n\n**只有一个 `revision` 没有 `content_hash`**：与紧邻的 `prop_ref`（四键带 hash）不同，照行 564 的口径收。见 PRP-1。"
+    },
+    "rights_ref": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true,
+      "description": "权利引用指针。出处：§5.3 行 565 `\"rights_ref\":{...}`；DDL 行 206 `rights_ref jsonb NOT NULL,`——**S14 全文没有一处写出它的键集**，与 S13 完全同样的情况。§2.7 行 348 的反模式表 `| prop_rights_status | 只存指针，判定归 S02。|` 说明这是刻意的：只存指针、不存状态。\n\n**为什么不照 S10 的四键收**：`{rights_owner,rights_id,rights_revision,rights_hash}` 出现在 S10 §2.2 行 223 的列注释里，是 S10 自己 binding 表的形状，不是 S14 的定义。跨服务照抄就是替 S14 编契约。所以收 `object` + `minProperties: 1` + 任意键，与 `integration.command-accepted.v2.schema.json` 的 `target` 同形。\n\n**E30 的防线同样不在本事件里**：E30-E1（行 680）要求「授权撤销后仍返回 revision」时带 `rights_recheck_required=true`，而该字段出现在 §4.3 行 495 的读响应中，**不在本事件里**。这是 S13 SCN-4 的完全同构问题：读路径告诉调用方要复查，事件路径不告诉。见 PRP-4。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "prop_ref",
+    "prop_kind",
+    "story_critical",
+    "became_canonical",
+    "canonical_revision",
+    "text_changed",
+    "text_fingerprint",
+    "variant_axes",
+    "required_variants_covered",
+    "impact_plan_ref",
+    "rights_ref"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "story_critical": {
+            "const": true
+          },
+          "text_changed": {
+            "const": true
+          }
+        },
+        "required": [
+          "story_critical",
+          "text_changed"
+        ]
+      },
+      "then": {
+        "properties": {
+          "impact_plan_ref": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "text_changed": {
+            "const": false
+          }
+        },
+        "required": [
+          "text_changed"
+        ]
+      },
+      "then": {
+        "properties": {
+          "text_fingerprint": {
+            "description": "`text_changed=false` 时，本 revision 的指纹应当与 parent 相同或同为 null。JSON Schema 无法比较两个 revision，所以这条只能靠生产者；此处只保留类型。"
+          }
+        }
+      }
+    }
+  ],
+  "x-needs-owner": [
+    {
+      "field": "`impact_plan_ref` 到底指向哪种对象、由哪个服务拥有、id 前缀是什么（与 S13 的 SCN-1 是同一个问题）",
+      "demanded_by": "S14 的告警规则（§7 行 639「`s14_text_change_total{story_critical=\"true\"}` > 0 且无 `impact_plan_ref` → 门失效」）、任何要回答「这次文字变更经过了影响分析」的审计路径（§3.3 行 380、E08-E2 行 665）",
+      "s14_status": "未决。本事件给 `null`（行 564），命令体有该字段（行 439）但不写键集；S13 行 577 用同一名字、同样未定义。S09 方案行 468 说 `impact_plan` 是 S07 的 `change_plan`，S09 自己的 id 列是 `analysis_id`，S07 的是 `plan_id`。四处文档、四个名字。见 PRP-1。"
+    },
+    {
+      "field": "`rights_ref` 的键集；以及本事件是否该带 `rights_recheck_required`",
+      "demanded_by": "S02（权利实时复查的唯一权威）、S45（审计：任意 revision 能追溯到权利依据）、E30-E1（行 680）",
+      "s14_status": "未决。S14 全文只有 `rights_ref jsonb NOT NULL`（行 206）与事件里的 `{...}`（行 565），无键表。读响应带 `rights_recheck_required`（行 495），事件不带。S10 的四键形是可疑的类比，照抄就是跨服务编造。见 PRP-4。"
+    },
+    {
+      "field": "`required_variants_covered` 是否可能为 `false`；若不可能，它是否该从事件里去掉或改成「覆盖了哪些 required_variant」",
+      "demanded_by": "S09（按 `required_by=shot:...` 登记的需求，行 236）、S16（故事状态决定需要哪些变体）、S14 自己的 `required-variant-audit` runbook（行 646）",
+      "s14_status": "未决。事务行 420 第 3 条是拒绝式校验，未覆盖就 422，所以成功路径上该字段恒为 `true`；方案没有给出会发布 `false` 的场景。若它确实是常量，它对消费方没有信息量；若要它有信息量，就该带上「本次覆盖了哪些 required_variant」。"
+    },
+    {
+      "field": "`text_changed` 在 `text_fingerprint` 从 null 变为非 null（以及反向）时如何判定；以及 `text_fingerprint` 是单面还是要覆盖 `text_details` 的全部面",
+      "demanded_by": "S19/S33（行 571 说的「需要知道文字有没有变」——三份方案全文命中均为 0，见 PRP-2）、S14 的 `text-fingerprint-audit` runbook（行 647）、任何按 `text_changed` 决定是否要人审的路径（行 448）",
+      "s14_status": "未决。行 445 的伪代码 `new_fp != prop.text_fingerprint` 在「上一版无文字」（行 199 `NULL = 无文字`）时按 SQL 三值逻辑求值为 NULL 而非 TRUE；行 189 说指纹是 `canonical_text`（单数）的 sha256，行 445 却是 `fingerprint(payload.text_details)`（数组）。两个缺口都落在「给道具加刻字」这个最常见的文字变更上。见 PRP-3。"
+    },
+    {
+      "field": "事件里的 `prop_kind`/`story_critical` 是接受时的快照还是资产当前值；`set-canonical` 是否应有独立事件",
+      "demanded_by": "S10（binding 需要 revision）、S17（期望状态校验）、S07/S09（影响分析的父版本）、任何把「当前 canonical」当依据的 gate",
+      "s14_status": "未决。`prop_kind` 与 `story_critical` 都在 `prop` 表（行 164–168），是可变的资产级属性，而事件是关于一版 revision 的。`canonical_revision` 在 DDL 里可空（行 170），`set-canonical`（行 534）能在不发本事件的情况下改它，而 `event-topics.v2.json` 里 S14 只有本主题一条。与 S13 的 SCN-2、SCN-3 同构。见 PRP-4。"
+    },
+    {
+      "field": "`variant_axes` 的轴名与取值是否该成为闭集（至少 `condition`/`open_state` 两个轴）",
+      "demanded_by": "S16（故事状态要有对应的可视化变体）、S17（期望状态校验，行 571 说的订阅方）、S09（按 `required_by=shot:...` 登记需求）、UI 的变体选择器（S10 行 829 的未决第 4 条明确拒绝做注册表）",
+      "s14_status": "未决。行 205 只有注释，无 CHECK。行 222 明说轴要可扩（举了 `burnt`），行 562 的示例给两个轴。本 schema 收结构不收 enum。若要起来，`condition` 的 `intact`/`broken` 与 §2.2 行 204 的 `variant_manifest` 示例同名，是一份可用的起点。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PRP-1",
+      "summary": "`impact_plan_ref` 在道具侧与场景侧同形同名同缺定义——四处文档给出四个对象名、三个 id 前缀，而示例里它还是 `null`；三处散文对「何时必填」给了三种不同条件",
+      "s14_event": "§5.3 行 564：`\"impact_plan_ref\": null,`",
+      "s14_command": "§4.2 行 439：`{command_id, expected_current_revision, set_canonical, decision_kind, reason_text, impact_plan_ref}` —— 字段名在，键集与服务端不在。",
+      "s14_three_conditions": "行 449（事务内）：「`story_critical AND impact_plan_ref IS NULL → 422 IMPACT_PLAN_REQUIRED`」，条件 = `story_critical` ∧ 文字变更。行 380（§3.3 状态图）：「`story_critical` 时必须带 `reason_text` 与（若已用于已交付集）`impact_plan_ref`」，条件 = `story_critical` ∧ **已用于已交付集**。行 564 的示例：`story_critical=true`（行 557）且 `text_changed=false`（行 560）且 `impact_plan_ref=null`。",
+      "s13_identical": "plans/S13-scene-assets.md 行 577 用同一字段名 `{\"service_id\":\"S09\",\"id\":\"impact_01J...\",\"revision\":1}`，行 459 用同一条 `IMPACT_PLAN_REQUIRED` 校验。SCN-1 记录了那处的四个名字问题（S13 写 S09 / S09 行 468 说那是 S07 的 `change_plan` / S09 的 id 列是 `analysis_id` / S07 的主键是 `plan_id`）。",
+      "why_it_matters": "两处资产服务用同一个字段名指向一个**在文档里从未被定义过键集与归属**的对象。这不是某一处的笔误：S07 有 `change_plan`、S09 有 `impact_analysis`，两者回答的是不同的问题（S09 行 60 说 `impact_analysis` 是「一次影响计算的不可变结论」；S07 行 57 说 `change_plan` 是「一次修改的完整方案……不是授权，不是执行」），而 S13 与 S14 都用 `impact_` 前缀指向「S09」。当实现方按 `service_id:\"S09\"` 去读时，读到的会是 `analysis_id` 前缀的 id；按 `impact_` 前缀去构造时，没有一方承认这个前缀。\n\n更近的一层问题在条件上：行 449 与行 380 对「何时必填」给出不同答案，而「是否已用于已交付集」在 S14 的 `prop` / `prop_revision` 两张表里都没有列，也在本事件里没有任何字段能表达。所以**按行 380 那个更严的条件实现是不可能的**——S14 自己不知道一件道具是否进了某个已交付集。行 449 之所以能实现，只是因为它落在更宽的那个条件上（文字变更即要求）。",
+      "consequence": "本事件被接受的绝大多数路径上 `impact_plan_ref` 是 `null`（示例即如此），而 §7 行 639 的告警规则把它当作门是否失效的判据：「`s14_text_change_total{story_critical=\"true\"}` > 0 且无 `impact_plan_ref` → 门失效」。若告警按此实现，`story_critical=true` 且 `text_changed=false` 的正常接受会被误报为门失效；若不实现，真正的文字变更漏带影响计划时就没有告警。两种都不对，因为这条规则与行 449 的事务校验判的不是同一个集合。",
+      "fix_shape": "需 owner 定：(1) 与 S13 的 SCN-1 同一个决定——`impact_plan_ref` 指向 S09 的 `impact_analysis`（则前缀与字段名要对齐 `analysis_`）、还是 S07 的 `change_plan`（则服务端、前缀、hash 都要改）、还是两者都指（则拆两个字段）；(2) 「何时必填」统一成行 449 的条件（`story_critical` ∧ 文字变更），并把行 380 的「已用于已交付集」要么删掉、要么说明由谁在 accept 命令里带进来（S14 无法自己判断）；(3) 行 639 的告警规则按统一后的条件重写。本 schema 的 if/then 表达的是行 449 的窄读法（`story_critical` ∧ `text_changed`），并把 `service_id` 留在 `^S[0-9]{2}$` 而非写死，使三种修法都不必改结构。"
+    },
+    {
+      "id": "PRP-2",
+      "summary": "行 571 说 `variant_axes`/`text_fingerprint` 必须发出去是因为 S17 与 S19/S33 要读，而这三份方案的全文命中为 0；真正订阅本事件的是 S12 与 S13，它们各需要一个事件里没有的字段",
+      "s14_claim": "§5.3 行 571：「`variant_axes` 与 `text_fingerprint` 必须在事件里：S17 需要知道『这一版支持哪些状态』，S19/S33 需要知道『文字有没有变』。」",
+      "zero_hits": "plans/S17-continuity.md（532 行）对 `variant_axes`/`text_fingerprint`/`text_changed`/`asset.prop` 的命中为 0；plans/S19-agent-runtime.md（1200 行）为 0；plans/S33-sound-effects.md（1496 行）为 0；plans/S34-music.md（1635 行）为 0。均为全文 grep，不是抽查。",
+      "real_consumers": "plans/S12-costume-assets.md §5.3 行 537：`| asset.prop.revision.accepted | S14 | 把 unverified_refs 里匹配的项标记已验证（仅本地标记） |`。plans/S13-scene-assets.md §5.3 行 597：`| asset.prop.revision.accepted | S14 | 若道具被误登记为固定物，仅记录审计告警（不自动迁移） |`。",
+      "s12_needs": "S12 §4.3 行 391 说 `accessories` 里指向 S14 道具的项「需要 `target_service/id/revision`」，因「S14 可能还没建」而不校验，记入 `unverified_refs`；行 479 的 F14 说「引用了 S14 的道具但 S14 无该 revision → **允许**，记 `unverified_refs`」。要点是：S12 要消解的是「道具 **id** 现在存在了吗」，而本事件的 `prop_ref.id` 是那个 id——但 S12 还需要知道「存在的是不是我当初记的那一版」，即 `prop_ref.revision`，而它记的也是 revision。所以这个订阅**在形状上是成立的**，缺的是 S12 要按 id 反查「我哪些 unverified_refs 指向它」——事件没有「谁引用了它」这类信息，只能由 S12 自己按 id 索引，这是它自己的事，不是缺口。",
+      "s13_needs": "S13 行 597 的处理是「若道具被误登记为固定物，仅记录审计告警」。要判断「被误登记为固定物」，S13 需要知道该道具**出现在哪个场景的 fixed_objects 里**——那是 `scene_revision.fixed_objects`（S13 行 157）里的一条字符串。本事件只给 `prop_ref`，不给「谁引用了它」，所以 S13 只能按 `prop_ref.id` 去 `fixed_objects` 里做反向全文扫描。这不是不能做（`fixed_objects` 是 jsonb 数组，可查），但方案没有给出这条查询，也没有索引；更关键的是 `fixed_objects` 存在**每一版 revision** 上，所以「这个 id 曾在任何一版里出现」与「它现在还在」是两个不同的查询。",
+      "why_it_matters": "这是 S13 的 SCN-7 的镜像：那边是「被读的键与宣称存在的理由不相交」，这边是「宣称的订阅方不订阅、真订阅方要的东西事件形态勉强够用」。两处的共同点是——**行 571/行 590 这类「某某需要它」的句子都没有被下游方案回执过**。本事件的 12 个键里，`variant_axes` 与 `text_fingerprint` 两个是专门为行 571 里那三个服务加的，而它们一个都不读。",
+      "consequence": "若按行 571 实现，`variant_axes` 与 `text_fingerprint` 会被当作「S17/S19/S33 依赖的字段」而不敢改、不敢删。但它们真正的负担是让 S14 每次接受都在事件里多塞一份变体声明与一个 64 字符指纹——而没有任何消费方在用它。反过来，S12 与 S13 的订阅不需要这两个键里的任何一个，它们需要的是「这个 id 被谁引用了」，而那个信息不在事件里。于是事件既没有为它宣称的订阅方服务，也没有为真实的订阅方服务得更省事。",
+      "fix_shape": "需 owner 定：(1) 行 571 那句是否成立——若不成立，改成「S12/S13 消费本事件按 id 做引用消解与审计告警」，并同步修 S14 的 E24/E30 之类只在本侧可测的断言；(2) 若要 S17 真的消费，须在 S17 §4.2（行 313–323 的依赖表）补一行，并说明它如何用 `variant_axes` ——注意 S17 现有的视觉检查（§7.3 行 428–444）走 S10 的 `variant_selector`，而 S10 明说不解释变体名（S10 行 252、行 829 的未决第 4 条），所以 S17 拿不到「这一版支持哪些轴」，除非直接读 S14；(3) 若要 S19/S33 真的消费 `text_fingerprint`，须说明它们为什么关心道具文字——S33 是音效、S19 是 agent 运行时，两者都无道具文字场景；(4) 若都不成立，考虑把 `variant_axes` 留（S12/S13 可能间接需要）而把「必须发出去」的理由改成真实的那一条。本 schema 收下全部 12 个键、不擅自删减。"
+    },
+    {
+      "id": "PRP-3",
+      "summary": "`text_changed` 是从「无文字」变为「有文字」时无法判定的一个布尔，且它依据的指纹定义在一处按单面、在另一处按整数组；而 `text_fingerprint` 同时出现在 `prop`（canonical 的）与 `prop_revision`（本版的）两张表上",
+      "ddl_null": "§2.2 行 199：`text_fingerprint char(64),                 -- NULL = 无文字` —— revision 级，可空，NULL 表示无文字。§2.1 行 172：`text_fingerprint   char(64),               -- canonical 的 canonical_text 指纹（便于比对）` —— prop 级，也是 `char(64)`，也可空，且语义是「**当前 canonical** 的」。",
+      "txn_code": "§4.2 行 446–447 的伪代码：\n```\n-- 3) 文字变更判定：\n--      new_fp = fingerprint(payload.text_details)\n--      if new_fp != prop.text_fingerprint:\n```",
+      "fp_definition": "§2.1 行 189：「`text_fingerprint = sha256(canonical_text)`，用于跨 revision 快速比对『文字变了没有』，不暴露原文（对 `sensitive` 道具尤其重要）。」",
+      "text_details_shape": "§2.2 行 203：`text_details     jsonb NOT NULL,           -- [{surface,content_kind,canonical_text,...}]` —— 数组；§1.3 行 106–116 给的是单个对象，带 `surface`/`content_kind`/`canonical_text`/`language`/`layout`/`legibility`/`sensitive`。",
+      "why_it_matters": "三处不一致，每一处单独看都小，合起来让「文字有没有变」这个本事件唯一的语义信号在两种常见情形下失真。\n\n(1) **从无文字到有文字**：行 199 说 NULL = 无文字。伪代码比较 `new_fp != prop.text_fingerprint`；按 SQL 三值逻辑，`x != NULL` 是 NULL 而非 TRUE，于是这个分支不进——`text_changed` 会算成 false，「加刻字」不需要人审、不需要影响计划。若按 Python 逻辑（`None != x` 为 True）则进。方案写的是伪代码，没说是哪种语义，而这两种语义在「给一把原本光面的钥匙刻上证据编号」上给出相反的门。\n\n(2) **单面与多面**：行 189 说指纹是 `canonical_text`（单数）的 sha256，伪代码算的是 `payload.text_details`（数组）。一个道具可以有正面铭文 + 背面印刷（§1.3 的 `surface` 字段正是为此）。若指纹只取一面，改另一面不触发 `text_changed`；若拼接，行的顺序与 `surface` 的排序会改变指纹（同一内容重排就报「变了」）。方案两种都没说。\n\n(3) **两个 `text_fingerprint`**：`prop` 表的是「当前 canonical 的」，`prop_revision` 表的是「本版的」。伪代码拿 `new_fp` 比 `prop.text_fingerprint`——那是**canonical 的**指纹，不是 **parent revision 的**。在一个 `set_canonical=false` 的接受里，canonical 可能停在更早的版本，于是「与 canonical 比」和「与 parent 比」是两个不同的判定，而 `text_changed` 这个名字、「相对 parent revision」这个自然读法（我在本文件 `text_changed` 的 description 里用的就是这一句）都指向后者。",
+      "consequence": "本事件的 `text_changed` 是 S19/S33（行 571）唯一被点名要读的语义信号，也是行 448 那个「文字变更必须人审」的门所依据的判定结果。三处不一致的净效果是：最需要人审的那类变更（给道具加字、改另一面上的字）恰恰最容易判成 `text_changed=false` 而绕过门。而 `text_fingerprint` 在事件里只有一个值，消费方无法自己重算——重算需要 parent revision 的指纹，事件不带 `parent_revision`（见 PRP-5 的同一结构问题）。",
+      "fix_shape": "需 owner 定：(1) `text_changed` 的判据明确写死为「与 **parent revision** 的 `text_fingerprint` 比」还是「与 **canonical** 的比」，并改行 445 的伪代码使之与文字说明一致；(2) 明确 `NULL → 非 NULL` 与 `非 NULL → NULL` 是否算变更（建议都算，并改用 `IS DISTINCT FROM` 的语义而非 `!=`）；(3) 明确多面文字如何合成一个指纹（建议按 `surface` 排序后逐面拼接再 hash，并把算法写出来，否则无法跨实现复算）；(4) 若 `text_details` 允许多面而指纹只有一个，考虑在事件里带 `text_surfaces_changed` 数组而非一个布尔。本 schema 收 `text_changed: boolean` 与 `text_fingerprint: [null, hex64]`，把 `text_changed=false` 时的一致性问题留在第二个 if/then 的 description 里并明说它无法由 schema 校验。"
+    },
+    {
+      "id": "PRP-4",
+      "summary": "canonical 可以不经本事件就移动，而决定「谁定、凭什么定」的 `decision_kind` 从不进事件；E30 的权利复查提示同样只在读路径上",
+      "set_canonical": "§5.1 行 534：`| POST | `/props/{id}:set-canonical` |`，与 `:accept`（行 435）是并列的两条命令。",
+      "canonical_pointer": "§2.5 行 289–304 的 `canonical_pointer` 列：`revision` / `text_fingerprint` / `decided_at` / `decided_by` / `decision_kind` / `reason_text` / `prior_canonical` / `superseded_at`。行 296 的 CHECK：`decision_kind IN ('human_approved','policy_auto','initial_import')`。",
+      "decision_rule": "§1.5 行 149：「`canonical_text` 改变必须 `human_approved`，不允许 `policy_auto`。」§3.3 行 380：文字变更「必须 human_approved；story_critical 时必须带 reason_text 与（若已用于已交付集）impact_plan_ref」。",
+      "topics": "contracts/event-topics.v2.json 里 `producer: \"S14\"` 只有 `asset.prop.revision.accepted` 一条；没有 canonical 变更主题。",
+      "rights": "§4.3 行 495 的读响应带 `\"rights_recheck_required\": true`；E30-E1（行 680）`| E30-E1 授权撤销后仍返回 revision | rights_recheck_required=true |`。本事件（行 554–566）没有这个键。",
+      "why_it_matters": "两件事同一个结构缺陷。\n\n**canonical**：`decision_kind` 是 §1.5 与 §3.3 那条「文字变更必须人审」规则的唯一可审计证据——它记的是「这次改变是谁定的、凭哪种机制定的」。它进 `canonical_pointer`，不进事件。于是任何只订阅本事件的消费方（S10 的投影刷新、S17 若真的订阅）拿到 `became_canonical=true` 却拿不到 `decision_kind`，无法区分「人审通过」与「policy_auto 溜过去」。而这恰是 §1.5 说「不允许」的那种情况——不允许的意思应当是「能被发现」，但事件形状让它不可被发现。\n\n**canonical 的移动**：`set-canonical` 是独立命令，能不产生新 revision、不发任何事件地移动指针。按本事件缓存「当前 canonical 是哪一版」的消费方会在它之后永久陈旧，且没有信号。这与 S13 的 SCN-2 完全同构，连「S13 只有一个 topic」这个事实都一样。\n\n**权利**：行 495 的读响应告诉调用方「要复查」，行 554–566 的事件不告诉。只吃事件的一方若信任 `rights_ref` 而不实时查 S02，按构造就违反 E30-E1——而 E30-E1 只读路径可测，所以集成测试会通过。",
+      "consequence": "三处叠加的净效果：本事件关于「这一版是否已成权威」「它是怎么成为权威的」「它的权利还作不作数」这三个问题，都只能给出一半答案。`became_canonical` 说「成了」，不说「谁批的」；`canonical_revision` 说「当前是 3」，而 3 可能在事件之后就不对了；`rights_ref` 说「有指针」，不说「要不要复查」。方案在这些位置的选择都是「把状态推给读接口」——这个选择本身是对的（存状态就会失效），但它要求消费方真的去读接口，而事件里没有任何字段提示它该这么做。",
+      "fix_shape": "需 owner 定三件：(1) 是否补一个 canonical 变更事件（带 `decision_kind`/`decided_by`/`prior_canonical`），让 canonical 的每次移动都有信号；若不补，至少在文档里把 `canonical_revision` 定义为「接受那一刻的快照」，并要求消费方按 `GET /props/{id}/canonical` 复核；(2) `decision_kind` 是否该进本事件——建议进，因为 §1.5 的门是「不许 policy_auto」，而下游若需要验证这一点，没有它就无从验；(3) 本事件是否带 `rights_recheck_required`（建议带且恒为 true，理由同行 495：S14 不缓存权利状态）。另需说明「已用于已交付集」由谁判定——见 PRP-1。本 schema 不擅自加 `decision_kind` 或 `rights_recheck_required`（方案没写），只把这些缺口记在这里。"
+    },
+    {
+      "id": "PRP-5",
+      "summary": "`text_changed`/`required_variants_covered` 都是只存在于事件里的派生布尔，事件又都不带 `parent_revision`——于是这两个值在接受之后无法被任何一方复算或核对",
+      "event_keys": "§5.3 行 547–568 的 11 个 data 键：`prop_ref` / `prop_kind` / `story_critical` / `became_canonical` / `canonical_revision` / `text_changed` / `text_fingerprint` / `variant_axes` / `required_variants_covered` / `impact_plan_ref` / `rights_ref`（外加 envelope 层的 `schema_version`）。**没有 `parent_revision`。**",
+      "ddl_has_parent": "§2.2 行 208：`parent_revision  integer,` —— 这一列存在，行 214 有 `pr_parent_lt CHECK (parent_revision IS NULL OR parent_revision < revision)`。",
+      "derived_booleans": "`text_changed` 由行 445–446 在事务内算出；`required_variants_covered` 由行 421 第 3 条的校验结果得出。两者都不在 `prop_revision` 的任何列里（行 194–212 的 17 列逐一核对过）。",
+      "why_it_matters": "`text_changed` 要复算必须知道 parent revision 的 `text_fingerprint`；`required_variants_covered` 要复算必须知道接受那一刻 `required_variant` 表的内容。前者可以靠 parent revision 读（但事件不告诉消费方 parent 是哪一版——`parent_revision` 不一定是 `revision - 1`，行 214 只要求小于）；后者根本不可能，因为 `required_variant` 是可增删的活表（行 231–239 无历史版本）。\n\n所以这两个布尔都是「事件现场的一句话」：接受之后,`GET /props/{id}/revisions/{revision}` 回到的是 `payload`/`text_fingerprint` 等原始列，拿不到这两个值；而审计若问「这一版当初是否被判为文字变更」，除了回放事件没有第二条路。这与 S13 的 `topology_changed` 不同——那个至少承诺了「封存时会校验」（S13 行 177），且校验所需的两侧数据都在 S13 自己库里。",
+      "consequence": "回放或审计时，事件是这两个值的唯一来源。这不是错，但它意味着：任何对这两个值的争议（「你当时说没改文字」）都只能靠「事件确实发过这一条」来裁决，不能靠库里的状态复核。若再叠加 PRP-3 的第 (1)(2) 两个缺陷（NULL 语义与单面/多面），那么「当初判成 false」这件事本身可能是错的，而纠正它需要 parent revision——事件又没带。",
+      "fix_shape": "需 owner 定：事件是否补 `parent_revision`（DDL 已有该列，与 S13 的 SCN-5 是同一个建议）。补了之后 `text_changed` 至少可复算；`required_variants_covered` 仍不可复算（活表无历史），所以对它的处理应二选一：要么在 `prop_revision` 加一列存下来，要么承认它是纯事件字段并在文档里写明「不可回查」。本 schema 按行 554–566 原样收 12 键，**不擅自加 `parent_revision`**——以免把「事件该带父版本」这个尚未裁定的决定伪装成既成事实。"
+    },
+    {
+      "id": "PRP-6",
+      "summary": "S14 说的三个 QC 结论来源（`TEXT_OCR_MISMATCH` / `HOLDER_FEASIBILITY_FAIL` / `VARIANT_INCONSISTENT`）在质检方案里一个都不存在；而 S14 重复七次说的「S33/S34 的 QC」指的是音效与音乐服务，不是质检",
+      "s14_qc_refs": "行 52：「由 **S33/S34 的 QC** 执行」；行 120：「S33/S34 的 OCR 检查以此为准（S14 不做 OCR）」；行 426：「从 `quality_gate_ref` 读取 S33/S34 的 OCR 结果」；行 428：「与 S33/S34 出现两套判定」；行 717：「❌ S14 自己做 OCR 或视觉比对（归 S33/S34）」；行 736 C14-5：「本文由 S33/S34 的 QC 承担」；行 750：「接 S33/S34 QC（OCR、持用可行性、变体一致性）」。",
+      "what_s33_s34_are": "contracts/service-catalog.v2.json：`S33 音效生产`、`S34 BGM与音乐`。docs/design-package/DESIGN.md 行 159–160 同。它们的方案（plans/S33-sound-effects.md 1496 行、plans/S34-music.md 1635 行）全文对 `OCR`、`variant_axes`、`prop`、`asset.prop` 的命中为 0。",
+      "what_qc_is": "DESIGN.md 行 161–162：`| S35 | 媒体技术质检 | quality | technical_qc |`、`| S36 | 视觉语义与时序质检 | quality | semantic_qc |`。QCReport v2 的规范在 plans/S35-technical-qc.md §2（S35 行 8 自述「质量域共享契约 `QCReport v2` 的唯一规范位置」），S36 只在它上面做扩展。",
+      "check_ids_absent": "`HOLDER_FEASIBILITY_FAIL`（S14 行 685）与 `VARIANT_INCONSISTENT`（S14 行 686）在 plans/ 与 contracts/ 与 docs/ 下的非 S14 文件里命中均为 0。S35 的 check 表（行 782 附近）与 S36 的 check 表（行 211 附近）里都没有它们。OCR 在 S36 行 99 只作为流水线第 3 步的一个本地检测器（`face_detect / pose / hand / person_count / shot_boundary / color_hist / OCR`）出现，**没有对应任何具名 check_id**；S35 行 782 的 `TECH.SUBTITLE.BURNED_IN` 用 OCR 检烧录字幕，与道具文字无关。",
+      "why_it_matters": "两条独立的缺口叠在一起。\n\n**服务编号**：`S33/S34` 在整份 S14 里被当成「质检」，而它们是音效与音乐生产。这不是一处笔误——七处、覆盖职责边界（行 52）、硬约束（行 120）、事务校验（行 426）、反模式（行 717）、冲突表（行 736）、实施顺序（行 750）。同一个错误出现在六个不同语境里，说明写的时候确实认为「S33/S34 就是质检」。同类错误在 S11/S12/S13 也有（各 3–6 处），所以是资产族共有的，不是 S14 独有。\n\n**check_id**：即便把编号改成 S35/S36，`HOLDER_FEASIBILITY_FAIL` 与 `VARIANT_INCONSISTENT` 也不是它们的 check。S14 行 685–686 的 E24-E2/E24-E3 把这两个名字当作既定结论，而质检方案里没有登记。这意味着：「角色持用可行性」与「变体图之间形态一致」这两项 docs/10 明确列出的道具质量门（docs/10 行 10：`| 道具 | 尺寸外观、文字细节、开合损坏状态 | 文字/形态、角色持用可行性 |`），今天**没有服务在产出它们的结论**。S14 的 `quality_gate_ref`（行 209）是 `NOT NULL`，所以每次接受都必须带一个值——带什么、谁验的，方案没说。",
+      "consequence": "S14 的质量门在实现上会退化成「`quality_gate_ref` 非空即可」。行 426 第 6 条「`must_be_readable` 且 OCR 不通过 → 422 `TEXT_OCR_MISMATCH`」要求从那个引用里读出一个 `text_ocr_pass` 布尔（行 451 的 `candidate.prop_check.text_ocr_pass`），而没有任何 QC 服务承诺产出它。集成测试里这个字段只能由夹具填一个 `true`——于是「文字对不对」这条对道具最关键的检查（行 145：「文字一旦有误，整条线索就废了」）在任何真实链路上都没有执行者。",
+      "fix_shape": "需 owner 定：(1) 把 S14（及 S11/S12/S13）里七处 `S33/S34` 改成正确的质检服务编号，并确认是哪几个——OCR 与「形态一致性」在 S36（视觉语义，行 99 的检测器清单里有 OCR）；「角色持用可行性」按 S14 行 52 自己的说法需要 S11 的体型 + S14 的尺寸，「QC 自己调 S11」，这更像 S36 的跨资产检查；技术性 OCR 是否归 S35 也要定。(2) 在 S35 或 S36 的 check 表里登记这三个 check：`TEXT_OCR_MISMATCH`（已有名称，未登记）、`HOLDER_FEASIBILITY_FAIL`、`VARIANT_INCONSISTENT`，并给出各自的 `dimension`/`severity`/`action_family`（S35 行 111 的维度清单里已有 `prop` 一项，说明这个维度是为道具预留的）。(3) 在登记之前，`quality_gate_ref` 的 `NOT NULL` 与行 426 的 OCR 校验都应标为「等 QC 登记后启用」，而不是默认值填充。本 schema 不含 QC 字段（事件里没有），所以这条只是记录，不影响形状。"
+    }
+  ]
+}
