@@ -3062,3 +3062,106 @@ FAIL  readme     1 problem(s)
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
 
+
+## 16.23 `published_events` 和 topics 表是同一件事写了两遍，此前没人比对
+
+**发现的经过。** 上一节之后继续找「还有哪件实质的事没人检查」，而不是找「哪段代码还能改得更整齐」。沿事件这条线查下去：
+
+- 四份 QC 方案里的占位符（TODO / TBD / 待补）——48 份方案里只有 6 份共 7 处，全在非关键段落，够不成一项检查。
+- 55 个 topic 是否在其生产者的方案里出现过——全部出现，0 缺失。方向不可行。
+- 方案里靠近事件语境的 71 个非 catalog 点号标识符——绝大多数是显式的「本地事件，不对外发布」或「我们不发这个」（C8 / C15-2 / C45-4 这类声明）。用正则去判「谁该发什么」在这份语料上必然误报，放弃。
+
+然后撞到真正的那一件：
+
+```
+$ grep -n "published_events" tools/check_all.py
+（无输出）
+```
+
+`service-catalog.v2.json` 每个服务有一行 `published_events`（列事件类型），`event-topics.v2.json` 每个 topic 有一行 `producer`（列谁生产）。**这是同一个事实的两份副本，而两份都没有被任何检查读过。** 后果是：某个服务在 topic 表里加了行、catalog 没跟；或者 catalog 声明了一个没有 topic 承载的事件类型——两个文件各自仍然能 `json.load`，套件仍然全绿。
+
+**先说错的那一次。** 第一版比对脚本把 catalog 的 `published_events` 直接和 topics 表的 **topic 名**取差集，报出 **48 个服务全部不一致**。结论是错的，因为两边根本不是同一种东西：
+
+| | 装的是什么 | 长什么样 |
+|---|---|---|
+| catalog `published_events` | 事件类型 `event_type` | `access.grant.changed` |
+| topics 表 `topic` | topic 名 | `drama.tenant-access.v2` |
+| topics 表 `event_type` | 事件类型 | `access.grant.changed` |
+
+按 `event_type` 重新比对后：
+
+```
+published_events vs event_type:
+  disagree: 0
+
+any published_events value that is a topic name (not an event_type):
+   none
+
+topics whose producer's published_events omits them: 0
+```
+
+也就是**今天两边是一致的**：55 个 topic、55 条 `published_events`，逐服务一一对应。这项检查的价值不在抓当前错误，在于此后任何一侧单独变动都会被抓住。
+
+**加进 `check_catalog` 的做法。** 按服务逐个双向比对，而不是先全局收集再分头报——否则一个 topic 换了生产者会同时触发两条互补的失败，读起来像两个问题：
+
+```python
+    types_by_producer = {}
+    for t in topics:
+        et = t.get("event_type")
+        if et:
+            types_by_producer.setdefault(t.get("producer"), set()).add(et)
+    published_total = 0
+    for s in cat:
+        claimed = set(s.get("published_events") or [])
+        published_total += len(claimed)
+        actual = types_by_producer.get(s["service_id"], set())
+        for et in sorted(claimed - actual):
+            r.fail(f"{s['service_id']} catalog lists {et!r} in published_events, "
+                   f"but no topic it produces has that event_type")
+        for et in sorted(actual - claimed):
+            r.fail(f"{s['service_id']} produces {et!r}, but its catalog row does "
+                   f"not list it in published_events")
+```
+
+`note` 相应从 `48 service(s), 55 topic(s)` 变为 `48 service(s), 55 topic(s), 55 published_event(s)`。已确认 `README_CLAIMS` 里没有任何一条读 `catalog` 的 note，改这段文字不会打断 readme 的锚点。
+
+**负向测试（六个方向里挑四个，改副本不改真实文件）。** 用 `importlib` 载入 `check_all`，替换 `_utf8` 让它返回改过的 JSON 文本，跑完即弃：
+
+```
+--- 0 baseline (no edit)
+    failures: 0
+    note: 48 service(s), 55 topic(s), 55 published_event(s)  [producer-only: no topic declares consumers]
+
+--- 1 catalog drops one published_event (S01 -= access.grant.changed)
+    failures: 1
+      S01 produces 'access.grant.changed', but its catalog row does not list it in published_events
+    note: 48 service(s), 55 topic(s), 54 published_event(s)
+
+--- 2 catalog invents an event_type (S01 += bogus)
+    failures: 1
+      S01 catalog lists 'bogus.never.happens.v9' in published_events, but no topic it produces has that event_type
+    note: 48 service(s), 55 topic(s), 56 published_event(s)
+
+--- 3 topic drama.tenant-access.v2 producer S01 -> S02
+    failures: 2
+      S01 catalog lists 'access.grant.changed' in published_events, but no topic it produces has that event_type
+      S02 produces 'access.grant.changed', but its catalog row does not list it in published_events
+    note: 48 service(s), 55 topic(s), 55 published_event(s)
+
+--- 4 S02 claims S01's event_type
+    failures: 1
+      S02 catalog lists 'access.grant.changed' in published_events, but no topic it produces has that event_type
+    note: 48 service(s), 55 topic(s), 56 published_event(s)
+```
+
+四个方向：漏一条、凭空加一条、换生产者、把别人的事件类型抄到自己名下。基线 0 条失败（不是被吞掉——第一节的 allowlist 机制在本检查里没有用到），每个改动都恰好报出该报的那几条，不多不少。第 3 个方向报两条是**对的**：一次 producer 变更确实让两侧同时失真，两条消息分别指出各侧该改什么。
+
+**这一节自己的更正表。**
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 第一版比对脚本：`services whose published_events disagrees with the topics table: 48` | 按 `event_type` 对齐后 **0** 个不一致 | **拿事件类型去和 topic 名取差集。**两侧装的是不同的东西（见上面那张表），48 个全红说明的是我比错了字段，不是数据有问题 |
+| 2 | 本节初稿的差值检查：先全量收集 `claimed - actual`，再按服务报 | 改成按服务逐项双向比 | 第一版在「topic 换了生产者」时会同时触发两条互补失败，读起来像两个独立缺陷。写法应当让一个改动对应一组可读的消息 |
+| 3 | 第一版代码引用 `catalog` 变量 | 该函数里叫 `cat` | 照抄了脚本里的变量名，没核对 `check_catalog` 函数体的实际命名，运行时才 `NameError` |
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。

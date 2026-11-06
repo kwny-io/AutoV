@@ -208,12 +208,43 @@ def check_catalog(name):
         else:
             seen_types[et] = t.get("topic")
 
+    # `service-catalog.v2.json` says which event types each service publishes,
+    # and `event-topics.v2.json` says which service produces each topic. Those
+    # are the same fact recorded twice, and nothing compared them: a service
+    # could gain a row in the topic table without its catalog entry following,
+    # or the catalog could claim an event type that no topic carries, and both
+    # files would each still parse.
+    #
+    # They are not the same shape, which is the trap: the catalog lists
+    # *event_type*s (`access.grant.changed`), the topic table lists *topics*
+    # (`drama.tenant-access.v2`) and carries the event_type alongside. Comparing
+    # the two by set membership straight across reports all 48 services as
+    # disagreeing -- I did exactly that first. Resolve to event_type on both
+    # sides.
+    types_by_producer = {}
+    for t in topics:
+        et = t.get("event_type")
+        if et:
+            types_by_producer.setdefault(t.get("producer"), set()).add(et)
+    published_total = 0
+    for s in cat:
+        claimed = set(s.get("published_events") or [])
+        published_total += len(claimed)
+        actual = types_by_producer.get(s["service_id"], set())
+        for et in sorted(claimed - actual):
+            r.fail(f"{s['service_id']} catalog lists {et!r} in published_events, "
+                   f"but no topic it produces has that event_type")
+        for et in sorted(actual - claimed):
+            r.fail(f"{s['service_id']} produces {et!r}, but its catalog row does "
+                   f"not list it in published_events")
+
     # No topic declares `consumers`, so the loop above has never had an entry to
     # check: the "consumers agree with the catalog" half of this check is dead
     # code. Adding the key is an owner decision (policy.revision-published.v2's
     # POL-* `fix_shape` says so), so the honest thing is to say it out loud
     # rather than let the green line imply the consumer leg ran.
-    r.note = f"{len(ids)} service(s), {len(topics)} topic(s)"
+    r.note = (f"{len(ids)} service(s), {len(topics)} topic(s), "
+              f"{published_total} published_event(s)")
     if not with_consumers:
         r.note += "  [producer-only: no topic declares consumers]"
     return r
