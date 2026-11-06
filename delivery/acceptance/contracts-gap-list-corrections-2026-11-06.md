@@ -5228,6 +5228,9 @@ pointer」，是事件消费侧；§3.1 讲的是状态机本身。S19 引用它
 
 `planrefs` 管的是方案引方案。同一族的另一半是文档引文档：`docs/NN §X` 共 **457** 处
 （`docrefs` 落地后含 README 自己新增的 3 处），其中 **445** 处受检，余下 12 处在豁免的更正报告里。
+**457/12 是 `docrefs` 落地那一刻的快照，不是当前值**：此后本报告每描述一次这个引用格式就多加一处
+（见本节末尾的自我指涉），今天检查报的是 **469** 处、**445** 处受检、**24** 处在豁免的报告里——
+总数和豁免数一起涨了 12，受检数没动。**写死的快照不加时点，下一轮读的人会把它当成当前值。**
 这类引用和 `planrefs` 有一个结构差别：**它们几乎都写在 markdown 链接里**
 （`[docs/07 §1.5](../docs/07-production-workflows.md)`），路径由 `links` 验，所以这里只需要验段号——
 而在此之前，没有任何检查看这一段。
@@ -5237,8 +5240,14 @@ pointer」，是事件消费侧；§3.1 讲的是状态机本身。S19 引用它
 `§N.M` 有两种合法落法，这是回表核出来的，不是假设：一是标题 `## N.M`；二是 `§N` 之下第 M 个
 有序列表项——`plans/S37-audio-alignment.md:359` 的 `docs/07 §1.5` 就是这种，docs/07 的 §1 只有
 `## 1. 整集生产` 一个标题，下面 9 个编号项，第 5 项原文是「S21扩展shot子工作流，S31配音与
-S37字级对齐确定对白长度……不创建空音频假成功」，正是引用行引的那句。语料里另有 9 处把它写全成
-`docs/07 §1 步骤 5`。**同一种东西的两种写法**，都接受，且分开计数。
+S37字级对齐确定对白长度……不创建空音频假成功」，正是引用行引的那句。**语料里另有 7 处**把它写全成
+「`§1` + 步骤 5」（`plans/S29-image-production.md:1052`、`S30-video-production.md` 5 / 494 / 1206、
+`S31-speech-production.md` 5 / 140 / 1327）。**同一种东西的两种写法**，都接受，且分开计数。
+
+这一格原写「另有 9 处」，是**全仓**的子串数而不是语料数：9 = 上面那 7 处 + 本报告上一段的 1 处
++ `contracts/README.md:1569` 的 1 处，后两处正是**在描述这个写法本身**。`plans/S07-change-management.md`
+的三处和 `S26-generation-jobs.md:386` 的章节标题 `### 步骤 5：S27 领取并提交` 是各自方案内部的步骤号，
+与 docs/07 第 1 节无关，不计数——**按关键字全仓数会把三种不同的东西加在一起**。
 
 **唯一没解决的是 `docs/10 §1`**（`plans/S31-speech-production.md:5`）。docs/10 没有任何编号标题——
 一个 `# 10` 加七块平铺内容（6 段文字 + 1 张表，无一个小标题）。所以 `§1` 只能指「第 1 块」，而引号里那句「授权撤销事件禁止新调用」
@@ -5266,10 +5275,12 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 把 `plans/S21-orchestration.md` 的 `docs/01 §3` 改成 `§9`（正确引用改错被抓）、
 删掉 known 条目（要求补回）。
 
-**定稿自查又抓到五处，都是我自己这一轮写下的：**
+**定稿自查又抓到七处，都是我自己这一轮写下的：**
 
 | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|
+| 本节「同上」那段 | 「语料里另有 9 处把它写全成 `docs/07 §1 步骤 5`」 | 语料里是 **7 处**（S29:1052、S30 5/494/1206、S31 5/140/1327）。9 是**全仓**子串数，多出的 2 处是本报告与 `contracts/README.md:1569` 在描述这个写法本身 | 用关键字数全仓命中，把「引用」和「描述引用」加在了一起；S07/S26 里同形的写法又是第三种东西（各自方案内部步骤号） |
+| 本节开头 | 「共 **457** 处…余下 12 处」当当前值写 | 那是 `docrefs` 落地时的快照；今天 **469** 处、**445** 受检、**24** 在豁免报告里 | 快照没写时点，而这个数会随本报告增删描述性引用而变，读的人无从判断它是不是当前值 |
 | 本节上段 | 第一个标题 bug「漏掉 `## 2.1 从命令派生`（那里是空格），7 个正确引用被误判」 | 那个标题只存在于 `plans/S25-model-routing.md:54`，不在 docs/；第一个 bug 实测影响 **0** 个段号对。7 是**第二个** bug（`## 3.跨集改稿`）的数字 | 把这个 bug 的叙述挪到了另一个 bug 上，并给了一个不在语料里的例子——**「7 个」是真的，索性就没去核它属于谁** |
 | 本节「唯一没解决的是 `docs/10 §1`」段 | 只写「实际在第 5 段」 | 第 5 段（正文空行分隔块，题头不计）与第 18 行（文件行号）都对，已补口径 | 同一位置的两个计数单位写进了相隔一百多行的两节，谁都没写单位，并排一读就自相矛盾。**回表复测：段号 5、行号 18，两个数各自都对** |
 | `check_all.py` 的 `check_docrefs` docstring | 「486 section pairs…484 to a heading」 | 489 pairs / 485 heading / 3 listitem / 1 neither | 计数写在函数写完之前，之后又加了两条新引用，docstring 没跟着改 |
@@ -5293,29 +5304,52 @@ HEAD 上是 481/481。**不是 README 错，是我的读数错。**
 正则字面里，改它不会 FAIL；加第三行去核它，会让之后任何人写的 `481 个段号对` 句子一并命中。
 留缺口比留误报好，但要写下来，免得下一轮当成「已经核过了」。
 
-**反向测试 32 个方向，32 个全部被抓到**（`tmp-rev32.py`，每个方向只改 README 摘要段里对应的那一个
-数字 +1，跑一次全量检查，看 `readme` 是否 FAIL，改完立即还原）：
+**反向测试 32 个方向，32 个全部被抓到。** 每个方向只改 README 摘要段里对应的那一个数字 +1，
+跑 `readme` 这一格，看它是否 FAIL，改完立即还原并逐字节比对：
 
 ```
-caught  JSON 解析 148->149      caught  planrefs ref 502->503
-caught  schema_ref 110->111     caught  planrefs judged 467->468
-caught  payload topic 55->56    caught  planrefs pair 481->482
-caught  openapi file ref 11->12 caught  planrefs pair hit 481->482
-caught  topic field 10->11      caught  docrefs ref 465->466
-caught  secret class 6->7       caught  docrefs judged 445->446
-caught  MCP tool 12->13         caught  docrefs pair 489->490
-caught  check_id 99->100        caught  docsreadme count 9->10
-caught  links 1330->1331        caught  citerefs citation 8->9
-caught  stated invariant 5->6   caught  plantopics 五项(49/58/720/239/60/421)
-caught  scaffold 118->119       caught  interaction 两项(18/36)
-caught  example 71->72          caught  archive match 51->52
-caught  unmapped example 1->2   caught  safety provider 8->9
+caught    JSON 解析                            148->149
+caught    schema_ref                           110->111
+caught    payload topic                        55->56
+caught    openapi file ref                     11->12
+caught    topic field                          10->11
+caught    secret class                         6->7
+caught    MCP tool                            12->13
+caught    check_id                            99->100
+caught    links                             1330->1331
+caught    stated invariant                     5->6
+caught    scaffold                           118->119
+caught    example                             71->72
+caught    unmapped example                     1->2
+caught    archive match                       51->52
+caught    safety provider                      8->9
+caught    interaction step                    18->19
+caught    interaction endpoint                36->37
+caught    plantopics plan file                49->50
+caught    plantopics topic mention            58->59
+caught    plantopics unjudged tokens         720->721
+caught    plantopics filename tokens         239->240
+caught    plantopics versioned-doc tokens     60->61
+caught    plantopics event-or-action tokens  421->422
+caught    docsreadme count                     9->10
+caught    citerefs citation                    8->9
+caught    planrefs ref                       502->503
+caught    planrefs judged                    467->468
+caught    planrefs pair                      481->482
+caught    planrefs pair hit                  481->482
+caught    docrefs ref                        469->470
+caught    docrefs judged                     445->446
+caught    docrefs pair                       489->490
 
 32 direction(s), 32 caught, 0 missed
 ```
 
 这一轮开始前 README 已经写着「三十一次全部被抓到」，但那 31 个方向的后台测试是我自己中途停掉的，
 **没跑完就写了结论**。现在 32 个方向全部实跑过，那句话才有依据。
+
+这一版结果与上一版有一处不同：`docrefs ref` 的基线从 465 变成 469（本报告又长了几处描述性引用），
+所以**只把这条的起始值改了，其余 31 条数字一字未动**。上一版是跑全量检查判定的，本轮改成直接调
+`check_readme_counts` 单跑这一格——全量版每绕一个方向要跑三个生成器，32 个方向跑不完就被我停掉了。
 
 **回源重数时再抓到一个：`docrefs` 的失败信息把行号少报 1。** 起因是我按规则去核报告里点名的
 那 7 处 `docs/07 §3`，用 `split("\n")[ln-1]` 取行，`plans/S07-change-management.md:655` 取到空行——
@@ -5324,7 +5358,8 @@ caught  unmapped example 1->2   caught  safety provider 8->9
 `planrefs` 用的是 `(?<![A-Za-z0-9])`（lookbehind，不消耗字符），所以它没这个问题——**同一份代码里两种写法，错的那个是后来的**。
 
 实测影响：全仓 30 处引用独占一行（分布在 17 个文件），它们的报错行号全部少 1。改成 lookbehind 后
-**匹配集合一处未变**（471 处，逐文件 diff 过），只有行号变对。变异验证：把 `S07` 那行 `docs/07 §3`
+**匹配集合一处未变**（修复当时是 471 处，逐文件 diff 过；今天 469，因为本报告的描述性引用增删过），
+只有行号变对。变异验证：把 `S07` 那行 `docs/07 §3`
 改成 `§9`，报的是 `plans/S07-change-management.md:656 cites docs/07 §9`——指向引用自己那行，不再是上一行。
 
 这一条没被任何检查抓到，因为它只在**失败信息**里错，而当时这 30 处全部解析成功、从没打印过行号。
