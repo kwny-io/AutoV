@@ -4808,3 +4808,58 @@ MISSED summary 24 -> 25    ok    readme  24 count(s) ...; count list 24 value(s)
 | 二十项里 → 十八项里 | `README's later sentence says 十八项里, but 20 checks are registered` |
 | 二十项里 → 二十一项里 | 同上，报 二十一项里 |
 | 删掉「N 项里」这个锚点 | `no longer states 'N 项里 `registry` 那一格' about the skipped check` |
+
+### 补记十一之十：这一轮的两个「发现」，都是我自己写错探针造出来的
+
+连续九轮做散文数字之后，这轮换方向去找「结构性领域没被检查覆盖」。找到两处，**两处都不是仓库的缺陷，是我探针的错**。记下来是因为它们各自都能骗过我一次。
+
+**其一：`services/*/service.md` 的五行表格没人核（假的）。**
+
+初判依据是一段比对脚本报 `cells 240 mismatch 144 missing 0`。这个数不敢信，回表看样本：
+
+| 报出的「不一致」 | 实际 |
+|---|---|
+| `资产` vs `assets` | 我拿中文显示名去比英文 slug，比的是两种表示 |
+| `执行` vs `execution` | 同上 |
+| `generation_jobs` vs `本服务只持有 generation_jobs 这一张表…` | 我把 `schema` 行比到了 `data_owner`（长描述），该比的是 `schema_owner`（短 slug） |
+
+按列重建显示名映射后又量了一遍：`schema` / `命令入口` / `查询入口` 三列 **144 格全对，0 错 0 缺**。`域` / `团队` 两列的中文名映射，两列各自独立建表后都是双射（`domain` 16 个中文名对 16 个 slug，`runtime_owner_team` 15 对 15，两个方向都没有一对多）：
+
+| 列 | 不同中文名 | 不同 slug | cn→多 slug | slug→多中文名 |
+|---|---|---|---|---|
+| `domain` | 16 | 16 | 0 | 0 |
+| `runtime_owner_team` | 15 | 15 | 0 | 0 |
+
+两列必须分开建表，不能合并成一张：`production` 和 `generation` 都显示成「生成」——前者在 `domain` 列，后者在 `runtime_owner_team` 列。合并成一张全局表会立刻撞车，而分行看是干净的。
+
+根因是 `service.md` 本来就由 `tools/scaffold/generate_services.py` 的 `render_md()` 生成，不是手写的。**那 144 格全对是同义反复，不是发现。**
+
+**其二：`scaffold` 不比对 `service.md`（假的）。**
+
+既然 `service.md` 是生成物，就该问 `check_scaffold` 有没有真比它。看代码，`specs` 里显式列了 `"service.md": m.render_md(s)`，比对循环对临时 ROOT 下每个文件逐字节 diff——它**是**比对 `service.md` 的。
+
+但我第一次做反向探针时报了两处 MISSED。原因是判定行写成：
+
+```python
+caught = any("generation-jobs/service.md" in f for f in r.failures)
+```
+
+Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`，反斜杠，`in` 永远不成立——于是「没找到失败」被我读成了「检查漏了」。改用 `'generation-jobs' in f` 之后 4/4 全中：
+
+| 改动 | 结果 |
+|---|---|
+| `schema` 格 `generation_jobs` → `generation_jobz` | caught |
+| `域` 格 `执行` → `生成` | caught |
+| 删掉整行「查询入口」 | caught |
+| 行尾多两个空格 | caught |
+
+第一次探针还在恢复文件之前因为 `Result` 没有 `.ok` 属性抛异常退出了，把变异过的 `service.md` 留在了树里。事后 `git status` 看到 `M services/generation-jobs/service.md` 才补的恢复——探针必须把恢复放进 `finally`，这一条以后照办。
+
+**两件事的共性：** 一个错在「比对的两边不是同一个东西」（显示名比 slug、长描述比短 slug），一个错在「判定用了一个隐式平台假设」（`/` 分隔符）。两个都表现为一个具体的数字（144、MISSED），都不是「检查没覆盖」，而是**我的探针没有先自证能看见正确的东西**。
+
+所以这轮**没有改任何生产代码或检查**。`scaffold` 对 `service.md` 的覆盖是完整的，`check_all.py` 无改动，19 passed / 1 skipped 与上轮一致。补这一行是为了把 144 这个数钉死在这里，免得下一轮有人（包括我）再把它当成待修的缺口重新报一遍。
+
+| 原写 | 正确 | 错因 |
+|---|---|---|
+| `cells 240 mismatch 144` | 三列 144 格 0 mismatch；两列映射双射 | 用中文显示名比英文 slug，且 `schema` 比到了 `data_owner` |
+| `scaffold` 漏检 `service.md` | 已逐字节比对，4/4 探针全中 | 探针判定按 `/` 匹配 Windows 的 `\` 路径 |
