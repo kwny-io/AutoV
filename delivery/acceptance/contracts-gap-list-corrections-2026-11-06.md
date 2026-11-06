@@ -3794,3 +3794,107 @@ producers affected: ['S04', 'S06', 'S11', 'S12', 'S13', 'S14', 'S15', 'S20', 'S4
 | 1 | 本节初稿把 `contracts/README.md:1469` 那张关系图读成「`service.yaml` 引用 topic 的 `schema_ref`」，据此打算报「图说有、实物没有」 | 图读错了：`──schema_ref──▶` 那条箭头**从 `event-topics.v2.json` 出发**指向 payload schema，跟 `service.yaml` 无关；`schema_ref` 在 48 个 yaml 里出现 0 次是设计如此 | 三层图里箭头起点在行尾、终点在下一行，我把「上一行末尾的对象」当成了起点。**读 ASCII 图要先定位每段箭头两端的文件名，再判方向** |
 | 2 | 本节初稿按 `topic` 名把 `service.yaml` 连回 `event-topics.v2.json`，得到「7 行对不上」 | `topic` **不是唯一键**：3 个 topic 名被 10 个事件共用（`drama.delivery.v2` 一个挂了 4 个）。换 `event_type` 连接，55/55 全中 | 拿"看起来像主键"的字段去 join，没先查它是否唯一。这正是 `check_all.py:240-252` 注释里记过的同一个坑（作者当时也是先按 topic 比错的） |
 | 3 | 本节初稿称 docs/16:25 的「发布版本」在 `service.yaml` 里不存在，是缺陷 | 不报：那是 `docs/16 §2`「**建议**仓库与交付结构」里的条目，指未来交付仓的形态，不是本仓现状 | 把「建议结构」当成「当前产物规格」来验收 |
+
+## 16.32 `contracts/*.schema.json` 有 8 个不挂在任何 topic 上，说明文字却把 64 个一律叫「单 topic 的 payload schema」
+
+`contracts/README.md:17` 的布局块是这么描述这一类文件的：
+
+```
+  *.v2.schema.json             企业 schema + 单 topic 的 payload schema（见下）
+```
+
+**「单 topic 的」**——每个文件对应一个 topic 的 payload。数一遍：
+
+```
+contracts/*.schema.json:                              64
+referenced by a topic (schema_ref 或 data_schema_ref): 56
+not referenced by any topic:                           8
+```
+
+56 的构成要分开看，两个键不重叠：
+
+```
+event-topics 里 schema_ref 的取值      = {event-envelope.v2.schema.json}   （55 条全指这一个）
+event-topics 里 data_schema_ref 的取值 = 55 个不同文件                      （55 个 topic 各一个）
+两者并集                                = 56
+```
+
+所以并不是「55 个 payload schema」，而是 **55 个 payload schema + 1 个 envelope**。66 行那张表的标题
+和关系图里的「55 个 payload schema」指的是前者，没算 envelope——这两处是对的，但它们也没说
+envelope 也在 `contracts/*.schema.json` 里、也被 `schema_ref` 引用着。同一个数（56）在
+`payloads` 检查的 note 里写作 `110 schema ref(s)`（55 个 topic × 2 个键），在 README:1486 写作
+`110 条 schema_ref / data_schema_ref`，都对，只是口径不同，容易读串。
+
+**真正没被任何东西引用的是这 8 个：**
+
+```
+admission-record.v2.schema.json
+automation-policy.v2.schema.json
+context-pack.v2.schema.json
+enterprise-change-plan.v2.schema.json
+episode-manifest.v2.schema.json
+execution-context.v2.schema.json
+generation-command.v2.schema.json
+memory-claim.v2.schema.json
+```
+
+它们不是垃圾文件，也不是漏挂。名字形态就不同：八个是**单数名词**（`-record` / `-policy` /
+`-pack` / `-plan` / `-manifest` / `-context` / `-command` / `-claim`），
+而 55 个 payload schema 的名字末段绝大多数是**过去分词**——实测计数：
+
+```
+created 9, completed 8, ready 8, changed 6, accepted 5, published 2, failed 2,
+committed 2, updated/ingested/applied/received/sealed/posted/computed/
+selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
+```
+
+（`ready` 8 个不是分词，是形容词；`prompt.compiled` 的末段带点号，是那 11 个推不出
+`data_schema_ref` 的名字之一，见 §16.31。）
+
+读它们的顶层形状也一致——`properties` / `required` / `additionalProperties`，其中 4 个还带 `allOf`
+（`admission-record` / `automation-policy` / `generation-command` / `memory-claim`），
+这是**跨字段不变量的写法**，事件 payload 用不着。
+
+它们是 REST 请求/响应体的形状，被别的 schema 用 `$ref` 挂着（数 `contracts/**/*.json` 里
+提到该文件名的文件数）：
+
+| 文件 | 被多少个 JSON 引用 |
+|---|---|
+| `execution-context` | **11** |
+| `episode-manifest` | **6** |
+| `automation-policy` | 3 |
+| `generation-command` | 3 |
+| `context-pack` | 2 |
+| `enterprise-change-plan` | 2 |
+| `admission-record` | 1（`redaction-policy.v2.json`） |
+| `memory-claim` | **0** |
+
+`memory-claim` 只被 `plans/S16-story-memory.md` 和 `examples/memory-claim.json` 用到，
+没有任何 JSON 契约引用它。**这不是缺陷**——它是 S16 的领域对象，S16 还没有实现。**这也不是漏挂。**
+
+**问题只在那一行说明文字。** 它把 64 个文件说成同一类（"单 topic 的 payload schema"），
+而实际是三类：
+
+| 类别 | 个数 | 谁引用 |
+|---|---|---|
+| envelope | 1 | 55 个 topic 的 `schema_ref` 全指它 |
+| 单 topic 的 payload schema | 55 | 各一个 `data_schema_ref` |
+| REST 请求/响应体形状 | 8 | 不被任何 topic 引用，由方案里的 DDL / API 段引用 |
+
+**`check_payload_refs` 只查正向，查不出这个。** 它遍历 55 个 topic、把 `schema_ref` /
+`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:763-772`），
+从不反向问「contracts/ 下有没有哪个 schema 没被任何 topic 指到」。两个方向里缺了反向那一个，
+所以上面那个 8 从来没人报过，它也就一直被那行说明文字盖着。
+
+**没有改那行说明文字。** 改它意味着替 owner 决定这 8 个算第几类、是不是该挪到
+`contracts/quality/` 之类的子目录——`contracts/README.md:733` 已经记过「payload schema 一律平铺在
+`contracts/` 下」是本仓的既有约定，动它是一次目录结构变更。只把数记在这里。
+
+### 更正表
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 本节初稿「`contracts/*.schema.json` 有 63 个 payload schema，而 README 说 55 个，差 8 个」 | 63 里 55 个是 payload、8 个是 REST 形状；被引用的共 56 个（多出的 1 个是 envelope）。两个数都没错，错的是把 64 个归成一类 | 先数了「文件数减 envelope」，再拿它直接和「payload schema 数」比。**两个口径的数相减之前，要先确认它们是不是同一类东西** |
+| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:752`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
+| 3 | 本节初稿「`execution-context` 被 13 个 JSON 引用、`episode-manifest` 被 16 个引用」 | 实为 **11** 和 **6**；且 `memory-claim` 被 **0** 个 JSON 引用（只被 S16 方案与一个 example 用到） | 13 / 16 是上一轮 `grep -rl` 的**文件命中数**（含 md 与自引用），不是 `contracts/**/*.json` 里的引用数。两个口径混用了一次 |
+| 4 | 本节初稿「55 个 payload schema 全是过去分词或事件名词」 | 末段分布里 `ready` 有 8 个（形容词），`prompt.compiled` 的末段还带点号；只能说"绝大多数是过去分词" | 先下了"全是"这个强判断，再去找例子印证。**枚举类判断必须先数分布再写程度词** |

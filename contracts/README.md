@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1328 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1329 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
@@ -1503,7 +1503,7 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1328、
+那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1329、
 stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
@@ -1720,6 +1720,27 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    **没有改 `render_yaml`。** 补这个字段会改变所有下游读者（含
    `plans/README.md:35` 里"以 `service.yaml` 为准"的实现者）看到的输出形状，属于 owner 决定。
    逐数字见 [§16.31](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
+
+7. **`contracts/*.schema.json` 是三类文件，不是一类；其中 8 个不挂任何 topic。**
+   本文开头布局块把它写成「企业 schema + 单 topic 的 payload schema」，只说了两类。实测：
+
+   | 类别 | 个数 | 谁引用 |
+   |---|---|---|
+   | envelope | 1 | 55 个 topic 的 `schema_ref` 全指它 |
+   | 单 topic 的 payload schema | 55 | 各一个 `data_schema_ref` |
+   | REST 请求/响应体形状 | 8 | 不被任何 topic 引用，被别的 schema `$ref` 挂 |
+
+   合计 64，被 topic 引用的并集是 **56**（55 payload + 1 envelope）。8 个游离文件是
+   `admission-record` / `automation-policy` / `context-pack` / `enterprise-change-plan` /
+   `episode-manifest` / `execution-context` / `generation-command` / `memory-claim`——
+   全是单数名词、带跨字段 `allOf` 不变量，是 REST 体的形状。其中 `memory-claim`
+   连 `$ref` 都没有（只在 S16 方案和一个 example 里出现），因为它对应的服务还没实现。
+
+   `payloads` 检查只做正向：topic 指到的文件必须存在（`check_all.py:763-772`）。
+   **反向那一半没有**——从不问「`contracts/` 下有没有 schema 没被任何 topic 指到」，
+   所以这 8 个一直没人报。没加这条检查，是因为要不要给它们单独归类、挪不挪目录
+   属于 owner 决定（`contracts/README.md:733` 已记「payload schema 一律平铺」是既有约定）。
+   逐数字见 [§16.32](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
 
 ## schema 管不到什么
 
