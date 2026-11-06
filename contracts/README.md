@@ -1474,9 +1474,16 @@ python tools/check_all.py --only links,examples
 九项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
-（服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
+（服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（66 个示例对
 schema 校验，另 1 个刻意不映射）、`registry`（`check-registry.v2.json` 存在时才跑）。
+
+`catalog` 里还有一条**从没执行过**的分支：它会校验 topic 的 `consumers` 是否都是真实
+服务 id，但 `event-topics.v2.json` 的 55 个 topic **没有一个带 `consumers` 键**，那条
+`for c in t.get("consumers", []) or []` 至今 0 次进入。所以这一项的绿只覆盖生产者一侧。
+现在 `catalog` 的 note 会显式写出 `[producer-only: no topic declares consumers]`，
+免得这行绿读成「生产消费方都查过了」。要不要给 topic 加 `consumers` 是 owner 决定
+（见 `policy.revision-published.v2.schema.json` 的 POL-* `fix_shape`），不是这里能补的。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
 文件时，消费方看到的是「有类型契约」，而校验器在读取时才会炸——失败落在别人服务里。

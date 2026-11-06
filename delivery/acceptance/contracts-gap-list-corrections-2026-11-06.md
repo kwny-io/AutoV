@@ -1837,3 +1837,65 @@ exit code: 1
 `aggregate_identity_problems()`。
 
 九项仍是全过，`examples` 一项输出不变（71 valid / 0 failing / 1 without a schema）。
+
+### 16.10 `catalog` 那条绿只覆盖了一半，而且另一半从没跑过
+
+§16.9 关掉的是示例层的两个洞。顺着「还有哪些检查是绿的但其实没跑」再找一次，
+`check_catalog` 里有一处：
+
+```
+134        for c in t.get("consumers", []) or []:
+135            if c not in known:
+136                r.fail(f"topic {t.get('topic')}: consumer {c!r} is not a catalog service_id")
+```
+
+`_tmp_consumers.py` 的数：
+
+```
+topics                        = 55
+topics with a 'consumers' key = 0
+total consumer entries        = 0
+
+all keys used by any topic    = ['data_schema_ref', 'delivery', 'event_type',
+  'normal_retention_days', 'partition_key', 'pii_payload', 'producer',
+  'replay_side_effects', 'schema_ref', 'topic']
+```
+
+55 个 topic 没有一个是带 `consumers` 键的，所以上面那个循环**从仓库存在至今 0 次进入**。
+`git log -S'"consumers"' -- contracts/event-topics.v2.json` 也是空的——这个键从来没进过库。
+
+问题不在那条循环本身，在它旁边那行绿：
+
+```
+ok    catalog    48 service(s), 55 topic(s)
+```
+
+`contracts/README.md` 把这一项写成「服务 id / topic 生产消费方 / `docs/02` 三方一致」。
+**「生产消费方」是两件事，实际只查了生产方。** 这正好违反 `check_all.py` 文件头自己立的规矩
+（行 13–15）：一个没跑成的检查不能读成绿灯。
+
+**没有替 owner 补 `consumers`。** `policy.revision-published.v2.schema.json` 行 163 的
+`fix_shape` 写着加这个键「需 owner 定」，加之前还要定每个 topic 的消费方是哪些服务——
+那是一次全仓语义变更，不是校验器能自己填的值。
+
+改的是**让绿说实话**：
+
+```
+ok    catalog    48 service(s), 55 topic(s)  [producer-only: no topic declares consumers]
+```
+
+三个用例验证（`_tmp_consumers_test.py`，改完还原原始字节，`restored: True`）：
+
+| 注入 | 退出码 | `catalog` 那行 |
+|---|---|---|
+| 不注入（现状） | 0 | `48 service(s), 55 topic(s)  [producer-only: no topic declares consumers]` |
+| `topics[0].consumers = ["S01", "S99"]` | 1 | `FAIL catalog 1 problem(s) [...]` / `topic drama.tenant-access.v2: consumer 'S99' is not a catalog service_id` |
+| `topics[0].consumers = ["S01"]` | 0 | `48 service(s), 55 topic(s)`（不带 `producer-only`） |
+
+第二行是要紧的：注入之前那条分支**从未执行**，注入之后它真的报错——说明不是循环写错了，
+只是没有输入。第三行说明标只贴「一个 topic 都没声明」这个事实上，一旦有 topic 声明了它就消失。
+
+同时把 `contracts/README.md` 那行从「topic 生产消费方」改成「topic `producer`」，并加一段
+写清这条分支从没执行、谁来决定加 `consumers`。
+
+九项仍是全过，`scaffold` 仍是 120 个生成物与 catalog 一致（这次没碰生成物）。

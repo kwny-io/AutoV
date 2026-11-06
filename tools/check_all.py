@@ -126,21 +126,32 @@ def check_catalog(name):
     topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
     known = set(ids)
     seen_types = {}
+    with_consumers = 0
     for t in topics:
         for field in ("producer",):
             owner = t.get(field)
             if owner and owner not in known:
                 r.fail(f"topic {t.get('topic')}: {field} {owner!r} is not a catalog service_id")
-        for c in t.get("consumers", []) or []:
-            if c not in known:
-                r.fail(f"topic {t.get('topic')}: consumer {c!r} is not a catalog service_id")
+        consumers = t.get("consumers")
+        if consumers:
+            with_consumers += 1
+            for c in consumers:
+                if c not in known:
+                    r.fail(f"topic {t.get('topic')}: consumer {c!r} is not a catalog service_id")
         et = t.get("event_type")
         if et:
             if et in seen_types:
                 r.fail(f"event_type {et!r} registered twice")
             seen_types[et] = t.get("topic")
 
+    # No topic declares `consumers`, so the loop above has never had an entry to
+    # check: the "consumers agree with the catalog" half of this check is dead
+    # code. Adding the key is an owner decision (policy.revision-published.v2's
+    # POL-* `fix_shape` says so), so the honest thing is to say it out loud
+    # rather than let the green line imply the consumer leg ran.
     r.note = f"{len(ids)} service(s), {len(topics)} topic(s)"
+    if not with_consumers:
+        r.note += "  [producer-only: no topic declares consumers]"
     return r
 
 
