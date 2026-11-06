@@ -1729,19 +1729,21 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    |---|---|---|
    | envelope | 1 | 55 个 topic 的 `schema_ref` 全指它 |
    | 单 topic 的 payload schema | 55 | 各一个 `data_schema_ref` |
-   | REST 请求/响应体形状 | 8 | 不被任何 topic 引用，被别的 schema `$ref` 挂 |
+   | 无事件、无 `$ref` 的领域对象 | 8 | 2 个被别的 schema `$ref`，6 个只被方案散文提到 |
 
    合计 64，被 topic 引用的并集是 **56**（55 payload + 1 envelope）。8 个游离文件是
    `admission-record` / `automation-policy` / `context-pack` / `enterprise-change-plan` /
    `episode-manifest` / `execution-context` / `generation-command` / `memory-claim`——
-   全是单数名词、带跨字段 `allOf` 不变量，是 REST 体的形状。其中 `memory-claim`
-   连 `$ref` 都没有（只在 S16 方案和一个 example 里出现），因为它对应的服务还没实现。
+   带 `revision` / `content_hash` / 稳定 id 这类字段，是会被嵌进别处文档的持久化对象，
+   不是接口入参出参。**真正被 `$ref` 的只有 2 个**：`execution-context` 4 处、
+   `automation-policy` 1 处；其余 6 个一条 `$ref` 都没有，只在 `description` 散文里被
+   对照提到。它们对应的服务（S16 记忆、S07 变更、S20 提示词编译等）还没实现。
 
    `payloads` 检查只做正向：topic 指到的文件必须存在（`check_all.py:763-772`）。
    **反向那一半没有**——从不问「`contracts/` 下有没有 schema 没被任何 topic 指到」，
-   所以这 8 个一直没人报。没加这条检查，是因为要不要给它们单独归类、挪不挪目录
-   属于 owner 决定（`contracts/README.md:733` 已记「payload schema 一律平铺」是既有约定）。
-   逐数字见 [§16.32](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
+   所以这 8 个一直没人报。没有把它们并进 topic 表，是因为要不要给它们单独归类、
+   挪不挪目录属于 owner 决定（`contracts/README.md:733` 已记「payload schema 一律平铺」
+   是既有约定）。逐数字见 [§16.32](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
 
 ## schema 管不到什么
 

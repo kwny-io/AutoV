@@ -3855,22 +3855,27 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 （`admission-record` / `automation-policy` / `generation-command` / `memory-claim`），
 这是**跨字段不变量的写法**，事件 payload 用不着。
 
-它们是 REST 请求/响应体的形状，被别的 schema 用 `$ref` 挂着（数 `contracts/**/*.json` 里
-提到该文件名的文件数）：
+它们是**被别的 schema 内联复用的领域对象**，不是 REST 请求/响应体。判据是字段：
+`execution-context` 带 `node_epoch` / `execution_fence` / `command_id` / `request_hash`，
+`episode-manifest` 带 `revision` / `parent_manifest_ref` / `content_hash`，
+`memory-claim` 带 `revision` / `supersedes_claim_refs` / `commit_sequence`——
+这是会被嵌进别处文档的持久化对象，不是某个接口的入参出参。
 
-| 文件 | 被多少个 JSON 引用 |
+**真正的 `$ref` 边只有 5 条**（解析 JSON 取 `$ref` 值，不是数文件名出现次数）：
+
+| 文件 | 被多少个 JSON 真正 `$ref` |
 |---|---|
-| `execution-context` | **11** |
-| `episode-manifest` | **6** |
-| `automation-policy` | 3 |
-| `generation-command` | 3 |
-| `context-pack` | 2 |
-| `enterprise-change-plan` | 2 |
-| `admission-record` | 1（`redaction-policy.v2.json`） |
-| `memory-claim` | **0** |
+| `execution-context` | **4**（`admission-record` / `enterprise-change-plan` / `generation-command` / `mcp-tools.v2.design.json`） |
+| `automation-policy` | **1**（`mcp-tools.v2.design.json`） |
+| `episode-manifest` / `generation-command` / `context-pack` / `enterprise-change-plan` / `admission-record` / `memory-claim` | **0** |
 
-`memory-claim` 只被 `plans/S16-story-memory.md` 和 `examples/memory-claim.json` 用到，
-没有任何 JSON 契约引用它。**这不是缺陷**——它是 S16 的领域对象，S16 还没有实现。**这也不是漏挂。**
+六条一条 `$ref` 都没有。它们在别处被提到，但都是 `description` 里的散文对照
+（例如 `post.master-rendered` 写「与 `episode-manifest.v2.schema.json` 的
+`accepted_artifact_ref` 完全相同」），不是引用边。`memory-claim` 更彻底：
+只在 `plans/S16-story-memory.md` 和一个 example 里出现。
+
+**这不是缺陷**——这六个是 S16 记忆、S07 变更、S20 提示词编译这些**还没实现**的服务的领域对象，
+所以既没有事件挂它，也没有别的 schema `$ref` 它。**这也不是漏挂。**
 
 **问题只在那一行说明文字。** 它把 64 个文件说成同一类（"单 topic 的 payload schema"），
 而实际是三类：
@@ -3879,7 +3884,7 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 |---|---|---|
 | envelope | 1 | 55 个 topic 的 `schema_ref` 全指它 |
 | 单 topic 的 payload schema | 55 | 各一个 `data_schema_ref` |
-| REST 请求/响应体形状 | 8 | 不被任何 topic 引用，由方案里的 DDL / API 段引用 |
+| 无事件、无 `$ref` 的领域对象 | 8 | 其中 2 个被别的 schema `$ref`，6 个只被方案散文提到 |
 
 **`check_payload_refs` 只查正向，查不出这个。** 它遍历 55 个 topic、把 `schema_ref` /
 `data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:763-772`），
@@ -3934,3 +3939,5 @@ payload topic  -> True
 ```
 
 两条都是 `re.search`，新 note 是把额外的数**追加在分号后面**，前面那截一个字没动。
+| 5 | 上一轮修正后写「被别的 schema 用 `$ref` 挂着」并给出 11 / 6 / 3 / 3 / 2 / 2 / 1 / 0 | **真正 `$ref` 进去的边只有 5 条**：`execution-context` 4、`automation-policy` 1，其余 6 个一条都没有。那 11/6/3… 是「文件正文里提到该文件名的次数」，多数是 `description` 里写「与 `episode-manifest` 的 `accepted_artifact_ref` 完全相同」这类散文对照 | **数引用边必须解析 JSON 取 `$ref` 的值，不能在原文里搜文件名。** 上一轮的更正已经指出过「两个口径混用」，我却把同一类错误又犯了一次：换成"数引用"这个动作，用的还是字符串搜索 |
+| 6 | 上一轮写「8 个是 REST 请求/响应体的形状」 | 是**领域对象**（带 `revision` / `content_hash` / `parent_manifest_ref` / `supersedes_claim_refs`），会被内联进别的 schema，不是接口入参出参 | 从"不挂事件"直接推到"那就是 REST 的"。中间那步「它们为什么存在」没有证据，靠名字猜的 |
