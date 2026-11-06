@@ -63,6 +63,8 @@ SCHEMA_OF = {
     "model-route-selected": "event-envelope.v2.schema.json",
     "orchestration-run-state-changed": "event-envelope.v2.schema.json",
     "post-master-rendered": "event-envelope.v2.schema.json",
+    "post-mix-completed": "event-envelope.v2.schema.json",
+    "post-render-failed": "event-envelope.v2.schema.json",
     "post-subtitle-ready": "event-envelope.v2.schema.json",
     "post-timeline-revision-created": "event-envelope.v2.schema.json",
     "production-image-ready": "event-envelope.v2.schema.json",

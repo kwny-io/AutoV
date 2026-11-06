@@ -1,0 +1,48 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCC4T0V2X4Z6B8D0F2H4J6L8",
+  "source": "S42",
+  "type": "post.mix.completed",
+  "subject": "mix/mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2",
+  "time": "2026-11-06T16:41:08Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2",
+  "aggregate_sequence": 1,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "rp_01JCC3N8Q0S2U4W6Y8A0C2E4G6",
+  "traceparent": "00-5f1c7a2e94b3d6801ac4e7f29b5d3a8c-3d9e5b1f7c2a4860-01",
+  "data": {
+    "schema_version": "2.0",
+    "mix_job_id": "mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2",
+    "episode_id": "ep_3",
+    "branch_id": "main",
+    "source_video_ref": {
+      "service_id": "S28",
+      "id": "art_master_v_ep3",
+      "revision": 3,
+      "content_hash": "92b3d2a3ee0d9f2d26df85a16b3c790811cad7f109111dbf3b8d6a7a81f22290"
+    },
+    "mix_plan_hash": "f5a139afd9f3aa5c4a70d5eda37121d03bf2dfabcf9a456b50772f7b35ec03c4",
+    "graph_hash": "aaae4515cec61c741cdf3510580d0bc4b9e798640b48e8c010a3cd76f80b8567",
+    "target_lufs": -16.0,
+    "true_peak_ceiling": -1.0,
+    "reason": "remix_defect",
+    "repair_plan_ref": {
+      "service_id": "S39",
+      "id": "rp_01JCC3N8Q0S2U4W6Y8A0C2E4G6",
+      "revision": 2,
+      "content_hash": "4b335c091d60bcfafb432c85e71ca36fd07a59abaf2953ab645c9ff4571bee97"
+    },
+    "state": "SUCCEEDED",
+    "output_audio_ref": {
+      "service_id": "S28",
+      "id": "art_mix_a_ep3_r2",
+      "revision": 1,
+      "content_hash": "a67f04b107786666aa0b2b67b236da68fb90c2d2ab90c696c67957be6855f213"
+    },
+    "consumed_cpu_ms": 412300
+  },
+  "data_ref": null
+}

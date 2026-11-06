@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://drama.example.invalid/contracts/post.master-rendered.v2.schema.json",
   "title": "post.master.rendered payload v2",
-  "description": "event `post.master.rendered` 的 data 部分。定义在 plans/S42-composition.md §6.3 行 713–730（示例），字段取自 §5 的 `composition.master_candidate` 表（行 530–557）与 §4.5 的响度门（行 351–372）。**S42 发三条事件，本 schema 只覆盖这一条**：`post.mix.completed` / `post.render.failed` 在 §6.3 只出现在行 701 的事件名表与行 709–711 的聚合键表里，**没有任何字段定义或示例**——它们的 payload 仍然无契约（见 x-needs-owner 第 1 条）。**这条事件的语义是「有一个候选可以评审了」，不是「已成片」**（行 732）：候选的接受指针归 S08 的 CAS，S42 只发出事实。事件按 §2.4 行 169 刻意覆盖**永远不会被接受的候选**（预览包、失败尝试、探索性编码都留在库里作为历史），所以收到它不代表这一集有了新的有效版本——见 x-conflicts PMO-3。",
+  "description": "event `post.master.rendered` 的 data 部分。定义在 plans/S42-composition.md §6.3 行 713–730（示例），字段取自 §5 的 `composition.master_candidate` 表（行 530–557）与 §4.5 的响度门（行 351–372）。**S42 发三条事件，本 schema 覆盖三条中的一条**：`post.mix.completed` / `post.render.failed` 在计划里只有名字（§6.3 行 701 的事件名表与行 709–711 的聚合键表），字段形状由 `post.mix-completed.v2.schema.json` / `post.render-failed.v2.schema.json` 各自定义，字段来源与未决问题见那两份文件的 `x-needs-owner` / `x-conflicts`。**这条事件的语义是「有一个候选可以评审了」，不是「已成片」**（行 732）：候选的接受指针归 S08 的 CAS，S42 只发出事实。事件按 §2.4 行 169 刻意覆盖**永远不会被接受的候选**（预览包、失败尝试、探索性编码都留在库里作为历史），所以收到它不代表这一集有了新的有效版本——见 x-conflicts PMO-3。",
   "type": "object",
   "properties": {
     "schema_version": {
@@ -202,9 +202,9 @@
   "additionalProperties": false,
   "x-needs-owner": [
     {
-      "field": "`post.mix.completed` / `post.render.failed` 的 payload",
-      "demanded_by": "plans/S42-composition.md §6.3 行 701（只列事件名）与行 709–711（只给 `aggregate_id` / `aggregate_sequence`），以及 §11 C8 的裁决记录",
-      "s42_status": "三条事件都在 `contracts/event-topics.v2.json` 里登记过（C8 行 934 记录的 2026-11-05 裁决，commit `4f1bdcb`，topic `drama.composition.v2`），但**只有 `post.master.rendered` 有字段清单和示例**（行 713–730）。另两条全文只以名字出现：§6.3 行 701、行 710–711 的聚合键表；`service-catalog.v2.json` 的 `publishes` 列表；`plans/S41-editorial.md` 行 539（「只看 `post.master.rendered` 的引用」）。§11 C8 自己写明 **payload schema 仍缺**（与 S43 §11 C8、S44 §11 C8 同一条）。本批次只做 `post.master.rendered`：从散文推断另两条的字段名会让 schema 变成 S42 没同意过的契约（AGENTS.md「契约与文档冲突 → 停下」，contracts/README「不从散文推断这些值」）。注意 `post.mix.completed` 是 **S35/S39 的独立触发器**（C8 原话），不是 `post.master.rendered` 的子集——它要在「没有 master」的情况下也能发（§3.2 的 `MixJob` 可以独立成功），所以它的字段不能靠裁剪本条事件得出。要补需要 owner 先给出形状。"
+      "field": "`post.master.rendered` 的字段集合",
+      "demanded_by": "plans/S42-composition.md §6.3 行 713–730（唯一一处完整示例），字段取自 §5 行 530–557 与本文件 `properties`",
+      "s42_status": "**另两条的 payload 已补**：`post.mix-completed.v2.schema.json`（§4.4 混音流程 + §5 行 484–506 的 `mix_job` 16 列）与 `post.render-failed.v2.schema.json`（§4.6 行 374–391 的失败矩阵 + §5 行 416–446 的 `render_job` 26 列），两条都已在 `event-topics.v2.json` 登记 `data_schema_ref`。它们刻意不是从本条裁剪出来的：`post.mix.completed` 要在「没有 master」时也能发（§3.2 行 218 的 `MixJob` 可独立成功），`post.render.failed` 携带的 `project_id` / `series_id` / `consumed_gpu_ms` / `failure_detail` 本条根本没有。本条 schema 自己剩下的未决项见本文件其余 `x-needs-owner`（`stale_inputs` 元素形状、`manifest_content_hash` 为何不进事件）与 `x-conflicts` PMO-1..PMO-5。"
     },
     {
       "field": "`stale_inputs` 的元素形状",

@@ -1015,3 +1015,239 @@ REJECTED extra in policy_ref
 本 schema 要求是同一个 `policy_id`，但没有任何工具能交叉校验同一份文档里的这两个位置**——
 `additionalProperties: false` 只管键，不管两处值的关系。这属于 schema 层表达不了的东西
 （要 `$data` 或 codegen 校验器），记在这里。
+
+---
+
+## 15. S42 这一轮：两条只有聚合键的事件，以及它们暴露的三处跨服务空洞
+
+S42 方案 §6.3 行 701 发布三条事件，但行 709–711 的聚合键表只给 `mix_job_id` / `render_job_id`
+两个键名，**没有字段清单、没有示例、没有字段表**。前面十四轮的 S42 部分只做了
+`post.master.rendered`（它有 §6.3 行 713–730 的完整示例）。本轮把另两条补完，并顺手把上一份
+schema 里「另两条 payload 仍缺」这句已经过时的话改掉。
+
+### 15.1 修正本轮自己写错的六条数
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `post.mix-completed.v2` 的 `description`、`x-needs-owner[0]` | 「DDL 有 16 列，本 schema 选了 **12 个字段 + `schema_version`**」「本 schema 的 **13 个键**」 | **14 个属性 = `schema_version` + 从 16 列里挑的 13 列** | 我把「去掉 3 列」（`tenant_id` / `created_at` / `finished_at`）写成了「留下 12 列」，又把 13 个 DDL 列 + `schema_version` 写成了 13 个键。**两处都是我自己减错**：16 − 3 = 13，13 + 1 = 14 |
+| 2 | `post.render-failed.v2` 的 `description`、`x-needs-owner[0]` | 「本 schema 的 **15 个键**全部从 … 26 列里挑出」「保留其余 **12 列** + `schema_version`」 | **17 个属性 = `schema_version` + 从 26 列里挑的 16 列** | 同一类错，而且这一份更离谱：`required` 就有 15 项，加上非必填的 2 项正好 17。「26 列去掉 10 列 = 16」与「16 + 1 = 17」两次都对不上我写的 15 / 12 |
+| 3 | `MIX-2` 的 `why_it_matters` | 「仓内 **52 处**跨服务引用」「与仓内其余 **51 处**不同形」 | **55 处**（本轮之前 52 处，本文件贡献 3 处），其余 **54 处** | 52 是**本轮写 schema 之前**的口径，而本 schema 自己就带 3 处该形状的四键引用。**与第 13、14 轮同一类错**：在一个会随本轮改动的分母上引用了本轮之前的值 |
+| 4 | `RJF-1` 的 `repo_reality` | 「**4 篇文档**提到 topic 的其余 48 篇均为 0」 | **全仓 `.md` 只有 2 份提到 `drama.composition.v2`**：`plans/S42-composition.md` 与 `delivery/acceptance/plans-consistency-2026-10-30.md` 行 159 | 「4 篇」是我把另一个 topic 的数抄过来的；而且 48 篇服务方案里提到它的只有 S42 一篇，那另外「3 篇」根本不存在。**「N 篇文档提到 X」这种句子必须整仓扫一遍再写** |
+| 5 | `RJF-1` 的 `s42_own_silence` | 「§8 的指标表（行 792 附近）有 `composition_remix_ratio`，**但没有失败率指标**」 | **行 789 就是 `composition_render_failure_total`**（counter，按 `failure_code`），行 790 还有 `composition_orphaned_job_total` | 我只扫了行 792 那一格就下了否定结论。**「没有 X」的断言必须扫完整张表**——这一条如果留着，会让一个真实存在的指标被当成缺口去补 |
+| 6 | `RJF-2` 的 `why_it_matters` 与 `s42_prose` | 「行 282 的顺序是「先申请许可再落 job」，所以被拒的作业**不落库**」；行 280 引文里反引号错位；依据写作「行 279–282 第 6/7 步」 | 行 280 原文是「拒绝 → REJECTED，不落 RUNNING」；**行 282 只写「7. 事务写 render_job(QUEUED)…」，顺序的依据是行 290 那句「第 6 步的顺序很关键：先申请许可再落 job」** | 我把行 290 的结论归给了行 282，且行号区间写成「279–282」而实际是「279–281 第 6 步 / 282 第 7 步」。**结论对、出处错**是最难被察觉的一类——引用看起来有行号，读起来也通顺，但回读原文就对不上 |
+
+第 1、2 条值得单独一句：这两份 schema 是本轮刚写的，`properties` 的个数我自己数过、`required`
+也逐项对过，却仍然在 prose 里写出了不同的数。**「properties 的长度」与「prose 里说的键数」
+是两个数，写完必须用 `len(s['properties'])` 回读。**
+
+### 15.2 本轮脚本输出（不沿用第 14.2 节的中间结果）
+
+`_tmp_probe_s42.py`：
+
+```
+=== 1. contract census (after this round) ===
+contracts/*.schema.json       = 58
+contracts/**/*.schema.json    = 65
+contracts/**/*.json           = 136
+contracts/examples/*.json     = 66
+topics total                  = 55
+  with data_schema_ref        = 49
+  envelope-only               = 6
+  schema_ref + data_schema_ref= 104
+  topics having "consumers"   = 0
+
+=== 2. the 6 remaining envelope-only topics ===
+   S43  delivery.package.created  (topic drama.delivery.v2)
+   S43  delivery.package.sealed  (topic drama.delivery.v2)
+   S43  delivery.publish.failed  (topic drama.delivery.v2)
+   S44  analytics.metric.snapshot.created  (topic drama.evaluation-analytics.v2)
+   S44  analytics.evaluation.completed  (topic drama.evaluation-analytics.v2)
+   S44  analytics.cost.projection.updated  (topic drama.evaluation-analytics.v2)
+
+=== 3. event types ending in .failed ===
+   n = 2 ['post.render.failed', 'delivery.publish.failed']
+
+=== 4. canonical closed 4-key ref (service_id/id/revision/content_hash) ===
+   total                         = 55 in 31 files
+   post.mix-completed (this round)= 3
+   post.render-failed (this round)= 0
+   before this round             = 52
+
+=== 5. hash pattern forms across contracts/**/*.schema.json ===
+   "pattern" entries                = 263
+   of which == ^[0-9a-f]{64}$       = 138
+   "pattern" containing "sha256:"   = 0
+
+=== 6. plans census ===
+   plans/*.md                        = 49
+   plans/Snn-*.md                    = 48
+   drama.composition.v2     repo-wide .md = 2  ['plans-consistency-2026-10-30.md', 'S42-composition.md']
+   post.mix.completed       repo-wide .md = 3  ['README.md', 'plans-consistency-2026-10-30.md', 'S42-composition.md']
+   post.render.failed       repo-wide .md = 3  ['README.md', 'plans-consistency-2026-10-30.md', 'S42-composition.md']
+
+=== 7. S35 / S39 mention the three S42 events ===
+   S35-technical-qc.md {'post.mix.completed': 0, 'post.render.failed': 0, 'post.master.rendered': 0}
+   S39-repair-planning.md {'post.mix.completed': 0, 'post.render.failed': 0, 'post.master.rendered': 0}
+
+=== 8. S39 repair_plan columns (L642-663) ===
+   columns = 17
+   ['plan_id', 'tenant_id', 'series_id', 'branch_id', 'episode_id', 'run_id',
+    'manifest_id', 'manifest_revision', 'execution_fence', 'state',
+    'aggregation_deadline', 'policy_ref', 'policy_partial', 'snapshot',
+    'escalation', 'created_at', 'updated_at']
+   has revision           = False
+   has content_hash       = False
+   has manifest_revision  = True
+   has plan_id            = True
+
+=== 9. S42 anchors ===
+   file length = 945 lines
+   L182  │ QUEUED │──────────────────────────► REJECTED（终态）
+   L203  │ ORPHANED │── 对账：查 S28 有无产物
+   L282  7. 事务写 render_job(QUEUED) + segments + outbox + command_receipt
+   L290  第 6 步的顺序很关键：**先申请许可再落 job**。反过来会造出一堆"排队但永远拿不到许可"的僵尸任务。
+   L689  | GET | `/render-jobs/{id}` | 状态、段进度、`stale_inputs`、用量 |
+   L701  | 发布 | `post.master.rendered`（topic `drama.composition.v2`）、`post.mix.completed`、`post.render.failed` |
+   L710  | `post.mix.completed` | `mix_job_id` | 该混音作业的事件序号 |
+   L711  | `post.render.failed` | `render_job_id` | 该渲染作业的事件序号 |
+   GET mix-jobs in §6.2? none
+   MixStem = 1 | mix_stem = 0 | STEMS_UNAVAILABLE = 2
+
+=== 10. S42 mix_job / render_job column counts ===
+   mix_job columns    = 16
+   render_job columns = 26
+
+=== 11. S43 gates + package_type CHECK ===
+   gate rows = 10 ['G1 接受门', 'G2 素材门', 'G3 完整性门', 'G4 QC 门', 'G5 响度/规格门',
+                   'G6 字幕门', 'G7 权利门', 'G8 策略门', 'G9 签名门', 'G10 清单门']
+   L384: package_type         text NOT NULL CHECK (package_type IN
+   L385: ('missing_material','preview','formal')),
+
+=== 12. examples / SCHEMA_OF ===
+   example files        = 66
+   SCHEMA_OF entries    = 59
+   mapped (not None)    = 58
+   deliberately None    = 1
+```
+
+第 4 项的计数口径要写明，否则下一个人会数出别的数：只数**同时满足三个条件**的对象——
+`properties` 的键集恰好是 `{content_hash, id, revision, service_id}`、`required` 与之一致、
+`additionalProperties: false`。只按 `service_id` + `content_hash` 两个键去扫会得到 0，因为
+这四键在 schema 里写作 `properties` 的子键，不是对象自身的键（我第一版探针就是这么写错的）。
+
+第 6 项有一个陷阱也要记下：`glob('**/*.md')` 会同时命中仓库根目录的 `README.md` 与
+`docs/SERVICE-SPECIFICATIONS.md`，所以 `post.mix.completed` 的「全仓 3 份」里有一份是
+`contracts/README.md` 本轮新加的那张表——**它是本轮的产出，不是文档给的事实证据**。
+
+### 15.3 本轮改了哪些文件
+
+| 文件 | 动作 |
+|---|---|
+| `contracts/post.mix-completed.v2.schema.json` | 新增。14 个属性（13 必填，`repair_plan_ref` 条件必填），`x-needs-owner` 4 条、`x-conflicts` 3 条（MIX-1..MIX-3）；`allOf` 镜像 DDL 的 `mix_remix_needs_plan` |
+| `contracts/post.render-failed.v2.schema.json` | 新增。17 个属性（15 必填；`failure_code` / `failure_detail` 可选），`x-needs-owner` 4 条、`x-conflicts` 3 条（RJF-1..RJF-3）；`state` 收窄到 4 个终态值 |
+| `contracts/examples/post-mix-completed.json` | 新增。16 个 envelope 键 + 14 个 `data` 键，`data_ref: null` |
+| `contracts/examples/post-render-failed.json` | 新增。16 个 envelope 键 + 17 个 `data` 键，`data_ref: null` |
+| `contracts/event-topics.v2.json` | `post.mix.completed` / `post.render.failed` 各加 `data_schema_ref`，位置紧随 `schema_ref` |
+| `tools/validate/validate_examples.py` | `SCHEMA_OF` 加 `post-mix-completed` / `post-render-failed` 两行 |
+| `contracts/README.md` | 线表加两行；L61 47/8 → 49/6；L803、L867、L924 三处「今天剩 N 个」8 → 6；L132–136 那段「S42 三条里只有 `post.master.rendered` 有形状」改写；L1432 图里 47/8 → 49/6；L1446–1450 入口数字（132→136、102→104、47→49、63→66）；L1502「49 个示例」→ 65 |
+| `contracts/post.master-rendered.v2.schema.json` | 两处过时话改成「另两条已各有 schema」；`x-needs-owner[0]` 从「另两条 payload 缺」改成「本条的键集本身」 |
+| `delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md` | 本节 |
+
+`contracts/README.md` L132–136 那一处值得单看：它原来写「S42 三条里只有 `post.master.rendered`
+有字段清单，所以这三份 schema 都只覆盖『有形状的那一条』，其余的在 `x-needs-owner` 里点名」——
+本轮之后这句话对 S42 不再成立，对 S43 / S44 仍然成立。改写时保留了后半段的规则（不猜形状），
+只把 S42 从「点名」改成「已补，且不是从 master 事件裁出来的」。
+
+### 15.4 本轮的三处跨服务空洞
+
+这三条都不是「写法不统一」，是三个不同的东西缺了来源。
+
+**（1）`repair_plan_ref` 的四键，S39 产不出来（MIX-2）。** 示例（§6.1 行 674）写的是
+`{"service_id":"S39","id":"rp_...","revision":2,"content_hash":"..."}`，而 S39 §5 行 642–663 的
+`repair_planning.plan` 是 17 列，`plan_id` 为主键、`manifest_revision` 有，**没有 `revision`
+也没有 `content_hash`**（脚本逐列核对）。三条出路都不干净：给 S39 加两列（可它的状态机里
+`superseded` 说明计划是被替换而非原地改，`revision` 可能恒为 1）；把引用收成两键（与仓内
+其余 54 处不同形，且丢掉「哪一版」）；让 S42 自己算 `content_hash`（第二个权威，
+AGENTS.md 禁止）。**示例已经写成了 S39 做不到的形状**，照示例收 schema 会在下游拒掉合法数据。
+
+**（2）混音失败的信号没有通道（MIX-1）。** §4.4 行 347 要求「stems 已过期/删除时 `remix`
+不可行，**必须显式失败并报告** `STEMS_UNAVAILABLE`」，E24-S42-02（行 836）把它写成验收用例。
+但事件目录里没有 `post.mix.failed`（全仓 `.failed` 结尾只有两个，脚本核对），`MixJob` 状态机
+（§3.2 行 218）允许 `FAILED` 却没说 `FAILED` 时发什么，而 §6.2 的查询表里**连 `mix-jobs`
+的 GET 都没有**。于是 S39 唯一能走的路是轮询一个不存在的接口。要 owner 定：
+`post.mix.completed` 是否在 `FAILED` 时也发（本 schema 的宽读法是允许的，`state` 枚举含
+`FAILED`），还是新增一条事件。
+
+**（3）C8 的裁决理由查无实据（MIX-3）。** C8（行 934）是**已裁决**条目，理由是「`post.mix.completed`
+是 **S35/S39 的独立触发器**」，并据此选了「补登」而不是「塞进 `post.master.rendered`」。
+可是 S35 与 S39 两份方案提到这条事件各 **0 次**（脚本核对），`drama.composition.v2` 在全仓
+`.md` 里只有 2 份提到，其中一份是本方案的目录登记表。裁决可能仍然对——「独立触发器」可以是
+将来的用途——**但今天这条事件没有任何已声明的消费者**，所以它的 payload 写成什么样都不会被
+任何真实需求校验。这一点对 `post.render.failed` 同样成立（RJF-1）。
+
+### 15.5 两条「同一张表、两处不一致」的证据
+
+这两条我没有升成新 conflict，而是记进 RJF-3 与 RJF-2，因为它们的修法只需「把已有的列/已有的
+结论搬过来」，不需要 owner 发明事实。
+
+**相邻列被两条事件分掉。** `render_job`（§5 行 416–446）同时有 `timeline_id`（行 423）与
+`purpose`（行 429）。`post.master.rendered` **两项都不发**（分别是 PMO-5 与 PMO-3），而本轮的
+失败事件两项都发。后果具体：S43 的 G3 门（行 140）要校验「S41 的 timeline
+`formal_master_eligible=true`」，它消费 `post.master.rendered` 却拿不到 `timeline_id`；要区分
+正式包与预览包（`package_type CHECK IN ('missing_material','preview','formal')`，§5 行 384–385）
+却拿不到 `purpose`。**一个只盯着候选的消费方，被迫去订阅一条失败事件才能拿到定位维度。**
+
+**状态图与流程步骤对不上。** §3.1 行 181–182 画的是 `QUEUED ─S22 拒绝→ REJECTED（终态）`；
+§4.1 第 6 步（行 279–281）申请许可、第 7 步（行 282）才 `事务写 render_job(QUEUED)`，行 290
+还强调「先申请许可再落 job」。按 §4.1 被拒时行不存在（`REJECTED` 无处可落），按 §3.1 行存在
+（那条跃迁没有事件）。这不是「少发一条事件」，是**两段文字不可能同时为真**，必须先裁决哪段对。
+
+### 15.6 探针
+
+26 条正负例对两份 schema 跑过（`Draft202012Validator` 直接验，正例 3 条、负例 23 条），全部
+按预期：
+
+```
+=== post.mix.completed negative probes ===
+  PASS  baseline                                             -> accepted
+  PASS  sha256: prefix on mix_plan_hash                      -> REJECTED
+  PASS  reason not in enum                                   -> REJECTED
+  PASS  state not in enum                                    -> REJECTED
+  PASS  remix_defect without repair_plan_ref                 -> REJECTED
+  PASS  repair_plan_ref = null under remix_defect            -> REJECTED
+  PASS  extra root key                                       -> REJECTED
+  PASS  source_video_ref extra key                           -> REJECTED
+  PASS  source_video_ref service_id not S28                  -> REJECTED
+  PASS  consumed_cpu_ms negative                             -> REJECTED
+  PASS  missing mix_job_id                                   -> REJECTED
+  PASS  non-remix reason without repair_plan_ref (ACCEPT)    -> accepted
+
+=== post.render.failed negative probes ===
+  PASS  baseline                                             -> accepted
+  PASS  state=SUCCEEDED (belongs to another event)           -> REJECTED
+  PASS  state=FAILED without failure_code                    -> REJECTED
+  PASS  state=FAILED with empty failure_code                 -> REJECTED
+  PASS  purpose not in enum                                  -> REJECTED
+  PASS  purpose=review (S43 package_type typo)               -> REJECTED
+  PASS  render_env_hash with sha256: prefix                  -> REJECTED
+  PASS  retry_count negative                                 -> REJECTED
+  PASS  timeline_revision 0                                  -> REJECTED
+  PASS  extra root key                                       -> REJECTED
+  PASS  failure_detail as string                             -> REJECTED
+  PASS  missing render_job_id                                -> REJECTED
+  PASS  state=CANCELLED without failure_code (ACCEPT)        -> accepted
+  PASS  state=ORPHANED (in enum by design) (ACCEPT)          -> accepted
+
+ALL PROBES BEHAVED AS INTENDED
+```
+
+`python tools/check_all.py` 九项全过（`payloads` 报 `104 schema ref(s), 49 topic(s) with a payload
+schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalog 与生成物）。
+`python tools/validate/validate_examples.py` 报
+`65 example(s) valid, 0 failing, 1 without a schema`。
+
+有一条已知漏检继续存在，与 S11–S14、S02 同源：信封对 `type` / `source` 只收非空字符串，所以
+示例里 `type: "post.mix.completed"` 与 `data.mix_job_id`、信封 `aggregate_id` 三者的**值相等**
+这一层关系没有工具能校验——`additionalProperties: false` 只管键，不管同一份文档里不同位置的
+值之间的关系。本轮的示例靠人工保持一致（`aggregate_id` 与 `data.mix_job_id` 都写成
+`mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2`），下一步做 codegen 校验器时应当把这类约束一起表达。

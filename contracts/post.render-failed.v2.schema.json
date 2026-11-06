@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/post.render-failed.v2.schema.json",
+  "title": "post.render.failed payload v2",
+  "description": "event `post.render.failed` 的 data 部分。**§6.3 对这条事件只给了聚合键一行**（行 711：`aggregate_id = render_job_id`，`aggregate_sequence = 该渲染作业的事件序号`），没有字段清单、没有示例；本 schema 的每个键都来自 §5 的 `composition.render_job` DDL（行 416–446，26 列）与 §4.6 的失败矩阵（行 374–389，12 行）。**「发哪些列」这个选择本身是判断**，见 x-needs-owner 第 1 条。**这是全仓 55 个 topic 里仅有的两个 `.failed` 之一**（另一个是 `delivery.publish.failed`，脚本核对），也是唯一一条对应状态机里 **`FAILED` 终态**的事件——`post.render.failed` 与 `post.master.rendered` 互斥地覆盖渲染作业的两条出口：成功产出候选的发后者，失败的发前者。注意**「失败」不等于「作业结束」**：状态机里 `QUEUED → REJECTED` 也是终态（§3.1 行 182，S22 拒绝或许可拒绝），而那条路径**没有事件**——见 x-conflicts RJF-2。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补——与 `post.master-rendered.v2` 一致。"
+    },
+    "render_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 711（`aggregate_id`）与 §5 行 418（主键，行 445）。**聚合序号的分母**：行 711 说 `aggregate_sequence` 是「该渲染作业的事件序号」，即同一 `render_job_id` 下的事件按发出顺序编号。`render_job` 表**没有 revision 列**（26 列里没有），所以这个序号不是「第几版」，是「这个作业发出的第几条事件」——一个作业通常只发一条，序号的语义要到同一作业发多条事件（例如将来的 `post.render.progress`，§11 C3 正缺这条）时才真正被用到。"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 419（`project_id text NOT NULL`）。**`post.mix.completed` 没有这个键**（`mix_job` 表没有 project 列），两条事件的定位维度因此不同：渲染作业可以只凭事件定位到项目，混音作业不行。这不是对称的裁剪，是两张表的列不同。"
+    },
+    "series_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 420（`series_id text NOT NULL`）。理由同 `project_id`。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 421。与 `project_id` / `series_id` 一起构成「哪个项目的哪一集」，比 `post.mix.completed` 的定位信息更全。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 422。"
+    },
+    "timeline_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 423（`timeline_id text NOT NULL`）。**这条事件带 `timeline_id`，而 `post.master.rendered` 不带**——后者正是 PMO-5 登记的缺口（`episode_id` + `branch_id` + `timeline_revision` 三元组解不回 `timeline_id`，因为 S41 的唯一键是四元组含 `timeline_kind`）。两条事件出自同一张表的相邻两列（行 423 与 534），一条发了、一条没发，**这个不对称本身就是证据**：发 `timeline_id` 不违反 S42 的任何约束。修 `post.master.rendered` 是扩大契约，需要 owner 决定；本 schema 不因此收窄自己。"
+    },
+    "timeline_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5 行 424（`timeline_revision integer NOT NULL`）。下界 1 取自 S41 的 `editorial.timeline.current_revision CHECK (current_revision >= 1)`（plans/S41-editorial.md §5 行 351）——与 `post.master.rendered` 的同一字段取了同一条外部依据，S42 自己的 DDL 只写 `integer NOT NULL`。"
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "formal",
+        "preview",
+        "draft"
+      ],
+      "description": "来源：§5 行 429（`purpose text NOT NULL CHECK (purpose IN ('formal','preview','draft'))`）。三值照收，有 DDL CHECK 依据。**这条事件带 `purpose`，而 `post.master.rendered` 不带**——后者正是 PMO-3 登记的缺口：「预览也会产生候选并发出同一条事件」，消费方无法区分正式渲染与预览，而 §3.4 行 253 的 `formal_master_eligible` 门只在 `purpose=formal` 时生效。同一个理由反过来看这条事件：**失败的预览和失败的正式渲染在这里是分得开的**，所以「这条事件缺 purpose」这个缺口不存在。修 `post.master.rendered` 需要 owner 决定（additive）。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "FAILED",
+        "REJECTED",
+        "ORPHANED",
+        "CANCELLED"
+      ],
+      "description": "来源：§5 行 430–432（`state text NOT NULL CHECK (state IN ('QUEUED','ADMITTED','RUNNING','CANCELLING','CANCELLED','SUCCEEDED','FAILED','REJECTED','ORPHANED'))`，九值）。**本 schema 只收四个**，因为事件名说的是 `failed`，而 DDL 的九值里有五个不是「失败」：`QUEUED` / `ADMITTED` / `RUNNING` 是活着的状态，`CANCELLING` 是过渡态，`SUCCEEDED` 对应的是另一条事件（`post.master.rendered`）。**剩下的四个都是「作业没有产出候选就结束了」，但它们并不等价**：`FAILED` 是执行失败（§4.6 的 12 行里 4 行以 `job FAILED` 收尾，行 380/382/383/385），`REJECTED` 是**许可或许可预算被拒，作业根本没落 RUNNING**（§3.1 行 182、§4.1 行 280），`CANCELLED` 是用户或策略取消（§3.1 行 195），`ORPHANED` 是 worker 消失而**对账还没完成**（§3.1 行 203–206）——`ORPHANED` 尤其特殊：它不是终态，对账后可能变成 `SUCCEEDED` / `RUNNING` / `QUEUED`。把 `ORPHANED` 收进「failed」的闭集意味着**这条事件在作业还可能成功的时候发出**，而 §3.1 行 203–206 的箭头明说它接下来会转到三个方向。本 schema 保留它是因为 DDL 与状态图都没有说它是否发事件；若 owner 认为 `ORPHANED` 不该发失败事件，删掉它是收窄。见 x-conflicts RJF-2。"
+    },
+    "failure_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 440（`failure_code text`，可空）与 §4.6 的 `INPUT_ARTIFACT_MISSING`（行 385）。**全文只给出两个作业级的失败码**：`INPUT_ARTIFACT_MISSING`（§4.6 行 385「段失败 → job FAILED + `INPUT_ARTIFACT_MISSING`」）与 `STEMS_UNAVAILABLE`（§4.4 行 347，但那是混音不是渲染）。**§4.6 的 12 行里只有 1 行点名了失败码**（脚本核对），其余 3 行只说 `job FAILED` 不说为什么：编码器崩溃（行 380）、S28 上传失败（行 382）、拼接后时长不符（行 383）。所以本 schema **不能收成 enum**——没有一份完整的失败码清单可以照收。用 `minLength: 1` 只保证「有值时有内容」，值的词表留给 owner（见 x-needs-owner 第 2 条）。**可空是因为 DDL 可空**：DDL 允许 `FAILED` 而无 `failure_code`，本 schema 因此把它排除在 `required` 之外——但用 if/then 在 `state='FAILED'` 时要求它非空，因为「执行失败却说不出原因」在 §4.6 每一行都有检出手段（行 377 的「渲染进程非零退出 + 显存日志」、行 380 的「段级非零退出」），没有理由缺。**注意这与 DDL 不是同一件事**：DDL 没写 `CHECK (state <> 'FAILED' OR failure_code IS NOT NULL)`，本 schema 写的是更严的一侧；若实现上确有「失败但无码」的情况，应当在 DDL 与本文件之间选一处改，不要两边漂。"
+    },
+    "failure_detail": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§5 行 441（`failure_detail jsonb`），**全文没有任何一处定义它的元素形状**。§4.6 的失败矩阵给的是「检测手段」（显存日志、非零退出、帧数比较、HTTP 5xx），不是结构化字段。本 schema 因此**只约束到 `object` 一层，不猜内部键**（contracts/README「不从散文推断这些值」）。示例里画的 `segment_no` / `missing_ref` / `detected_at_layer` 三个键**是示例的便利，不是契约**——它们在 `plans/S42-composition.md` 945 行里一次都没出现。见 x-needs-owner 第 3 条。"
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 439（`retry_count integer NOT NULL DEFAULT 0`）。**这是「已经重试了几次」，不是「还能重试几次」**——上限分散在 §4.6 的三行里且互不相同：GPU OOM / 降 preset 「最多 2 次」（行 378）、编码器崩溃「同段重试 3 次」（行 380）、S28 上传「指数退避，最多 8 次」（行 382）。三处都是**段级**重试，而 `retry_count` 是**作业级**的一个整数——作业级重试是否等于 `max(段级重试)`、还是另一套独立计数，文档没写。消费方不要用这个值反推「还剩几次」。"
+    },
+    "stale_inputs": {
+      "type": "array",
+      "description": "来源：§5 行 442（`stale_inputs jsonb NOT NULL DEFAULT '[]'::jsonb`）与 §4.6 行 389。**元素形状全文没有定义**——这与 `post.master-rendered.v2` 的 `stale_inputs` 是同一个缺口，那条已登记为 PMO 家族的问题（`post.master-rendered.v2.schema.json` 的 x-needs-owner 第 2 条），本文件不重复登记，只保持一致：**只约束到 `array` 一层，不写 `items`**。**为什么失败事件也要带它**：§4.6 行 389 的失败场景是「字幕 artifact 在渲染后变化」，处置是「候选仍有效，但 `stale_inputs` 标记非空」——那是成功路径。而同一类输入失效如果发生在渲染中途，走的是行 385「输入产物在渲染中被删除 → 段失败 → job FAILED」，此时 `stale_inputs` 是**诊断信息**（哪些输入当时已经陈旧）。两者的内容可能相同，但语义不同，文档没有区分。"
+    },
+    "consumed_gpu_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 437（`consumed_gpu_ms bigint NOT NULL DEFAULT 0`）。**失败也要报用量**：§3.1 行 210「`CANCELLED` 之后**不退款**：已消耗的 GPU 秒是真的消耗了。这对应 E22『取消不假退款』」——同一条原则适用于 `FAILED`。§4.6 行 386 对「许可在渲染中到期」说得更直白：「**继续渲染并结算**（不可取消任务）」。所以本字段是**结算证据**，不是调试信息：拿到 `state='FAILED'` 的事件后，S23 仍应有一次用量对账，而这个事件的 `consumed_gpu_ms` + `consumed_cpu_ms` 是 S42 侧的权威数。**但这两个量与 `render_usage` 表的关系没有定义**：`render_usage` 是逐段的（`usage_id = render_job_id + ':' + segment_no`，行 576），而这里是作业总数；两者应当相等（求和），文档没说，也没有 `const`/`if` 能保证。"
+    },
+    "consumed_cpu_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 438（`consumed_cpu_ms bigint NOT NULL DEFAULT 0`）。理由同 `consumed_gpu_ms`。S42 的两种资源类是 `gpu_second` 与 `cpu_media_second`（`render_usage` 行 579 的 CHECK），但**两条事件里这两个字段的单位都是毫秒**（列名带 `_ms`），而资源类名带 `_second`——换算由谁做、进位怎么处理，文档没写。"
+    },
+    "render_env_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§5 行 428（`render_env_hash char(64) NOT NULL`）。**裸 64 位小写 hex，不带 `sha256:` 前缀**——S42 全文 9 处写 `sha256:`（行 119、639、641、644、646、670、675、725、726），其中两处就在 `post.master.rendered` 的示例里（行 725–726），而 `char(64)` 装不下 7 字符前缀（共 71）。这与 PDL-5 / PRD-4 / 本文件同族是同一个全局不一致，不重复登记冲突。**为什么失败事件要带它**：§4.6 行 378 的「GPU OOM → 降 `encoder.preset` 或改分段长度后重试」意味着失败与环境有关；同一条命令在不同 `render_env_hash` 下可能一个 OOM 一个成功。§12 未决问题 1（行 940）说若客户要求比特级复现，它必须进交付证据——失败事件带它，使得「同环境下能否复现这次失败」可查。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "render_job_id",
+    "project_id",
+    "series_id",
+    "episode_id",
+    "branch_id",
+    "timeline_id",
+    "timeline_revision",
+    "purpose",
+    "state",
+    "retry_count",
+    "stale_inputs",
+    "consumed_gpu_ms",
+    "consumed_cpu_ms",
+    "render_env_hash"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "FAILED"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failure_code": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "failure_code"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`post.render.failed` 的 payload 键集合本身",
+      "demanded_by": "plans/S42-composition.md §6.3 行 701（只列事件名）与行 711（只给 `aggregate_id` / `aggregate_sequence`），以及 §11 C8 行 934 的裁决记录",
+      "s42_status": "这条事件在目录里登记过（C8 行 934 记的 2026-11-05 补登，commit `4f1bdcb`，topic `drama.composition.v2`，`contracts/event-topics.v2.json` 行 519–529），但**全文 945 行里没有任何一段定义它的字段**：没有 `data` 块、没有示例、没有字段表。本 schema 的 17 个属性里，1 个是 `schema_version`，其余 16 个全部从 §5 的 `render_job` DDL 26 列里挑出，取舍是：去掉 `tenant_id`（信封已有）、`timeline_content_hash` / `mix_plan_hash` / `render_profile_hash`（可从 `render_job_id` 回查，且失败事件的读者关心「为什么失败」多过「用了什么输入」）、`permit_ref` / `worker_id` / `lease_expires_at` / `estimated_gpu_ms`（调度内部状态，非对外事实）、`failure_detail` 降为非必填、`created_at` / `updated_at`（信封的 `time` 已表达）；保留其余 16 列。**这个取舍是判断，不是文档给的事实**——尤其 `timeline_content_hash` / `mix_plan_hash` 的去留值得 owner 复核：没有它们，消费方无法判断「失败是不是因为输入变了」。注意 `post.master.rendered` 有完整示例可依，本条没有。"
+    },
+    {
+      "field": "`failure_code` 的词表",
+      "demanded_by": "plans/S42-composition.md §4.6 的失败矩阵（行 374–389，12 行）、§5 行 440（`failure_code text`，无 CHECK、无注释）",
+      "s42_status": "§4.6 逐行列出了**检测点与处置**，但只有 1 行给出了失败码：`INPUT_ARTIFACT_MISSING`（行 385）。其余 3 行以 `job FAILED` 收尾却不说码（行 380 编码器崩溃、行 382 S28 上传失败、行 383 拼接后时长与 EDL 不符）。另有 6 行不以 `job FAILED` 收尾（行 378 GPU OOM 可重试、行 379 节点抢占转 ORPHANED、行 381 磁盘满回 QUEUED、行 384 loudnorm 不达标但出候选、行 386 许可到期仍完成、行 387 临时文件清理、行 388 幂等命中、行 389 字幕变化但候选有效）。全文的 UPPER_SNAKE 码表里，属于**作业失败**的只有 `INPUT_ARTIFACT_MISSING`；`INCOMPLETE_TIMELINE` / `MASTER_SPEC_REQUIRED` / `MIX_TARGET_REQUIRED` / `INPUT_ARTIFACT_MISSING`（另一处） / `JOB_TERMINAL` / `IDEMPOTENCY_MISMATCH` / `BUDGET_DENIED` 都是**同步命令响应码**（§3.4 行 253–259、§4.1 行 277–281），不是事件字段。所以本 schema 用 `minLength: 1` 而不收 enum。要定的是：失败码是可扩展的开放词表（本 schema 现在的读法），还是闭集（则需要文档补全 3 个缺失的码，并说明它们的稳定性承诺）。"
+    },
+    {
+      "field": "`failure_detail` 的元素形状",
+      "demanded_by": "plans/S42-composition.md §5 行 441（`failure_detail jsonb`，无注释）、§4.6 的 12 行检测手段",
+      "s42_status": "DDL 只有裸 `jsonb`，没有注释；§4.6 写的是人读的检测描述（「渲染进程非零退出 + 显存日志」「段级非零退出」「自检（帧数比较）」「HTTP 5xx/timeout」），**不是结构化字段**。§12 的 6 个未决问题（行 940–945）没有一条提到它。本 schema 的示例画了 `segment_no` / `missing_ref` / `detected_at_layer` 三个键，但那是**为了示例可读而编的**，在 S42 方案里零次出现（脚本核对）。本 schema 因此只约束到 `object`，不写 properties。要补需要 owner 给出元素字段（至少要有「哪一段」与「什么证据」，否则 S47 的工作台无法显示「卡在第 15 段的哪个输入」）。"
+    },
+    {
+      "field": "`ORPHANED` 是否算这条事件覆盖的「失败」",
+      "demanded_by": "plans/S42-composition.md §3.1 行 200–206（ORPHANED 的对账图）、§5 行 430–432（九值 CHECK）、§7.2 行 758（租约 TTL 90s、心跳 30s、过期转 ORPHANED）",
+      "s42_status": "§3.1 行 203–206 的图明确写出 `ORPHANED` 之后有三个去向：`有完整产物 → SUCCEEDED（补登记）` / `有部分产物 → RUNNING（续跑剩余段）` / `无产物 → QUEUED（重新排队）`。**三条都不是失败**——它是一个「对账中」的状态。但 §5 的九值 CHECK 把它与 `FAILED` / `CANCELLED` / `REJECTED` 并列在同一列里，而事件只有一条 `.failed`。本 schema 把 `ORPHANED` 收进枚举，等于承认「这条事件在作业还可能成功时发出」；不收则意味着 `ORPHANED` 没有任何事件，S47 的投影看不到「作业从 RUNNING 掉到 ORPHANED」这个跃迁——而 §11 C3 已经登记了「渲染进度如何进入实时投影未定义」，这一条是它的一个具体缺口。要 owner 定：`ORPHANED` 发 `post.render.failed`、发一条独立事件、还是不发。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "RJF-1",
+      "summary": "「失败要能被消费方看见」这件事在契约层面没有下游：这条事件没有任何已声明的消费者",
+      "s42_event": "§6.3 行 701 只列事件名，行 711 只给 `aggregate_id`；§6.3 行 702 的「消费」行是 S42 的**入站**事件（S41/S39/S08/S28），不是谁消费 S42",
+      "repo_reality": "`drama.composition.v2` 在 `plans/` 目录里只出现在 S42 自己：48 篇服务方案（S01–S48，脚本按 `plans/S\\d\\d-*.md` 数，另有 `plans/README.md` 不计）里只有 `S42-composition.md` 提到它（脚本核对）；除计划目录外，全仓 `.md` 里提到这个 topic 的只有两份：`S42-composition.md` 与 `delivery/acceptance/plans-consistency-2026-10-30.md` 行 159 的登记表（`docs/design-package/` 只读，不在扫描范围内）。`contracts/event-topics.v2.json` 的 55 个 topic 里没有任何一项带 `consumers` 键（脚本核对 0 次）",
+      "s42_own_silence": "§4.6 行 380/382/383/385 的四种 `job FAILED` 都只说到「job FAILED」为止，**没有一行说这个事实要通知谁**。反证也要记清楚，免得把「没写订阅方」说成「完全没留痕」：§8 行 789 有 `composition_render_failure_total`（counter，按 `failure_code`），行 790 有 `composition_orphaned_job_total`——指标层面是承认失败要可观测的；但指标是 S42 自己的出口，不是事件契约。§9 的测试清单（行 821–880，E03/E24/E37/E22/E12/E13/E28 七组）里没有一条断言「失败后发出了哪个事件」：最接近的是 E03-S42-04（帧数不符即 FAILED）与 E37-S42-03（`stale_inputs` 非空 → `deliverable=false`），两者都停在状态与标志，不测下游可见性",
+      "why_it_matters": "一条失败事件的用处完全取决于谁在看它。现在能确认的只有：S21 编排（它创建渲染作业，§6.1 行 268）大概需要知道作业结束了，S47 投影（§3.1 的状态机需要进入工作台）大概需要知道状态变了——但**两者都没有把这条事件写进自己的方案**，S42 也没有把它们写成订阅方。于是这条事件的 payload 没有任何真实需求可以校验：本 schema 去掉 `timeline_content_hash` 或加上 `worker_id`，都不会拒掉或满足任何一个具体消费方。这与 `post.subtitle-ready` 那类有明确下游（S42 自己就消费 S38 的字幕）的事件形成对照。要定的是：S21 / S47 是否订阅；若订阅，它们分别需要哪些键（S21 需要终态与用量，S47 需要状态跃迁与定位维度，两者交集未必是同一个集合）。"
+    },
+    {
+      "id": "RJF-2",
+      "summary": "两个终态没有事件：`REJECTED`（许可被拒，从未落 RUNNING）与 `ORPHANED`（对账中，可能还会成功）",
+      "s42_machine": "§3.1 行 178–206 的状态图：`QUEUED ─S22 拒绝/预算拒绝→ REJECTED（终态）`；`RUNNING ─worker 租约过期→ ORPHANED ─对账→ SUCCEEDED / RUNNING / QUEUED`",
+      "s42_prose": "§4.1 行 280：「拒绝 → REJECTED，不落 RUNNING`」；行 281：「预算不足 → 422 `BUDGET_DENIED`（透传 S23/S22 原因）」；行 282：「7. 事务写 render_job(QUEUED) + segments + outbox + command_receipt」；行 290 把顺序讲明了：「第 6 步的顺序很关键：**先申请许可再落 job**。反过来会造出一堆\"排队但永远拿不到许可\"的僵尸任务」",
+      "s42_events": "§6.3 行 701 只发布三条：`post.master.rendered` / `post.mix.completed` / `post.render.failed`。`REJECTED` 与 `ORPHANED` 都不在其中",
+      "why_it_matters": "两个缺口的性质不同，但都会让「作业去哪儿了」在事件流里断掉。**(1) `REJECTED` 是一处文档内部矛盾，不是简单的「事件缺失」**：§3.1 行 181–182 的图画的是 `QUEUED ─S22 拒绝/预算拒绝→ REJECTED（终态）`，即 `QUEUED` 先存在；而 §4.1 的第 6 步（行 279–281）申请许可、第 7 步（行 282）才 `事务写 render_job(QUEUED)`，行 290 还专门强调「先申请许可再落 job」。两处不可能同时为真：按 §4.1，被拒时 `render_job` 行根本不存在，`REJECTED` 无处可落，也就无从发事件；按 §3.1，行存在而状态停在 `REJECTED`，那条跃迁没有任何事件承载。调用者侧的失败是可见的（同步 422），但**状态机与流程对不上**这件事本身要先由 owner 裁决，否则无法确定该事件是否该存在。**(2) `ORPHANED` 是更实的缺口**——它发生时作业已经在跑，消耗了 GPU，状态从 `RUNNING` 跳到 `ORPHANED`，而对账结果可能是三种之一（§3.1 行 203–206：`SUCCEEDED` / `RUNNING` / `QUEUED`）。S47 若拿不到这个跃迁，工作台会把一个正在对账的作业显示成「RUNNING」直到它最终落到 `SUCCEEDED`（发 `post.master.rendered`）或 `FAILED`（发本事件）——中间这段（租约 90s + 对账，§7.2 行 758）完全不可见。要定的是：`ORPHANED` 是否有独立事件，以及 §3.1 的图与 §4.1 的第 6/7 步哪个是对的。"
+    },
+    {
+      "id": "RJF-3",
+      "summary": "同一张表的相邻列，`post.master.rendered` 发了三列而本事件发了另外三列——两边各自缺的东西恰好都在对方身上",
+      "s42_ddl": "`composition.render_job`（§5 行 416–446）同时有 `timeline_id`（行 423）、`purpose`（行 429）、`failure_code`（行 440）、`failure_detail`（行 441）",
+      "master_event": "§6.3 行 713–730 的 `post.master.rendered` `data`：**没有** `timeline_id`、**没有** `purpose`、也没有 `render_job_id` —— 这三项分别被登记为 PMO-5、PMO-3、PMO-4",
+      "failed_event": "本条事件（本文件）：**有** `timeline_id`、`purpose`，且 `render_job_id` 就是 `aggregate_id`（所以信封里也有）",
+      "why_it_matters": "这不是巧合，是两条事件各自被单独起草的结果。具体到后果：S43 的 G3 门要校验「S41 的 timeline `formal_master_eligible=true`」（plans/S43-delivery.md 行 140：`S41 的 timeline formal_master_eligible=true；S42 候选 deliverable=true；stale_inputs=[]`），它消费 `post.master.rendered` 却拿不到 `timeline_id`（只有 `episode_id` + `branch_id` + `timeline_revision`，而 S41 的唯一键含 `timeline_kind`，PMO-5）；同时它要区分正式包与预览包（`package_type text NOT NULL CHECK (package_type IN ('missing_material','preview','formal'))`，plans/S43-delivery.md §5 行 384–385），却拿不到 `purpose`（PMO-3）。**而这两项在失败事件里都有**。也就是说，一个只需要「盯着候选」的消费方，被迫去订阅一条失败事件才能拿到定位维度——或者去做两次同步回查。要定的是：是否把 `timeline_id` / `purpose` 补进 `post.master.rendered`（additive，DDL 已有列，两项都是「发已有的列」而不是发明新事实）。本 schema 不因等待那个决定而收窄自己：失败事件发这两项有独立依据（见 `timeline_id` / `purpose` 两个字段的 description）。"
+    }
+  ]
+}

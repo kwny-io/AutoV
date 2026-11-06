@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/post.mix-completed.v2.schema.json",
+  "title": "post.mix.completed payload v2",
+  "description": "event `post.mix.completed` 的 data 部分。**§6.3 对这条事件只给了聚合键一行**（行 710：`aggregate_id = mix_job_id`，`aggregate_sequence = 该混音作业的事件序号`），没有任何字段清单、没有示例；本 schema 的每个键都来自 §5 的 `composition.mix_job` DDL（行 484–506，16 列），不是从散文推出来的形状。**「发哪些列」这个选择本身仍是判断**——DDL 有 16 列，本 schema 选了 13 列 + `schema_version`（共 14 个属性），取舍理由写在各自 description 里，决定权在 owner（见 x-needs-owner 第 1 条）。这条事件存在的理由见 §11 C8 行 934：`post.mix.completed` 是**独立事件**而不是 `post.master.rendered` 的一个分支，因为混音作业可以成功而整片渲染失败，或整片不需重渲而只需 `remix`（§4.4 行 323–349）——把结果塞进 `post.master.rendered` 的 `data.outcome` 会让「没有 master」的情况无事件可发。`MixJob` 不编码视频（§3.2 行 221）：它吃已有的 video artifact + stems，只产出新的 audio artifact。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补——与 `post.master-rendered.v2` 一致。"
+    },
+    "mix_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.3 行 710（`aggregate_id`）与 §5 行 486（主键，行 503）。**聚合序号的分母**：行 710 说 `aggregate_sequence` 是「该混音作业的事件序号」，即同一 `mix_job_id` 下的事件按发出顺序编号。注意 `mix_job` 表**没有 revision 列**（16 列里没有，`mix_job_id` 本身是终身的），所以这个序号不是「第几版混音」，是「这个作业发出的第几条事件」——两者在本事件的语义下没有区别，因为一个作业只发一条。若将来加 `mix.failed` / `mix.cancelled`，同一 `mix_job_id` 就会承载多条事件，届时序号的语义才真正被用到。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 487（`episode_id text NOT NULL`）。**这条事件没有 `series_id`、没有 `project_id`**——而 `render_job` 两者都有（行 419–420）。混音作业在 S42 内部只按集与分支定位（行 507–508 的索引是 `(tenant_id, episode_id, branch_id, created_at DESC)`），消费者要拿到 series/project 必须回查 S42 或 S08。见 x-conflicts MIX-3。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 488。同一集的多分支可以有各自独立的混音作业；事件里没有 `timeline_id` 也没有 `timeline_revision`，所以**这条事件根本不能定位到某条时间线的某一版**。这不是遗漏的等价物：`mix_job` 表本身就没有这两列（混音不改时间线，§7.2 行 759）。"
+    },
+    "source_video_ref": {
+      "type": "object",
+      "description": "来源：§5 行 489（`source_video_ref jsonb NOT NULL`，注释「S28 ref（remix 时逐字段复用）」）。形状取 plans/S28-artifact-ingest.md 行 94 的规范定义，与 `post.master-rendered.v2.schema.json` 的 `video_artifact_ref` 相同。**`remix` 的语义核心就在这个字段**：§4.4 行 346 要求「候选 manifest 里 video artifact ref 与上一版逐字段相同」。消费方拿到本事件后，若 `reason='remix_defect'` 且此 ref 与上一版相同，就能确认这次修复没有退化成重编码。**事件不告诉你「上一版」是哪个**——没有 `previous_mix_job_id`，也没有候选 id，所以这个比较只能由持有上一版引用的服务（S08 或 S41）来做。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 与 §5 行 489 的注释。字节的权威只在 S28。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "mix_plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§5 行 490（`mix_plan_hash char(64) NOT NULL`）与 §2.1 行 93（`mix_plan_hash` 归 S41，「怎么混（增益、ducking、响度目标）」，变 → 只需 `remix`）。**用裸 64 位小写 hex，不带 `sha256:` 前缀**——S42 全文 9 处写 `sha256:`（行 119、639、641、644、646、670、675、725、726），但 `char(64)` 装不下 7 字符前缀（共 71）。这条与 PDL-5 / PRD-4 / 本文件同族是同一个全局不一致，不在此重复登记冲突。**这条事件只发 hash 不发计划全文**：`mix_job` 表没有任何列存 `mix_plan` 本体，所以 §4.4 行 349「每次 `remix` 的 `mix_plan` 变化必须记录，因为交付时需要能回答『这一版和上一版音频差在哪』」在 S42 侧的落库事实**只有两个 hash 值**，无法回答「差在哪」。见 x-needs-owner 第 2 条。"
+    },
+    "graph_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§5 行 491（`graph_hash char(64) NOT NULL`）与行 473–482（`composition.filter_graph` 主键 `(tenant_id, graph_hash)`）。裸 hex，理由同 `mix_plan_hash`。对应 §2.2 行 115–140：`graph_hash` 由 `mix_plan` + `master_spec` + 输入 artifact 机械生成，节点与边键排序、数字规范化，同输入必须同 hash。**滤镜图全文在 `filter_graph.graph` 列里（行 477），事件只给 hash**——§8 行 815 的日志规则同样明说「滤镜图全文（改记 `graph_hash`）」。要复算走 `GET /master-candidates/{id}/evidence`（§6.2 行 693）。"
+    },
+    "target_lufs": {
+      "type": "number",
+      "description": "来源：§5 行 492（`target_lufs numeric(5,2) NOT NULL`）与 §6.1 行 671（`POST /mix-jobs` 请求体的 `target_lufs: -16.0`）。**这是「计划要多少」，不是「测出来多少」**——实测值在 `loudness_measurement` 表（行 516–517），本事件不带测量结果（`mix_job` 没有测量列；测量行通过 `mix_job_id` 反指，行 514）。§1 行 80「不选响度目标。`mix_plan.target_lufs` 决定；缺失时失败」——所以这个值永远来自上游，S42 不改写它。没有 `minimum` / `maximum`：`numeric(5,2)` 的数值范围是 ±999.99，而 LUFS 的实际可达范围是文档从未写过的口径，本 schema 不发明下界。"
+    },
+    "true_peak_ceiling": {
+      "type": "number",
+      "description": "来源：§5 行 493（`true_peak_ceiling numeric(5,2) NOT NULL`）与 §6.1 行 672（请求体 `-1.0`）。**与 `post.master.rendered` 的 `loudness.true_peak_dbtp` 是两个不同的量**：那个是实测峰值，这个是计划上限。同一份数据里两个字段名带 `true_peak` 但不可以互相替换，消费方混用会把「刚好 0 dBTP」误判成合规。"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "initial_mix",
+        "remix_defect",
+        "spec_change",
+        "manual"
+      ],
+      "description": "来源：§5 行 494–495（`reason text NOT NULL CHECK (reason IN ('initial_mix','remix_defect','spec_change','manual'))`）。四值照收，是本 schema 里有 DDL CHECK 依据的闭集之一。**这是这条事件最有信息量的字段**，因为它同时回答了三个问题：这次混音是不是修复（`remix_defect`）、是不是规格变了（`spec_change`）、还是人手动触发（`manual`）。§8 行 792 的 `composition_remix_ratio`（「remix 占修复比例；过低说明在滥重生成」）就是按它算的——**注意分母**：那个指标要的是「修复中 remix 的占比」，而本事件只带 `reason` 不带「这是不是一次修复」，指标消费方还得自己定义分母（`reason IN ('initial_mix')` 排除掉？还是按 episode 的作业总数？），文档没有给。"
+    },
+    "repair_plan_ref": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§5 行 496（`repair_plan_ref jsonb`，注释「S39 引用（remix_defect 时必填）」）、行 504–505 的 `CONSTRAINT mix_remix_needs_plan CHECK (reason <> 'remix_defect' OR repair_plan_ref IS NOT NULL)`，以及 §6.1 行 674 的请求体示例。**本 schema 用 `allOf` 的 if/then 复刻了那条 CHECK**——见文件末尾：`reason='remix_defect'` 时此键必须是非 null 对象。形状照 §6.1 行 674 的四键（`service_id` / `id` / `revision` / `content_hash`），与仓内 52 处同形引用一致（脚本核对 `contracts/*.schema.json`：`required` 恰为这四键、`additionalProperties: false` 的 closed 对象，本文件写入前共 52 处）。**但 S39 的 `repair_planning.plan` 表没有 `revision` 也没有 `content_hash` 列**（plans/S39-repair-planning.md §5 行 642–663，17 列）——S39 无法产出这个形状。见 x-conflicts MIX-2。",
+      "properties": {
+        "service_id": {
+          "const": "S39",
+          "description": "来源：§6.1 行 674 的示例（`\"service_id\":\"S39\"`）。修复计划归 S39（§1 行 51 的职责表）。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "S39 的主键 `plan_id`（plans/S39-repair-planning.md §5 行 643，格式 `rp_ + ulid`）。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "照 §6.1 行 674 的示例（值 `2`）。**S39 侧无对应列**——见 MIX-2。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "照 §6.1 行 674 的示例，裸 hex 而非示例里的 `sha256:` 形式（同一处 `char(64)` 与 7 字符前缀的矛盾）。**S39 侧无对应列**——见 MIX-2。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "description": "来源：§5 行 497–498（`state text NOT NULL CHECK (state IN ('CREATED','RUNNING','SUCCEEDED','FAILED','CANCELLED'))`）与 §3.2 行 218 的状态机（`CREATED → RUNNING → SUCCEEDED | FAILED | CANCELLED`）。五值照收，不做裁剪。**这是本 schema 最没有把握的一个键**：事件名叫 `completed`，如果它只在 `SUCCEEDED` 时发出，这里就该收成常量，五值枚举是错的；如果它在任一终态发出，`completed` 就是「结束了」而不是「成功了」，五值才成立。文档对此**一个字都没有**——§6.3 行 710 只说序号，§3.2 行 218 只画状态机，没有任何一行说哪个状态触发哪条事件。本 schema 取**宽的那一种**（保留五值），因为收窄成常量会让 `FAILED` / `CANCELLED` 的混音作业彻底没有事件可发——而全仓 `.failed` 结尾的 topic 只有两个（`post.render.failed`、`delivery.publish.failed`，脚本核对 `contracts/event-topics.v2.json` 的 55 条），没有 `post.mix.failed`。见 x-conflicts MIX-1 与 x-needs-owner 第 3 条。"
+    },
+    "output_audio_ref": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§5 行 499（`output_audio_ref jsonb`）与 §3.2 行 224（「输出：新的 audio artifact（可能还有新的混音后 stem）」）。形状同 `source_video_ref`（S28 规范 ref）。**可空，且 DDL 没有把可空性与 `state` 绑起来**——没有 `CHECK (state <> 'SUCCEEDED' OR output_audio_ref IS NOT NULL)` 这样的约束（对比 `mix_remix_needs_plan` 是有的，行 504–505）。本 schema 因此**不复制一个 DDL 里不存在的约束**：`SUCCEEDED` + null 在 schema 层是合法的，尽管实现上应该不可能。如果 owner 认为这个组合必须禁止，那是给 DDL 加 CHECK 的事，不是给 schema 加 if/then 的事——两者会漂。**「混音后的 stem」不在这里**：§3.2 行 224 说可能有新 stem，但 `mix_job` 表**没有 stems 列**，§1 行 34 列出的 `MixStem` 领域对象在 §5 里**没有对应的表**（§5 共 12 张表，脚本核对，无 mix_stem）。见 x-needs-owner 第 4 条。",
+      "properties": {
+        "service_id": {
+          "const": "S28"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "consumed_cpu_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 500（`consumed_cpu_ms bigint NOT NULL DEFAULT 0`）。**这是结算证据**：S23 的用量上报走 `render_usage` 表（行 574–586，`usage_id` 确定性为 `render_job_id + ':' + segment_no`，行 576），而 `mix_job` 在 `render_usage` 里只有 `mix_job_id` 一列（行 578）且**没有 segment_no**——所以混音的 `usage_id` 怎么构成，`render_usage` 的唯一键 `(tenant_id, usage_id)` 要求它唯一，文档没写。本 schema 不带 `usage_id`，只带这个总数，消费方拿它做对账时不能假设它等于 `render_usage` 的求和。E24-S42-03（行 837）要求 `remix` 只消耗 `cpu_media_second`、不消耗 `gpu_second`——**本事件没有 `consumed_gpu_ms`**，这正好与那条要求一致（混音没有 GPU 列可读：`mix_job` 16 列里确实只有 `consumed_cpu_ms`）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "mix_job_id",
+    "episode_id",
+    "branch_id",
+    "source_video_ref",
+    "mix_plan_hash",
+    "graph_hash",
+    "target_lufs",
+    "true_peak_ceiling",
+    "reason",
+    "state",
+    "output_audio_ref",
+    "consumed_cpu_ms"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "reason": {
+            "const": "remix_defect"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "repair_plan_ref": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "repair_plan_ref"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`post.mix.completed` 的 payload 键集合本身",
+      "demanded_by": "plans/S42-composition.md §6.3 行 701（只列事件名）与行 710（只给 `aggregate_id` / `aggregate_sequence`），以及 §11 C8 行 934 的裁决记录",
+      "s42_status": "这条事件在目录里登记过（C8 行 934 记的 2026-11-05 补登，commit `4f1bdcb`，topic `drama.composition.v2`，`contracts/event-topics.v2.json` 行 508–518），但**全文 945 行里没有任何一段定义它的字段**：没有 `data` 块、没有示例、没有字段表。本 schema 的 14 个属性里，1 个是 `schema_version`，其余 13 个全部从 §5 的 `mix_job` DDL 16 列里挑出，取舍是：去掉 `tenant_id`（信封已有）、`created_at` / `finished_at`（信封的 `time` 已表达「何时」，且时间戳不进业务契约）、`repair_plan_ref` 降为条件必填；保留其余 13 列。**这个取舍是判断，不是文档给的事实**——owner 若认为 `graph_hash` 或 `target_lufs` 不该上事件（它们可从 `mix_job_id` 回查），删掉是收窄；若认为该带 `created_at` 以便消费者算时长，加上是扩大。两种情况都不该由本批次替 owner 定。注意这与 `post.master.rendered` 的处境不同：那一条至少有 §6.3 行 713–730 的 13 键示例可依，本条的示例是零。"
+    },
+    {
+      "field": "`mix_plan` 全文不落库，而 §4.4 要求「能回答这一版和上一版音频差在哪」",
+      "demanded_by": "plans/S42-composition.md §4.4 行 349、§5 行 490（`mix_job.mix_plan_hash` 只有 hash）、§8 行 792（`composition_remix_ratio`）",
+      "s42_status": "§4.4 行 349 原话：「**每次 `remix` 的 `mix_plan` 变化必须记录**，因为交付时需要能回答『这一版和上一版音频差在哪』」。§5 的 `mix_job` 表只有 `mix_plan_hash char(64)`（行 490），**没有任何列存 `mix_plan` 本体**；`filter_graph.graph`（行 477）存的是由 `mix_plan` 机械生成的规范化滤镜图全文，理论上可反推一部分（增益、ducking 都体现在图里），但 §2.2 行 115 说图由 `mix_plan` + `master_spec` + 输入 artifact 三者共同生成，所以从图反推 `mix_plan` 不唯一。要满足 §4.4 行 349，要么落 `mix_plan` 全文（新列或新表），要么承认「hash 不同即算记录」并在交付证据里说明差在哪只能靠人看。**本事件带 `mix_plan_hash` 正是为了让下游至少能判断「变没变」**，但「差在哪」需要 owner 决定存储形态。"
+    },
+    {
+      "field": "`completed` 到底覆盖哪些 `state`，以及失败的混音作业发什么",
+      "demanded_by": "plans/S42-composition.md §3.2 行 218（五态状态机）、§5 行 497–498（DDL CHECK）、§4.4 行 347 与 E24-S42-02（行 836）要求 `STEMS_UNAVAILABLE` 显式失败",
+      "s42_status": "§4.4 行 347：「如果原始 stems 已过期/删除，`remix` **不可行**，必须显式失败并报告 `STEMS_UNAVAILABLE`，让 S39 改计划」；E24-S42-02（行 836）是它的验收用例。**但 S42 只发布三条事件，没有一条叫 `post.mix.failed`**，全仓 `.failed` 结尾的 topic 只有 `post.render.failed` 与 `delivery.publish.failed`（脚本核对 55 条 topic）。于是「显式失败并报告」只能靠同步响应（`POST /mix-jobs` 的 4xx）——而 `STEMS_UNAVAILABLE` 可能在作业**已创建之后**才被发现（stems 在 `RUNNING` 期间被 S28 清理，§12 行 944 说 stem TTL 归 S28）。那种情况下，`reason='remix_defect'` 的作业终态是 `FAILED`，而**没有任何事件告诉 S39 该改计划**。本 schema 保留五态枚举，正是为了让 `state='FAILED'` 有地方落；但这依赖「`completed` 在任一终态发出」这个未经文字确认的读法。要 owner 明确：`completed` 是否 = 终态；若 = `SUCCEEDED`，则需要新增 `post.mix.failed`。"
+    },
+    {
+      "field": "stems 参与方没有落库（`MixStem` 只有一句话，没有表）",
+      "demanded_by": "plans/S42-composition.md §1 行 34（领域对象表）、§3.2 行 223（输入含 stems）、§4.4 行 347、§6.1 行 668（请求体 `stems: [{role, artifact_ref}, ...]`）",
+      "s42_status": "§1 行 34 把 `MixStem` 列为 S42 的领域对象（「一次混音的执行记录与 stem 产物」），§6.1 行 668 的 `POST /mix-jobs` 请求体也确实传 `stems` 数组（`role` + `artifact_ref`）。但 §5 的 12 张表里**没有 mix_stem**（脚本逐行核对 `CREATE TABLE`），`mix_job` 的 16 列里**没有 stems 列**。所以：这次混音用了哪些 stem、各自什么 hash，**S42 自己重启后无法回答**。这对本事件的影响是：事件不带 stems（无处可取），而 `remix` 的可复现性完全依赖它们——§4.4 行 346 要求 video 流逐字段相同，行 347 要求 stems 必须可用，两条都指向「本作业的输入集合」，而这个集合没有被持久化。要补需要 owner 定：新增 `mix_job_stem` 表，还是把 stems 塞进 `filter_graph.built_from`（行 478 的 jsonb 里已经有 `input_artifact_hashes`，但那是图的输入不是作业的输入）。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "MIX-1",
+      "summary": "「必须显式失败并报告」的失败路径没有事件承载：没有 `post.mix.failed`，而 `completed` 的语义又没定义",
+      "s42_req": "§4.4 行 347：「如果原始 stems 已过期/删除，`remix` **不可行**，必须显式失败并报告 `STEMS_UNAVAILABLE`，让 S39 改计划」；E24-S42-02（行 836）把它写成验收用例：「stems 不可用 → `STEMS_UNAVAILABLE`，不尝试从成品分离」",
+      "s42_state": "§3.2 行 218：`CREATED → RUNNING → SUCCEEDED | FAILED | CANCELLED`；§5 行 497–498 的 DDL CHECK 同五值。**「`FAILED` 时发什么」没有一行文字**",
+      "s42_catalog": "contracts/event-topics.v2.json 共 55 个 topic，`.failed` 结尾只有两个：`post.render.failed`、`delivery.publish.failed`（脚本核对）。S42 的三条发布事件见 §6.3 行 701，其中没有 `post.mix.failed`",
+      "why_it_matters": "三条事实放一起就闭合不上了：(1) 文档要求混音失败必须「显式报告」，(2) 状态机允许 `FAILED`，(3) 事件目录里没有承载它的通道。剩下的唯一读法是同步响应——但 `STEMS_UNAVAILABLE` 恰恰可能在作业创建**之后**才被发现：stems 的 TTL 归 S28（§12 行 944「stem 的 TTL 归 S28」），一个跑了几分钟才发现 stem 被清理的作业，它的创建请求早就返回 202 了。此时 S39 收不到任何信号，只能靠轮询 `GET /render-jobs/{id}`（§6.2 行 689——注意这条查询**列的是 render-jobs，不是 mix-jobs**，混音作业连查询接口都没有在 §6.2 的表里出现）。后果是 `remix` 失败后 S39 的修复计划停在半途，重试计数不推进，而 E24-S42-02 在验收时**能过**（它只测「不尝试从成品分离」），因为缺信号不是它的断言。要定的是：`post.mix.completed` 是否在 `FAILED` 时发出（本 schema 的宽读法），还是新增 `post.mix.failed`。"
+    },
+    {
+      "id": "MIX-2",
+      "summary": "`repair_plan_ref` 的四键形状（含 `revision` / `content_hash`）在 S39 的数据模型里没有来源",
+      "s42_example": "§6.1 行 674：`\"repair_plan_ref\":{\"service_id\":\"S39\",\"id\":\"rp_...\",\"revision\":2,\"content_hash\":\"...\"}` —— 四键",
+      "s42_ddl": "§5 行 496：`repair_plan_ref jsonb,`（注释「S39 引用（remix_defect 时必填）」）与行 504–505 的 `mix_remix_needs_plan` CHECK。DDL 只说 jsonb，不约束形状",
+      "s39_ddl": "plans/S39-repair-planning.md §5 行 642–663 的 `repair_planning.plan`：17 列，`plan_id` 为主键，`manifest_revision` 有，但**没有 `revision`（计划自身的版本）也没有 `content_hash`**（脚本逐列核对）",
+      "why_it_matters": "仓内 55 处跨服务引用都用同一个四键 closed 形状（`service_id` / `id` / `revision` / `content_hash`，全必填，脚本按 `properties`+`required`+`additionalProperties:false` 三重条件数 `contracts/*.schema.json`，其中 3 处就是本文件），本 schema 跟随它并在 if/then 里强制 `remix_defect` 必带——但 S39 产不出后两个键。三个出路都不干净：(1) S39 加这两列（计划不可变？S39 的状态机里有 `superseded`，行 654–655，说明计划会被替换而不是原地改，那 `revision` 可能是恒为 1 的冗余）；(2) 把 `repair_plan_ref` 收成 `{service_id, id}` 两键（与仓内其余 54 处不同形，且丢掉了「我指的是哪一版计划」的能力）；(3) 让 S42 自己算 `content_hash`（第二个权威，AGENTS.md 禁止）。当前状态是**示例已经写成了 S39 做不到的形状**，而 schema 若照示例收就会在下游拒掉合法数据。这不是 S42 单方面能修的：要 S39 owner 先回答「计划是否有版本与内容哈希」。"
+    },
+    {
+      "id": "MIX-3",
+      "summary": "§11 C8 说这条事件是「S35/S39 的独立触发器」，但两份方案的正文里一次都没提过它",
+      "c8_claim": "§11 C8（行 934）：「选补登而非搭车，因为 `post.mix.completed` 是 **S35/S39 的独立触发器**，塞进 `post.master.rendered` 的 `data.outcome` 会让「没有 master」的情况没有事件可发」",
+      "s35_s39_reality": "plans/S35-technical-qc.md 提到 `post.mix.completed` **0 次**、`post.render.failed` 0 次、`post.master.rendered` 0 次；plans/S39-repair-planning.md 同样 0 / 0 / 0（脚本核对）。S35 的 `service.yaml` 只发布 `quality.technical.completed`；S39 的只发布 `quality.repair.planned`，两者的 `depends_on` 分别是 `S28` 与 `S35/S36/S37/S09/S02`，都**不含 S42**",
+      "s42_own_table": "§6.3 行 702 的「消费」行列出 S42 的**入站**事件，不是谁消费 S42。全文没有任何一处写出站事件的订阅方",
+      "why_it_matters": "C8 是一个**已裁决**的条目（2026-11-05，commit `4f1bdcb`），裁决理由被用来决定「补登而非搭车」这个架构选择。但支撑它的那句话在两份被点名的方案里查无实据：S35 与 S39 都没有把这条事件列为输入，`drama.composition.v2` 在整个 `plans/` 目录里只出现在 S42 自己（脚本核对）。这不必然说明裁决错了——「独立触发器」可以是**将来**的用途，而不是现有消费关系——但它意味着这条事件今天**没有任何已声明的消费者**，于是它的 payload 形状没有任何真实需求可以校验：写成什么样都没人会被拒。同样的空白也适用于 `post.render.failed`。本 schema 因此只能照 DDL 推，而不能照消费方的需要推（对比 `post.subtitle-ready` 之类有明确下游的事件）。要 owner 确认的是：S35/S39 是否确实要订阅；若不要，C8 的理由句应在方案里改成「为将来的重混触发预留」，而不是断言现有的订阅关系。"
+    }
+  ]
+}
