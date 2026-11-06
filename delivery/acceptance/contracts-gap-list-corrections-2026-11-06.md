@@ -4674,3 +4674,43 @@ FAIL  readme     1 problem(s)
 加了 4 条后正文没跟着改。改为 23，「那 19 个数」改为「那 23 个数」并补上 4 项，
 「反向测过二十个方向」改为二十四个。**这一处 `readme` 管不到**——它核的是
 claim 与 note 是否相等，不核正文有没有把 claim 的条数写对。
+
+### 补记十一之六：那 23 个数在正文里还抄了一遍，那一份没人核
+
+`readme` 原先只核**摘要段**里的 23 个数。但 `contracts/README.md` 在下面
+「那 N 个数是 …」那段里，把这 23 个数**又手抄了一遍**。两份副本之间没有任何约束。
+
+探针验的：只把清单里的 `links` 1330 改成 1331，摘要段不动，跑 `--only readme` ——
+
+```
+rc = 0
+ok    readme     23 count(s) in contracts/README.md's summary; layout block 5 count(s)
+```
+
+**绿。** 因为摘要段还是 1330，清单那份改了没人管。这一段之所以容易被当成
+「反正摘要里已经有了」，恰恰是因为它长得像注释；但它印在读者眼前的正文里。
+
+改法是把清单也钉到同一批 note 上，并加两个结构性断言：
+
+- 「那 N 个数是」的 N 必须等于 `len(README_CLAIMS)`；
+- 按 `、`/换行切开后，条目数也必须等于 `len(README_CLAIMS)`；
+- 逐条按**声明顺序**和 `README_CLAIMS` 配对（两边顺序本来就一致），
+  值不同就报 `README's count list says X for <label>, <check> says Y`。
+
+配对用的是顺序而不是标签名，因为清单里的标签是缩写（`unmapped`、
+`` `examples` ``），和 `README_CLAIMS` 的名字（`unmapped example`、`example`）
+不是一一对应；顺序配对省掉一张易腐的别名表，代价是把「两边顺序必须一致」
+变成了一条隐含约定——**这条约定现在没有断言**，只是注释里写着。
+
+反向探针 4 个方向，4/4 被抓到：
+
+| 改动 | 报错 |
+|---|---|
+| 清单 `links` 1330→1331 | `README's count list says 1331 for links, links says 1330` |
+| 清单 `unjudged tokens` 720→721 | `... says 721 for plantopics unjudged tokens, plantopics says 720` |
+| 「那 23 个数是」→「那 24 个数是」 | `README's count list says 24 numbers, but 23 claims are registered` |
+| 删掉清单最后一条 | `states 22 entries after splitting, but 23 claims are registered`（另有 3 条逐值错位，因为顺序配对整体前移） |
+
+最后一条暴露了顺序配对的另一面：删中间一条会让**后面全部错位**，
+报 4 个问题而不是 1 个。在这里可以接受（总数断言会先命中），
+但顺序配对的脆弱性应当记着。

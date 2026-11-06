@@ -992,6 +992,43 @@ def check_readme_counts(name):
             r.fail(f"README says {claimed.group(1)} for {label}, {check_name} "
                    f"says {actual.group(1)}")
 
+    # Below the summary paragraph the same numbers appear a second time, as a
+    # hand-transcribed list ("那 N 个数是 ..."). That copy was unchecked: changing
+    # `links` 1330 to 1331 there alone left this check reporting ok, because the
+    # summary above still said 1330 and nothing compared the two. Pin the list to
+    # the same notes, and pin its stated length to len(README_CLAIMS), so the copy
+    # cannot drift away from the original.
+    lst = re.search(r"那 (\d+) 个数是(.*?)。", readme, re.S)
+    listed_note = ""
+    if not lst:
+        r.fail("contracts/README.md no longer enumerates the pinned counts "
+               "('那 N 个数是 ...')")
+    else:
+        stated_n = int(lst.group(1))
+        if stated_n != len(README_CLAIMS):
+            r.fail(f"README's count list says {stated_n} numbers, but "
+                   f"{len(README_CLAIMS)} claims are registered")
+        entries = [x.strip() for x in re.split(r"[、\n]", lst.group(2)) if x.strip()]
+        entries = [x for x in entries if re.search(r"\d", x)]
+        if len(entries) != len(README_CLAIMS):
+            r.fail(f"README's count list states {len(entries)} entries after "
+                   f"splitting, but {len(README_CLAIMS)} claims are registered")
+        # Each entry is "<label> <value>"; match the label to its claim by the
+        # order both are written in, which is the order README_CLAIMS is declared.
+        for (label, _, check_name, note_pat), entry in zip(README_CLAIMS, entries):
+            mval = re.search(r"(\d+)\s*$", entry)
+            if not mval:
+                r.fail(f"README's count list entry {entry!r} does not end in a "
+                       f"number")
+                continue
+            actual = re.search(note_pat, results[check_name].note)
+            if not actual:
+                continue  # already reported above
+            if int(mval.group(1)) != int(actual.group(1)):
+                r.fail(f"README's count list says {mval.group(1)} for {label}, "
+                       f"{check_name} says {actual.group(1)}")
+        listed_note = f"; count list {len(entries)} value(s)"
+
     # The '## 布局' block, near the top of the same file, states four counts in
     # the same hand-typed way. They were not covered by README_CLAIMS (that
     # table is anchored to the check summary), and one of them was wrong: the
@@ -1028,6 +1065,7 @@ def check_readme_counts(name):
         counts_note = f"layout block {len(truth)} count(s)"
 
     r.note = (f"{len(README_CLAIMS)} count(s) in contracts/README.md's summary"
+              + listed_note
               + (f"; {counts_note}" if counts_note else ""))
     return r
 
