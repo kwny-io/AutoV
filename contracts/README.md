@@ -1483,7 +1483,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-二十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+二十二项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
@@ -1552,10 +1552,19 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 `763-772` 漂进 `check_interactions`、`160-170` 漂进 `check_links` 都通过了，因为它们
 **确实**还在某个 `check_*` 里。函数名是这段引用里唯一不随插入代码移动的部分，所以它是必填项，
 匿名行号直接 FAIL）、
+`planrefs`（方案引方案的 `Snn §X` 必须命中 `plans/Snn-*.md` 里真实存在的标题；扫 139 个 md，
+今天共 **467** 处引用、481 个段号对，481/481 命中。
+这一类可查是因为**归属写进了文本**：`Snn §X` 自带 `Snn`，而「行 537」要另找上下文才知道属于谁。
+补它之前已经查出两处真错：`plans/S45-audit.md` 引了 S07 的 §11（S07 只到 §10）与
+`plans/S19-agent-runtime.md` 引了 S08 的 §6.5（S08 的 §6 只到 §6.4）。
+**不判的东西**：更正报告 `contracts-gap-list-corrections-2026-11-06.md` 按路径豁免——
+它的更正表故意把错误写法放进单元格，而没有任何词法特征能把它和活引用分开，实测过两种都不成立
+（遮行内代码会连 11 处真引用一起遮掉，遮 `「」` 又漏掉反引号里的那一处）。
+这是真缺口：报告之外的错引用会被拦住，报告里的不会。）、
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「二十一项检查」这个数等于 `--list` 真列出的条数；二是把本段里 25 个手敲的数字逐条和
+「二十二项检查」这个数等于 `--list` 真列出的条数；二是把本段里 27 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1564,20 +1573,20 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 25 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
+那 27 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
 topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
 plantopics unjudged tokens 720、plantopics filename tokens 239、
 plantopics versioned-doc tokens 60、plantopics event-or-action tokens 421、docsreadme count 9、
-citerefs citation 8。
+citerefs citation 8、planrefs ref 467、planrefs pair 481。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过二十五个方向（上面 25 个数各改 1），
-二十五次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
+反向测过二十七个方向（上面 27 个数各改 1），
+二十七次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
 每一个方向都由脚本改一处、跑一遍、读 `readme` 的输出，不是靠记忆归纳的。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
@@ -1612,7 +1621,7 @@ S38:241 的正文缩写，是三处已知悬空引用，列在 `KNOWN_DANGLING_R
 `links` 的只读存档条数（存档是冻结的，数它没有意义）、
 passed/skipped 的拆分（数据文件一落地就变）。
 
-二十一项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
+二十二项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
 结尾那行会把通过的项数减掉它，再把 `1 skipped (registry): nothing was verified there`
 单列在后面（具体几项随检查增减，以 `--list` 为准，不在这里写死——写死过两次，每次加检查就过期），
 那一格自己的状态也打成 `skip` 而不是 `ok`。这条和「一项没跑成不能读成绿灯」是同一条原则，

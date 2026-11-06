@@ -948,6 +948,9 @@ README_CLAIMS = [
     # it is the denominator the "all named" claim is a fraction of, and a
     # denominator that shrinks silently would make the fraction look better.
     ("citerefs citation", r"今天共 \*\*(\d+)\*\* 处引用", "citerefs", r"(\d+) check_all\.py citation"),
+    ("planrefs ref", r"`planrefs`（[^）]*?今天共 \*\*(\d+)\*\* 处引用",
+     "planrefs", r"^(\d+) ref\(s\)"),
+    ("planrefs pair", r"481 个段号对，(\d+)/\d+ 命中", "planrefs", r"(\d+)/\d+ resolve"),
 ]
 
 
@@ -2098,6 +2101,167 @@ def check_citerefs(name):
     return r
 
 
+def check_planrefs(name):
+    """`Snn §X` names a heading in `plans/Snn-*.md`.
+
+    Why this is checkable at all, when `行 N` citations (see the corrections
+    report, 补记十一之十三) are not: the attribute is inside the text. `S08
+    §6.5` says which plan it means; "行 537" does not, so resolving it needs
+    context the citation does not carry. That distinction -- not the presence
+    of a number -- is what makes this family auditable.
+
+    Two things this deliberately does NOT do:
+
+    - It DOES fail an integer that is not a heading but is inside the file's
+      length, and the failure message says the form was not accepted because
+      `Snn §行号` is an open owner decision. That is deliberate, and it took
+      two wrong versions to get here:
+
+      v1 failed only ints beyond the file's length. That let `S07 §11` pass:
+      S07 stops at §10 but is 1141 lines, so `§11` was read as "line 11" and
+      went unjudged -- the exact error this check exists to catch, which
+      `plans/S45-audit.md` carried until this round.
+      v2 required the integer to be at least the plan's highest top-level
+      section (so `S23 §1180`, a real line-number ref, would qualify). Still
+      wrong: `S07 §11` is only one past §10, so it slipped through again.
+      Both were mutation-tested; bothe survived the mutation meant to catch
+      them. There is no arithmetic rule that separates "§11 of a plan ending
+      at §10" from "line 1180", because the difference is intent, not shape.
+      So the check reports it and says why. Outside the corrections report
+      this corpus has zero such refs, so nothing is wrongly failed today;
+      if the owner makes the line-number form legal, this branch is where to
+      change it, and the note links the decision.
+    - It does not check that the cited section *says* the thing the prose
+      claims. That was tried and is not decidable: a "same gap as S19 §11 C6"
+      row legitimately cites a section that does not contain the identifier the
+      citing sentence quotes, because the identifier is the citing document's
+      own subject. 17 of 17 such flags were that shape.
+
+    Scope matches check_citerefs: `docs/design-package/` (read-only archive),
+    `.claude/` (other sessions' worktrees) and `_inbox/` are skipped, and
+    fenced blocks are masked so an example of a wrong form does not count.
+
+    The one file that legitimately quotes wrong refs -- the corrections report,
+    whose correction tables put the wrong form in a cell -- is exempted by
+    path, not by trying to tell a quoted example from a live citation. Two
+    heuristics were tried and both were wrong, measured:
+      - masking inline code spans drops 11 real refs, `S10 §5.3 行 625` among
+        them, because a ref followed by `行 N` is written in backticks too;
+      - masking 「」/『』/“”/‘’ spans catches 3 refs that are all meant to be
+        checked, and still misses `S08 §6.5` at :5138, which is in backticks
+        and quotes no bracket at all.
+    There is no lexical tell, so the exemption is stated rather than inferred.
+    That is a real gap: a wrong ref elsewhere in the repo still fails, but a
+    wrong ref inside the report does not, and the report grows.
+
+    Headings are read without requiring a space after the number, because this
+    repo writes both `## 3. 跨集改稿` and `## 3.跨集改稿`. Requiring the space
+    turned 7 correct refs into apparent errors when this was measured.
+    """
+    r = Result(name)
+    fences = re.compile(r"```.*?```", re.S)
+
+    def mask(text):
+        inside = False
+        out = []
+        for line in text.split("\n"):
+            if line.lstrip().startswith("```"):
+                inside = not inside
+                out.append("")
+            else:
+                out.append("" if inside else line)
+        return "\n".join(out)
+
+    plans = {}
+    for p in sorted(glob.glob(os.path.join(ROOT, "plans", "*.md"))):
+        base = os.path.basename(p)
+        m = re.match(r"(S\d{2})-", base)
+        if not m:
+            continue
+        lines = _utf8(p).split("\n")
+        heads = set()
+        for line in lines:
+            h = re.match(r"^#{1,5}\s*(\d+(?:\.\d+)*)\s*[.、]?", line)
+            if h:
+                heads.add(h.group(1))
+        top = max((int(x) for x in heads if x.isdigit()), default=0)
+        plans[m.group(1)] = (heads, len(lines), top)
+
+    # `Snn §A`, then any continuation: `/`, `、`, `,`, `–`, `~`, each optionally
+    # re-prefixed with `§`. `S45` writes `S07 §5.1–§5.2`; `contracts/README.md`
+    # writes `S23 §6.1`; `plans/` use both.
+    ref = re.compile(
+        r"(?<![A-Za-z0-9])S(\d{2})\s*§\s*(\d+(?:\.\d+)*)"
+        r"((?:\s*(?:[/、,，]|[-–~])\s*§?\s*\d+(?:\.\d+)*)*)"
+    )
+
+    # See the docstring: the report writes wrong refs on purpose, in table
+    # cells, with no lexical marker that separates them from live ones.
+    EXEMPT = {"delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md"}
+
+    refs = 0
+    pairs = 0
+    heading = 0
+    lineno = []
+    dangling = []
+    exempt_refs = 0
+    for p in sorted(glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True)):
+        rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
+        if rel.startswith(("docs/design-package/", ".claude/", "_inbox/")):
+            continue
+        if rel in EXEMPT:
+            n = len(ref.findall(mask(_utf8(p))))
+            exempt_refs += n
+            continue
+        text = mask(_utf8(p))
+        for m in ref.finditer(text):
+            sid = "S" + m.group(1)
+            refs += 1
+            line = text[: m.start()].count("\n") + 1
+            where = f"{rel}:{line} cites {m.group(0)}"
+            if sid not in plans:
+                pairs += 1
+                dangling.append(f"{where}: plans/ has no {sid}-*.md")
+                continue
+            heads, nlines, top = plans[sid]
+            for x in [m.group(2)] + re.findall(r"\d+(?:\.\d+)*", m.group(3)):
+                pairs += 1
+                if x in heads or any(h.startswith(x + ".") for h in heads):
+                    heading += 1
+                elif x.isdigit() and int(x) <= nlines:
+                    # Not a heading, but inside the file. Almost always a
+                    # mistyped section (`S07 §11` where S07 stops at §10).
+                    # It could also be the line-number form, which the owner
+                    # has not decided on -- so it is reported as a failure
+                    # with that named, not silently accepted. Outside this
+                    # report the corpus has no such ref, so nothing is
+                    # wrongly failed today.
+                    lineno.append(where)
+                    r.fail(f"{where}: {sid} has no §{x} (plan is {nlines} "
+                           f"lines; if this means line {x}, `Snn §行号` is "
+                           f"an open owner decision and not a legal form yet)")
+                else:
+                    dangling.append(f"{where}: {sid} has no §{x}")
+
+    for d in dangling:
+        r.fail(d)
+
+    note = (f"{refs} ref(s), {pairs} section pair(s) across {len(plans)} plan file(s); "
+            f"{heading}/{pairs} resolve to a heading; "
+            f"{exempt_refs} ref(s) in the corrections report not judged")
+    if lineno:
+        # These are failures, listed here too so the summary says why the run
+        # is red without making the reader search the failure lines.
+        note += (f"; {len(lineno)} integer ref(s) name no heading and are "
+                 f"counted as mistyped sections: " + ", ".join(lineno[:5]))
+        if len(lineno) > 5:
+            note += f" (+{len(lineno) - 5} more)"
+    else:
+        note += "; no integer ref names a non-heading"
+    r.note = note
+    return r
+
+
 
 
 CHECKS = [
@@ -2121,6 +2285,7 @@ CHECKS = [
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("docsreadme", check_docs_readme, "docs/README.md's counts about its own directory match the files"),
     ("citerefs", check_citerefs, "prose line citations land on real lines of the file they name"),
+    ("planrefs", check_planrefs, "Snn §X in prose names a heading in plans/Snn-*.md"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
 
