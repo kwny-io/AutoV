@@ -2652,3 +2652,157 @@ B 关键：文件一存在，`skip` 就变成会计数的 `ok`，说明这个标
 | 4 | 本节的探针注「`window_max_frames` 是同级另一个 required 字段」 | 无条件 required | **条件** required：`allOf` 里 `if window_scope ∈ {frame, window} then required ["window_max_frames"]` | 看到 `required` 三个字就当成无条件。它出现在 `then` 分支里，条件没写进句子；这也解释了为什么我第一版给 `"window"` 时被拒、给 `"shot"` 时其实不会被拒 |
 
 十项里 9 项真跑过、1 项没有。
+### 16.19 把「README 里那几个数」变成一项检查——它当场抓到 `scaffold` 多算了 2 个
+
+§16.16 起 `contracts/README.md` 的检查摘要段就是手写的：十行以外的一段话，逐项报出
+每个检查看了多少东西。它长得像输出，读起来像输出，但**没有任何东西在核它**。§16.17
+已经证明这类数字会歪——里面 `examples` 那格从 53 漂到 63 再到 66，而目录里已经有 72 个文件。
+
+这一轮把它变成第十一项检查 `readme`。
+
+#### 它核什么
+
+两件事，来源不同：
+
+1. **开头的「N 项检查」** —— 和 `len(CHECKS)` 比。这个数在加检查的那一刻就会过期，
+   我第一版把锚点写成 `readme.find("十项检查：")`，改 README 加这一格的时候
+   **把自己写的检查弄挂了**。所以它不 pin 任何字面量，直接读注册表。
+2. **段落里 9 个手敲的数字** —— 逐条和产生它的那个检查的 `note` 比：
+
+| 数字 | README 里的话 | 由哪个检查算 |
+|---|---|---|
+| 148 | `json`（148 个 JSON 解析） | `json` |
+| 110 | `payloads`（110 条 `schema_ref`…） | `payloads` |
+| 55 | 其中 55 个 topic 带 payload schema | `payloads` |
+| 99 | 四份 QC 方案里 99 个 `check_id` | `checkids` |
+| 1321 | `links`（1321 条相对链接全部可达） | `links` |
+| 5 | 动作族文件自己声明的 5 条 invariant | `families` |
+| 118 | `scaffold`（118 个生成物与 catalog 一致） | `scaffold` |
+| 71 | `examples`（**71** 个示例对 schema 校验） | `examples` |
+| 1 | 另 1 个刻意不映射 | `examples` |
+
+锚点也核：段落起点是从节标题 `## 一个入口跑完所有仓库级检查` 往下找 `N 项检查：`，
+找不到就报「这一节的摘要段不见了」，而不是去全文里捞一个碰巧匹配的数——
+§16.17 那个「数串到隔壁字段头上」的错就是全文乱捞的产物。
+
+#### 当场抓到的那个
+
+第一次跑通之后，我去回源表重数（cron 回合的「数值：任意新写入的统计数字，回到源表重新数」），
+自己从文件数出来是：
+
+```
+json            148   (files ending .json under contracts/: 148)
+schema_ref      110
+payload topic   55
+check_id        99
+stated invariant 5  (families: 14)
+scaffold        70  (svc 48, agent 13, conn 9)
+examples files  72
+```
+
+`scaffold` 我数出 **70**，检查器报 **120**，README 也写着 120。三边不一致，于是去读
+`check_scaffold`：
+
+```python
+    # Compare every rendered file against the working tree.
+    compared = 0
+    for p in sorted(glob.glob(os.path.join(tmp, "**", "*"), recursive=True)):
+        if not os.path.isfile(p):
+            continue
+        rel = os.path.relpath(p, tmp)
+        tree = os.path.join(ROOT, rel)
+        compared += 1
+```
+
+`tmp` 是临时根，函数自己往里拷了两个输入文件：
+
+```python
+    os.makedirs(os.path.join(tmp, "contracts"), exist_ok=True)
+    for f in ("service-catalog.v2.json", "event-topics.v2.json"):
+```
+
+这两个文件被下面的 glob 一起数进了 `compared`。真实生成物是：
+
+```
+  48  services/*/service.yaml
+  48  services/*/service.md
+  13  agents/*/agent.yaml
+   0  agents/*/agent.md
+   9  connectors/*/*/connector.yaml
+   0  connectors/*/*/connector.md
+```
+
+48 + 48 + 13 + 9 = **118**。120 − 118 = 2，正好是那两个输入。
+
+我头一遍直数出 70 也是错的：只数了三种 `yaml`，漏了 48 个 `service.md`。
+两次错法不一样——检查器把输入当输出，我把一种输出整个漏掉——但方向相同：
+**都在数「我以为它在数什么」，而不是去读它实际遍历的路径。**
+
+#### 改法与负向测试
+
+`check_scaffold` 的循环里跳过 `contracts/` 前缀；`r.note` 从 120 改成真数。
+改完立刻被自己刚写的检查抓到：
+
+```
+FAIL  readme     1 problem(s)  [9 count(s) in contracts/README.md's summary]
+        README says 120 for scaffold, scaffold says 118
+```
+
+改 README 为 118 之后转绿。这就是这一格该有的行为：**检查器改了，README 必须跟着改，
+不跟着就红。**
+
+十向负向测试（9 个数字各 +1/−1，再加开头「十一」改「十」）：
+
+```
+json 148->149              CAUGHT  ['README says 149 for JSON 解析, json says 148']
+payload refs 110->109      CAUGHT  ['README says 109 for schema_ref, payloads says 110']
+payload topic 55->54       CAUGHT  ['README says 54 for payload topic, payloads says 55']
+check_id 99->100           CAUGHT  ['README says 100 for check_id, checkids says 99']
+links 1321->1320           CAUGHT  ['README says 1320 for links, links says 1321']
+invariant 5->6             CAUGHT  ['README says 6 for stated invariant, families says 5']
+scaffold 118->119          CAUGHT  ['README says 119 for scaffold, scaffold says 118']
+examples 71->70            CAUGHT  ['README says 70 for example, examples says 71']
+unmapped 1->2              CAUGHT  ['README says 2 for unmapped example, examples says 1']
+opener 十一->十               CAUGHT  ['README says 十项检查, but 11 checks are registered; --list is the authority']
+restored identical: True
+```
+
+另外两种锚点失效：
+
+```
+[opener dropped]         ["contracts/README.md's check section no longer opens with
+                          'N 项检查：'; this check cannot find the summary paragraph"]
+[section heading gone]   ["contracts/README.md no longer has the
+                          '一个入口跑完所有仓库级检查' section"]
+```
+
+#### 刻意不 pin 的
+
+- **`families` 的「5 条里 4 条」那个 4**：4 of 5 是语义判断（第 5 条归 `registry`），
+  不是计数结果。5 是计数，pin；4 不是。
+- **`checkids` 的不合规条数**：白名单本来就该缩短，写死等于要求它别缩短。
+- **passed/skipped 的拆分**：数据文件一落地就从 `10 passed, 1 skipped` 变成 11 passed，
+  写死会让落地那一刻红，而那是**预期内的**变化。
+- **`catalog` 那格的服务数**：README 这一节里根本没写服务数（写的是「服务 id / topic
+  `producer` / `docs/02` 三方一致」）。我第一版硬加了一条 `catalog` 的 claim，
+  正则里连捕获组都没有，跑起来直接 `IndexError: no such group`——
+  那不是写错一个数，是给一段话编了一个它没说的话。
+
+#### 由此带来的变化
+
+- `tools/check_all.py`：新增 `README_CLAIMS`、`_cn_numeral()`、`check_readme_counts()`，
+  注册成第十一项，排在 `maturity` 与 `registry` 之间（`registry` 要最后，因为它可能 skip）。
+- `tools/check_all.py` `check_scaffold`：`compared` 跳过 `contracts/` 前缀。
+- `contracts/README.md`：标题数改成「十一项检查」，摘要段补 `readme` 一格，
+  另起一段说明这一格核什么、反向测过什么、哪些不 pin，`scaffold` 120 → 118。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` 摘要行，以及 §16.16–§16.18 各节结尾 | `scaffold` 120 个生成物 | **118**：`check_scaffold` 把自己拷进临时根的 2 个输入文件（`service-catalog.v2.json`、`event-topics.v2.json`）也算成了生成物 | **把「glob 到了」当成「生成出来了」。**循环遍历的是临时根下的所有文件，输入和输出混在同一个树里；我没区分，README 就跟着抄了一个多 2 的数 |
+| 2 | 本节的直数脚本 | `scaffold 70`（svc 48 + agent 13 + conn 9） | **118**，漏了 48 个 `service.md` | 只数了 `*.yaml` 三种，`generate_services.py` 同时产出 `service.yaml` 和 `service.md`；两次数错方向不同，但都是没读生成器实际写哪些文件 |
+| 3 | 本节初稿：`readme` 这一格的锚点 | `readme.find("十项检查：")` | 不 pin 字面量，从节标题往下找 `N 项检查：` 再和 `len(CHECKS)` 比 | **把「现在的数字」写成了「结构」。**加第十一项检查时我改 README 为「十一项」，锚点还写着「十项」，于是这一格把自己弄挂了 |
+| 4 | 本节初稿：`README_CLAIMS` 第一条 | 我加了 `("catalog", r"服务 id.", ...)` 之类一条 `catalog` claim | 删掉——README 这一段没有服务数 | 凭印象以为这一节写了服务数。跑起来 `IndexError: no such group` 才回去读原文，发现那半句讲的是三方一致性，不是计数 |
+| 5 | 本节初稿：`family-invariant` 只说「4 of 5 不 pin」 | 只说 4 不 pin，没说 5 该 pin | 5 是计数、pin；4 是语义判断、不 pin；两者在同一句话里 | 把「这半句是判断」扩大成「整句都是判断」，连带放过了一个真能核的数 |
+
+十项里 9 项真跑过、1 项没有——现在是十一项里 10 项真跑过、1 项没有。
+

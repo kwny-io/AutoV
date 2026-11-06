@@ -21,8 +21,10 @@ working tree.
 """
 
 import argparse
+import contextlib
 import glob
 import importlib.util
+import io
 import json
 import os
 import re
@@ -263,12 +265,17 @@ def check_scaffold(name):
             r.fail(f"{fname}: could not render: {type(e).__name__}: {e}")
             continue
 
-    # Compare every rendered file against the working tree.
+    # Compare every rendered file against the working tree. The two inputs staged
+    # above live under the temp root too, so they walk past here; counting them
+    # made the note read 120 for 118 generated files, and the README quoted that
+    # number back as its coverage claim.
     compared = 0
     for p in sorted(glob.glob(os.path.join(tmp, "**", "*"), recursive=True)):
         if not os.path.isfile(p):
             continue
         rel = os.path.relpath(p, tmp)
+        if rel.split(os.sep)[0] == "contracts":
+            continue
         tree = os.path.join(ROOT, rel)
         compared += 1
         if not os.path.exists(tree):
@@ -290,14 +297,19 @@ def check_examples(name):
     spec.loader.exec_module(mod)
     saved = sys.argv
     sys.argv = ["validate_examples.py"]
+    verbose = io.StringIO()
     try:
-        rc = mod.main()
+        with contextlib.redirect_stdout(verbose):
+            rc = mod.main()
     finally:
         sys.argv = saved
     if rc == 2:
         r.fail("cannot run (jsonschema missing?); this is not a pass")
     elif rc != 0:
         r.fail("at least one example failed its schema")
+        for line in verbose.getvalue().splitlines():
+            if line.startswith(("FAIL", "UNMAPPED")):
+                r.fail(line)
 
     # validate_examples.py's local_registry() globs contracts/*.schema.json, which
     # is not recursive, so a schema in a subdirectory is never loaded and never
@@ -332,8 +344,14 @@ def check_examples(name):
     stems = {os.path.basename(p).split(".")[0]
              for p in glob.glob(os.path.join(CONTRACTS, "examples", "*.json"))}
     mapped = {s for s in stems if s in mod.SCHEMA_OF}
-    r.note += (f"  {on_disk} file(s) on disk, {len(stems)} stem(s), "
-               f"{len(mapped)} mapped")
+    tally = re.search(r"(\d+) example\(s\) valid, (\d+) failing, (\d+) without a schema",
+                      verbose.getvalue())
+    if tally:
+        r.note += (f"  {tally.group(1)} valid, {tally.group(3)} without a schema; "
+                   f"{on_disk} file(s) on disk, {len(stems)} stem(s), {len(mapped)} mapped")
+    else:
+        r.note += (f"  {on_disk} file(s) on disk, {len(stems)} stem(s), "
+                   f"{len(mapped)} mapped")
     if len(mapped) < len(stems):
         r.fail(f"{sorted(stems - mapped)} is on disk but missing from SCHEMA_OF; "
                f"the validator prints UNMAPPED for it and the README's count "
@@ -396,6 +414,103 @@ def check_maturity(name):
 
     breakdown = ", ".join(f"{v} {k}" for k, v in sorted(states.items()))
     r.note = f"{len(cat)} service(s): {breakdown}; {len(with_code)} with code in src/"
+    return r
+
+
+# The numbers contracts/README.md quotes in its check summary. They are
+# re-derived here rather than read from the note strings, because the note
+# strings are formatted for humans and change shape; these are what the prose
+# actually promises. Each entry is (label as README says it, regex over the
+# README summary paragraph, the check whose Result supplies the truth).
+README_CLAIMS = [
+    ("JSON 解析", r"`json`（(\d+) 个 JSON 解析）", "json", r"(\d+) file"),
+    ("schema_ref", r"`payloads`（(\d+) 条 `schema_ref`", "payloads", r"(\d+) schema ref"),
+    ("payload topic", r"其中 (\d+) 个 topic 带 payload schema", "payloads", r"(\d+) topic\(s\) with a payload"),
+    ("check_id", r"(\d+) 个\s*\n?`check_id` 是否符合", "checkids", r"(\d+) check_id"),
+    ("links", r"`links`（(\d+) 条相对链接", "links", r"(\d+) local link"),
+    ("stated invariant", r"自己声明的\s*\n?(\d+) 条 invariant", "families", r"(\d+) stated invariant"),
+    ("scaffold", r"`scaffold`（(\d+) 个生成物", "scaffold", r"(\d+) generated file"),
+    ("example", r"`examples`（\*\*(\d+)\*\* 个示例", "examples", r"(\d+) valid"),
+    ("unmapped example", r"另 (\d+) 个刻意不映射", "examples", r"(\d+) without a schema"),
+]
+
+
+_CN_DIGITS = "零一二三四五六七八九"
+
+
+def _cn_numeral(text):
+    """Parse the small Chinese numerals this file's prose uses (一 .. 九十九)."""
+    if text == "十":
+        return 10
+    if "十" in text:
+        tens, _, ones = text.partition("十")
+        return (_CN_DIGITS.index(tens) if tens else 1) * 10 + (
+            _CN_DIGITS.index(ones) if ones else 0)
+    return _CN_DIGITS.index(text)
+
+
+def check_readme_counts(name):
+    """The README's check summary must quote numbers the checks still produce.
+
+    contracts/README.md opens its check section with a paragraph that states, per
+    check, how many things that check looked at. Nothing tied those numbers to
+    the checks: they were typed by hand and would drift every time a schema,
+    example or link was added, the way the `examples` cell drifted 53 -> 63 -> 66
+    while the directory reached 72. The rest of that file quotes counts too, but
+    this paragraph is the one place they are all in one sentence, so this is
+    where a reader forms an impression of coverage.
+
+    Only the counts that are stable enough to pin are pinned. Deliberately not
+    pinned: the "4 of 5" numerator (that 4 is a semantic decision — which
+    invariant belongs to check_registry — not a count, and the 5 next to it is
+    pinned as `stated invariant`), the `checkids` non-conforming count (a
+    whitelist that is meant to shrink), and the passed/skipped split (it flips
+    the moment a data file lands, and the sentence describing it says so).
+
+    The paragraph's leading "N 项检查：" is pinned too. It went stale the moment a
+    check was added — the first draft of this check said "ten" in its own anchor
+    and broke itself — so the numeral is compared against len(CHECKS) instead of
+    being typed here a second time.
+    """
+    r = Result(name)
+    readme = _utf8(os.path.join(CONTRACTS, "README.md"))
+    # Restrict to the summary paragraph, so a number in some later section that
+    # happens to match the same pattern cannot satisfy or break this.
+    head = readme.find("\n## 一个入口跑完所有仓库级检查")
+    if head < 0:
+        r.fail("contracts/README.md no longer has the '一个入口跑完所有仓库级检查' section")
+        return r
+    section = readme[head:readme.find("\n## ", head + 1)]
+    opener = re.search(r"\n([一二三四五六七八九十]+)项检查：", section)
+    if not opener:
+        r.fail("contracts/README.md's check section no longer opens with "
+               "'N 项检查：'; this check cannot find the summary paragraph")
+        return r
+    stated = _cn_numeral(opener.group(1))
+    if stated != len(CHECKS):
+        r.fail(f"README says {opener.group(1)}项检查, but {len(CHECKS)} checks are "
+               f"registered; --list is the authority")
+    start = head + opener.end()
+    para = readme[start:readme.find("\n\n", start)]
+
+    results = {n: fn(n) for n, fn, _ in CHECKS if n in {c[2] for c in README_CLAIMS}}
+    for label, readme_pat, check_name, note_pat in README_CLAIMS:
+        claimed = re.search(readme_pat, para)
+        if not claimed:
+            r.fail(f"README summary no longer states the {label} count in the "
+                   f"form this check reads; update README_CLAIMS or the prose")
+            continue
+        note = results[check_name].note
+        actual = re.search(note_pat, note)
+        if not actual:
+            r.fail(f"cannot read the {label} count out of {check_name}'s note "
+                   f"({note!r}); this check's extraction is stale")
+            continue
+        if int(claimed.group(1)) != int(actual.group(1)):
+            r.fail(f"README says {claimed.group(1)} for {label}, {check_name} "
+                   f"says {actual.group(1)}")
+
+    r.note = f"{len(README_CLAIMS)} count(s) in contracts/README.md's summary"
     return r
 
 
@@ -527,6 +642,7 @@ CHECKS = [
     ("scaffold", check_scaffold, "generated files match the catalog"),
     ("examples", check_examples, "contracts/examples/ validate against their schemas"),
     ("maturity", check_maturity, "catalog maturity matches whether services/*/src/ has code"),
+    ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
 
@@ -577,9 +693,9 @@ def main():
         return 2
     if failed:
         return 1
-    # A skipped check verified nothing, so it is not counted as passed. Saying
-    # "10 check(s) passed" while one of the ten never executed is the same
-    # over-claim as a stale docstring promising broader coverage than it has.
+    # A skipped check verified nothing, so it is not counted as passed. A total
+    # that includes a check which never executed is the same over-claim as a
+    # stale docstring promising broader coverage than it has.
     ran = len(selected) - len(skipped)
     line = f"{ran} check(s) passed"
     if skipped:

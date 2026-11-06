@@ -1483,16 +1483,35 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-十项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant 里的 **4 条**）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（**71** 个示例对
+5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
 schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity` 与 `services/*/src/`
-里到底有没有代码一致）、`registry`（`check-registry.v2.json` 存在时才跑）。
+里到底有没有代码一致）、`readme`（上面这段里的数必须还是各检查真跑出来的数）、
+`registry`（`check-registry.v2.json` 存在时才跑）。
 
-十项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
-结尾那行现在是 `9 check(s) passed, 1 skipped (registry): nothing was verified there`，
+`readme` 这一格是在核**这段自身**。它做两件事：一是核开头的「十一项检查」这个数等于
+`--list` 真列出的条数；二是把本段里 9 个手敲的数字逐条和对应检查自己算出的数比，
+不一致就 FAIL 并指出**是哪一个**。
+
+那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1321、
+stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格当天就抓到一个：
+`scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
+自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
+被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
+
+反向测过十个方向（上面 9 个数各改 1，再加开头「十一」改成「十」），十次全部被抓到，
+报的是 `README says 149 for JSON 解析, json says 148` 这种话；还原后 `git diff` 为空。
+另外还测了段落锚点消失（改节标题、删掉「N 项检查：」开头）两种，各自报自己的错。
+
+刻意不 pin 的：`families` 的「4 of 5」里那个 4（是语义判断，不是计数）、
+`checkids` 的不合规条数（白名单本来就该缩短，写死等于要求它别缩短）、
+passed/skipped 的拆分（数据文件一落地就变）。
+
+十一项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
+结尾那行现在是 `10 check(s) passed, 1 skipped (registry): nothing was verified there`，
 那一格自己的状态也打成 `skip` 而不是 `ok`。这条和「一项没跑成不能读成绿灯」是同一条原则，
 只是形态不同——前者是跑失败了，这里是没东西可跑。按旧写法「十项全过」会把一个空转的格子
 算成一票通过，而这个文件里恰好有一段（下一节）在说 `families` 那第 5 条一次都没执行过。
