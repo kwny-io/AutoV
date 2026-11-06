@@ -4118,3 +4118,73 @@ ok  redaction  6 secret class(es), 6/6 regex(es) compiled; 4 applies_to entr(ies
 
 这也解释了为什么这个错能活这么久：**没有任何东西会去编译它**。
 和补记二三四一样，都是「文件在，字段在，但没人读」的变体。
+
+### 补记六：`mcp-tools.v2.design.json` 只被取了一个 `len()`，`apps/README.md` 的结论还停在旧版
+
+这个文件此前只有一处被读：`catalog` 检查拿 `len(mcp["tools"])` 去核 README 布局块的
+「12 MCP 工具」。于是 `required_scope`、`inputSchema`、四个 MCP 安全注解**全是零校验**。
+`apps/README.md:28` 写着「目前没有 scope 字段」——而 12/12 个工具都带 `required_scope`。
+`contracts/README.md` 缺口 2 早已改成正确答案，`apps/README.md` 那句没跟着改。
+
+**先核实缺口 2 的数**（不沿用）：
+
+```
+JSON 工具 12 | docs/13 具名 13 | 交集 8
+docs/13 有、JSON 无: artifact.compare episode.plan memory.extract model.estimate project.get
+JSON 有、docs/13 无: delivery.prepare delivery.publish policy.get run.command
+scope: read 4 / execute 4 / plan 1 / review 1 / admin 1 / publish 1
+```
+
+全部复现，缺口 2 无误。
+
+**改 `apps/README.md:28`**：删掉「没有 scope 字段」，换成三条真实的现状——
+都有 `required_scope`、`publish` 是第六个值、清单交集 8 个。scope 归哪一档是授权决策，
+不在这里选边，指回 `contracts/README.md` 缺口 2。
+
+**新检查 `mcp`（`check_mcp_tools`）**，核四件事：
+
+```
+ok  mcp  12 distinct tool(s), 12/12 readOnlyHint agrees with required_scope, 12/12 required keys are in properties; 6 scope value(s); 3/3 inputSchema $ref(s) resolve
+```
+
+1. 工具名不得重复（重复会让 `--list` 与任何按名寻址的客户端都错位）
+2. `readOnlyHint` 与 `required_scope` 必须在「只读/写入」上一致：只读注解 + `execute`
+   scope 等于在只读标签下给出写权限；反过来是把写藏进 `read`
+3. `inputSchema.required` 的每个键都要在 `properties` 里（否则 schema 要求一个
+   调用方无从填的参数）
+4. 3 处跨文件 `$ref` 必须指向真实文件（设计注释写着服务器「解析schema refs」）
+
+6 个 scope 取值**只报不判**：`publish` 不在 `docs/13` 的五档闭集内是授权粒度决策。
+
+| 探针 | 输出 |
+|---|---|
+| `drama.memory.query` 的 `readOnlyHint` 改 false | `FAIL mcp 1` / `11/12 readOnlyHint agrees` + `is readOnlyHint=false but required_scope='read'` |
+| `drama.policy.change` 加一个不存在的 required 键 | `FAIL mcp 1` / `11/12 required keys are in properties` |
+| `drama.change.plan` 的 `$ref` 指向 `.v3` | `FAIL mcp 1` / `2/3 inputSchema $ref(s) resolve` |
+| 两个工具同名 | `FAIL mcp 1` / `11 distinct tool(s) (1 duplicate)` + `README says 12 for MCP tool, mcp says 11` |
+| README 写 11 个工具 | `FAIL readme` / `README says 11 for MCP tool, mcp says 12` |
+| 全部还原 | 15 项注册、14 通过、1 跳过 |
+
+**note 的同一个毛病，第四次。** 第一版 note 只在一处用「通过数/总数」，另外三处
+（required 键、工具数、scope）都是写死的字面量。探针「required 键不存在」失败时
+note 里三句话**全是绿的**，只有花括号前那句 `1 problem(s)` 是真的。
+现在四个子句全部改成 `N/M` 形式，探针一一对应：
+
+```
+readOnlyHint disagrees → 11/12 readOnlyHint agrees ...   (该子句自己红了)
+required key absent    → 11/12 required keys are in properties
+dangling $ref          → 2/3 inputSchema $ref(s) resolve
+duplicate name         → 11 distinct tool(s) (1 duplicate)
+```
+
+顺带发现两件事：
+
+- 改 note 措辞后 `README_CLAIMS` 的正则失配，`readme` 立刻报
+  「cannot read the MCP tool count out of mcp's note」。这条耦合是对的，
+  但它也说明**note 措辞是契约**，改它必须同时改 `README_CLAIMS`。
+- 探针的备份文件放在 `_inbox/` 里会把 `links` 的数字从 1330 顶到 1338
+  （备份的 README 里全是相对链接）。`_inbox/` 虽在 `.gitignore` 里，但链接检查
+  扫的是工作区不是 git。现在探针一律用 `tempfile.mkdtemp()` 做备份。
+
+这也再次说明这批文件的共同形状：**`event-topics` / `redaction-policy` / `mcp-tools`
+三个顶层契约，字段都在，读者都只用了其中一两个。**

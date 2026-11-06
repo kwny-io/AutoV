@@ -562,6 +562,7 @@ README_CLAIMS = [
     ("openapi file ref", r"(\d+) 处指向真实文件", "openapi", r"(\d+) naming a file"),
     ("topic field", r"55 个 topic 必须各带 (\d+) 个字段", "topics", r"(\d+) required field"),
     ("secret class", r"(\d+) 个 secret class 的", "redaction", r"(\d+) secret class"),
+    ("MCP tool", r"(\d+) 个工具的 `readOnlyHint`", "mcp", r"(\d+) distinct tool\(s\)"),
     ("check_id", r"(\d+) 个\s*\n?`check_id` 是否符合", "checkids", r"(\d+) check_id"),
     ("links", r"`links`（(\d+) 条相对链接", "links", r"(\d+) local link"),
     ("stated invariant", r"自己声明的\s*\n?(\d+) 条 invariant", "families", r"(\d+) stated invariant"),
@@ -907,6 +908,86 @@ def check_redaction_policy(name):
     return r
 
 
+def check_mcp_tools(name):
+    """`mcp-tools.v2.design.json` is internally coherent and its schema refs resolve.
+
+    Nothing read this file except one number: `catalog` takes `len(mcp["tools"])`
+    to keep the layout block honest. Everything that makes these 12 tools safe to
+    expose was unread -- `required_scope` (what the caller must hold), `inputSchema`
+    (what arguments are accepted, including 3 cross-file `$ref`s), and the four
+    MCP safety annotations. A duplicate tool name, a `required` key with no
+    matching property, or a `$ref` to a renamed schema would all have stayed green.
+
+    Two invariants are enforced because both are decidable without choosing a
+    side. `readOnlyHint` and `required_scope` must agree on read vs write: a tool
+    annotated read-only but scoped to `execute` grants write authority under a
+    read-only label, and the reverse hides a write behind `read`. And every
+    `$ref` must name a file this repo has -- the design note says the server
+    "解析schema refs", so a dangling one is a bug in the document regardless of
+    the decision on how scopes map to `permission_key` (S19 C7, still open).
+
+    The six scope values are reported, not enforced: `publish` is outside the
+    five-value closed set `docs/13` declares, and that is an authorization-granularity
+    decision for the owner, not something a check should settle.
+    """
+    r = Result(name)
+    path = os.path.join(CONTRACTS, "mcp-tools.v2.design.json")
+    if not os.path.exists(path):
+        r.fail("contracts/mcp-tools.v2.design.json is missing")
+        return r
+    tools = json.loads(_utf8(path))["tools"]
+
+    names = [t.get("name") for t in tools]
+    seen = set()
+    for n in names:
+        if n in seen:
+            r.fail(f"duplicate tool name {n!r}")
+        seen.add(n)
+
+    scope_vs_ro = 0
+    bad_required = 0
+    refs, dangling = 0, []
+    for t in tools:
+        n = t.get("name")
+        scope = t.get("required_scope")
+        ro = (t.get("annotations") or {}).get("readOnlyHint")
+        if isinstance(ro, bool):
+            if ro and scope != "read":
+                r.fail(f"{n!r} is readOnlyHint=true but required_scope={scope!r}")
+                scope_vs_ro += 1
+            elif not ro and scope == "read":
+                r.fail(f"{n!r} is readOnlyHint=false but required_scope='read'")
+                scope_vs_ro += 1
+
+        schema = t.get("inputSchema") or {}
+        props = schema.get("properties") or {}
+        orphan = [k for k in (schema.get("required") or []) if k not in props]
+        for k in orphan:
+            r.fail(f"{n!r}: required key {k!r} is not in properties")
+        if orphan:
+            bad_required += 1
+        for m in re.finditer(r'"\$ref"\s*:\s*"([^"]+)"', json.dumps(schema)):
+            refs += 1
+            target = m.group(1)
+            if not os.path.exists(os.path.join(CONTRACTS, target)):
+                r.fail(f"{n!r}: inputSchema $ref -> {target} does not exist")
+                dangling.append(target)
+
+    scopes = sorted({t.get("required_scope") for t in tools if t.get("required_scope")})
+    # Every claim below is about the run, so each is expressed as passing/total.
+    # A bare "12 tool(s)" would stay true-looking when two tools share a name, and
+    # a note that omits the required-key check entirely would let probe #2 fail
+    # with three green clauses and no mention of the thing that broke.
+    distinct = len(seen)
+    r.note = (f"{distinct} distinct tool(s)"
+              + (f" ({len(tools) - distinct} duplicate)" if distinct < len(tools) else "")
+              + f", {len(tools) - scope_vs_ro}/{len(tools)} readOnlyHint agrees with "
+                f"required_scope, {len(tools) - bad_required}/{len(tools)} required keys "
+                f"are in properties; {len(scopes)} scope value(s); "
+                f"{refs - len(dangling)}/{refs} inputSchema $ref(s) resolve")
+    return r
+
+
 def check_openapi_refs(name):
     """Every $ref in contracts/openapi.v2.yaml that names a file resolves.
 
@@ -1083,6 +1164,7 @@ CHECKS = [
     ("openapi", check_openapi_refs, "every $ref in openapi.v2.yaml that names a file resolves"),
     ("topics", check_topic_fields, "every event topic carries the fields its readers use"),
     ("redaction", check_redaction_policy, "redaction policy regexes compile and section refs resolve"),
+    ("mcp", check_mcp_tools, "MCP tool scopes agree with their annotations and schema refs resolve"),
     ("checkids", check_check_ids, "check_id values in the QC plans match the schema pattern"),
     ("links", check_links, "every relative markdown link resolves"),
     ("catalog", check_catalog, "service/topic ids agree across catalog, docs/02, topics"),

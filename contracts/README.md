@@ -1483,7 +1483,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-十四项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+十五项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
@@ -1493,8 +1493,11 @@ topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 
 `render_yaml` 就会把空串写进 `service.yaml`；另报 5 个 README 称作常量的字段实测各有几种取值）、
 `redaction`（`redaction-policy.v2.json` 是唯一没人读过的顶层契约：6 个 secret class 的
 `must_match` 必须是能编译的正则、`id` 必须等于键名；4 条 `applies_to` 里的 13 处
-`plans/*.md §N.N` 必须命中真实标题）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1329 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
+`plans/*.md §N.N` 必须命中真实标题）、`mcp`（`mcp-tools.v2.design.json` 此前只被取了一个
+`len(tools)`：12 个工具的 `readOnlyHint` 必须与 `required_scope` 在只读/写入上一致、
+`required` 的键必须在 `properties` 里、3 处跨文件 `$ref` 必须指向真实 schema；6 个 scope
+取值只报不判——`publish` 不在 `docs/13` 的五档闭集内是授权决策，见缺口 2）、`checkids`（四份 QC 方案里 99 个
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1330 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
@@ -1503,7 +1506,7 @@ schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「十四项检查」这个数等于 `--list` 真列出的条数；二是把本段里 12 个手敲的数字逐条和
+「十五项检查」这个数等于 `--list` 真列出的条数；二是把本段里 13 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1512,15 +1515,15 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 12 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
-topic field 10、secret class 6、`check_id` 99、`links` 1329、stated invariant 5、
+那 13 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
+topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过十三个方向（上面 12 个数各改 1，再加开头「十四」改成「十」），十三次全部被抓到，
+反向测过十四个方向（上面 13 个数各改 1，再加开头「十五」改成「十」），十四次全部被抓到，
 报的是 `README says 149 for JSON 解析, json says 148` 这种话；还原后 `git diff` 为空。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
