@@ -914,6 +914,11 @@ README_CLAIMS = [
      "plantopics", r"(\d+) versioned document name\(s\)"),
     ("plantopics event-or-action tokens", r"剩下 (\d+) 处「事件或动作形状」",
      "plantopics", r"(\d+) event-or-action shaped"),
+    # contracts/README.md also restates what docsreadme covers. Pinning it here
+    # is the same rule as the enumerated list: the number inside a check's own
+    # description is still a hand-typed number.
+    ("docsreadme count", r"`docs/README\.md` 的 (\d+) 条断言",
+     "docsreadme", r"(\d+)/\d+ assertion\(s\) in docs/README\.md"),
 ]
 
 
@@ -974,6 +979,21 @@ def check_readme_counts(name):
                f"registered; --list is the authority")
     start = head + opener.end()
     para = readme[start:readme.find("\n\n", start)]
+
+    # A third copy of the same count, in the paragraph that explains this check:
+    # "把本段里 N 个手敲的数字逐条和对应检查自己算出的数比". Changing that N alone
+    # left this check green -- the summary paragraph and the enumerated list were
+    # both pinned, but this sentence restates the number a third time and was not.
+    # Same failure as the enumerated list, one copy further out.
+    hand = re.search(r"把本段里 (\d+) 个手敲的数字", section)
+    if not hand:
+        r.fail("contracts/README.md's readme paragraph no longer says "
+               "'把本段里 N 个手敲的数字'")
+    else:
+        stated_hand = int(hand.group(1))
+        if stated_hand != len(README_CLAIMS):
+            r.fail(f"README says {stated_hand} 个手敲的数字, but "
+                   f"{len(README_CLAIMS)} claims are registered")
 
     results = {n: fn(n) for n, fn, _ in CHECKS if n in {c[2] for c in README_CLAIMS}}
     for label, readme_pat, check_name, note_pat in README_CLAIMS:
@@ -1067,6 +1087,158 @@ def check_readme_counts(name):
     r.note = (f"{len(README_CLAIMS)} count(s) in contracts/README.md's summary"
               + listed_note
               + (f"; {counts_note}" if counts_note else ""))
+    return r
+
+
+def check_docs_readme(name):
+    """docs/README.md states seven counts about its own directory. None were pinned.
+
+    That file opens with "17 篇" and closes with a paragraph about the archive
+    that gives `DESIGN.md` a line count and "48 份" twice. All seven are typed by
+    hand and every one of them is checkable against a file on disk, but nothing
+    read them: `readme` covers `contracts/README.md` only, and `archive` compares
+    checksums without ever opening this file.
+
+    Found on the first run: the archive paragraph said 850 lines for DESIGN.md.
+    The file is 849 -- and so is the pristine copy under `_inbox/autov-design/`,
+    so 850 was never true, not even before the import. The other six were right
+    when measured (`17/17`, `13/13`, `48/48`, `48/48`, `849`), which is the
+    reason this is worth a check rather than a one-off fix: six correct numbers
+    next to one wrong one read as a proofread paragraph.
+
+    Deliberately not judged: whether docs 01-17 are the *right* documents, and
+    whether the `内容` column describes them correctly. Only the numbers are
+    compared, because only the numbers can be computed.
+    """
+    r = Result(name)
+    p = os.path.join(ROOT, "docs", "README.md")
+    if not os.path.exists(p):
+        r.fail("docs/README.md is missing")
+        return r
+    text = _utf8(p)
+    pkg = os.path.join(ROOT, "docs", "design-package")
+    # Every assertion below is counted in `total` the moment it is declared, and
+    # only counted in `agreed` when it actually ran and matched. A conditionally
+    # incremented counter would report a smaller number when an anchor vanished,
+    # which reads as "fewer things to check" rather than "one of them did not
+    # run" -- the 0/0 failure this module has made before.
+    total = agreed = 0
+
+    def assert_count(stated, actual, what):
+        nonlocal total, agreed
+        total += 1
+        if stated == actual:
+            agreed += 1
+        else:
+            r.fail(f"docs/README.md says {stated} for {what}, the file(s) say {actual}")
+        return stated == actual
+
+    # 1. "17 篇" -- how many numbered design docs there are.
+    m = re.search(r"^(\d+) 篇，从设计包迁入", text, re.M)
+    docs = sorted(glob.glob(os.path.join(ROOT, "docs", "[0-9][0-9]-*.md")))
+    if not m:
+        total += 1
+        r.fail("docs/README.md no longer opens with 'N 篇，从设计包迁入'")
+    else:
+        assert_count(int(m.group(1)), len(docs), "the '17 篇' opener")
+
+    # 2. The "全部文档" table must list exactly those docs -- not more, not fewer.
+    total += 1
+    table = set(re.findall(r"^\|.*?\((\d\d)-[\w-]+\.md\)", text, re.M))
+    by_num = set(os.path.basename(d)[:2] for d in docs)
+    if table == by_num:
+        agreed += 1
+    else:
+        for n in sorted(by_num - table):
+            r.fail(f"docs/README.md's 全部文档 table has no row for doc {n}")
+        for n in sorted(table - by_num):
+            r.fail(f"docs/README.md's 全部文档 table lists doc {n}, which is not "
+                   f"on disk")
+
+    # 3. "48 服务" in each doc-02 row -- the catalog is the authority.
+    cat = json.loads(_utf8(os.path.join(CONTRACTS, "service-catalog.v2.json")))
+    n_svc = len(cat["services"])
+    rows = [ln for ln in text.splitlines()
+            if "02-service-catalog.md" in ln and ln.lstrip().startswith("|")]
+    if not rows:
+        total += 1
+        r.fail("docs/README.md has no row for 02-service-catalog.md")
+    for row in rows:
+        mm = re.search(r"(\d+) 服务", row)
+        if not mm:
+            total += 1
+            r.fail(f"docs/README.md's doc-02 row no longer states 'N 服务': "
+                   f"{row.strip()!r}")
+            continue
+        assert_count(int(mm.group(1)), n_svc,
+                     f"the doc-02 row {row.strip()[:40]!r}")
+
+    # 4. "13 个 Agent 角色" -- against the agent dirs AND the role list in docs/08.
+    m = re.search(r"(\d+) 个 Agent 角色", text)
+    agents = sorted(glob.glob(os.path.join(ROOT, "agents", "*", "agent.yaml")))
+    stated_agents = None
+    if not m:
+        total += 1
+        r.fail("docs/README.md no longer states 'N 个 Agent 角色' for doc 08")
+    else:
+        stated_agents = int(m.group(1))
+        assert_count(stated_agents, len(agents), "'13 个 Agent 角色' vs agents/")
+    d8 = os.path.join(ROOT, "docs", "08-agents-prompts.md")
+    if not os.path.exists(d8):
+        total += 1
+        r.fail("docs/08-agents-prompts.md is missing")
+    else:
+        mm = re.search(r"(producer|writer)[^\n]*?(conversation-editor)", _utf8(d8))
+        if not mm:
+            total += 1
+            r.fail("docs/08-agents-prompts.md no longer has its role list "
+                   "('producer、writer、…、conversation-editor')")
+        else:
+            roles = [x.strip() for x in mm.group(0).split("、") if x.strip()]
+            if stated_agents is None:
+                total += 1
+                r.fail("docs/README.md states no Agent count to compare against "
+                       "docs/08's role list")
+            else:
+                assert_count(stated_agents, len(roles),
+                             "'13 个 Agent 角色' vs docs/08's role list")
+
+    # 5. The archive paragraph: one line count and two "48 份".
+    def count_in_archive(pat, target, label, counter):
+        nonlocal total, agreed
+        mm = re.search(pat, text)
+        if not mm:
+            total += 1
+            r.fail(f"docs/README.md's archive paragraph no longer gives "
+                   f"{target} a count as {label}")
+            return
+        if not os.path.exists(target):
+            total += 1
+            r.fail(f"{target} is missing")
+            return
+        assert_count(int(mm.group(1)), counter(), f"{os.path.basename(target)} ({label})")
+
+    count_in_archive(r"`DESIGN\.md`（(\d+) 行合并版）",
+                     os.path.join(pkg, "DESIGN.md"), "'N 行合并版'",
+                     lambda: len(_utf8(os.path.join(pkg, "DESIGN.md")).splitlines()))
+    count_in_archive(r"`SERVICE-SPECIFICATIONS\.md`（(\d+) 份拼合）",
+                     os.path.join(pkg, "SERVICE-SPECIFICATIONS.md"), "'N 份拼合'",
+                     lambda: len(re.findall(
+                         r"^#\s+S\d{2}\s+·",
+                         _utf8(os.path.join(pkg, "SERVICE-SPECIFICATIONS.md")), re.M)))
+    specs = sorted(glob.glob(os.path.join(pkg, "services", "*.md")))
+    mm = re.search(r"`services/` 下 (\d+) 份原始服务规格", text)
+    if not mm:
+        total += 1
+        r.fail("docs/README.md's archive paragraph no longer gives the raw spec "
+               "count as 'services/ 下 N 份原始服务规格'")
+    else:
+        assert_count(int(mm.group(1)), len(specs), "the raw service specs")
+
+    r.note = (f"{agreed}/{total} assertion(s) in docs/README.md agree with the "
+              f"files on disk (7 numeric statements: {len(docs)} doc(s), {n_svc} "
+              f"service(s) x2 rows, {len(agents)} agent(s), {len(specs)} raw "
+              f"spec(s); plus 2 structural assertions)")
     return r
 
 
@@ -1793,6 +1965,7 @@ CHECKS = [
     ("interactions", check_interactions, "service-interactions.yaml names real services, topics and authorities"),
     ("plantopics", check_plan_topics, "plans/*.md name declared topics and pair them with their own events"),
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
+    ("docsreadme", check_docs_readme, "docs/README.md's counts about its own directory match the files"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
 

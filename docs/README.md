@@ -38,7 +38,7 @@
 
 ## 存档
 
-`design-package/` 是原始设计包。保留了 `DESIGN.md`（850 行合并版）、
+`design-package/` 是原始设计包。保留了 `DESIGN.md`（849 行合并版）、
 `SERVICE-SPECIFICATIONS.md`（48 份拼合）、`MANIFEST.md`、`VALIDATION.md`
 和 `services/` 下 48 份原始服务规格。
 
