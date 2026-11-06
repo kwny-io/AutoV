@@ -22,6 +22,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -192,6 +193,70 @@ def aggregate_identity_problems(doc):
     )]
 
 
+# The envelope types `type` and `source` as bare non-empty strings, so a typo in
+# either passes both schema layers — `catalog` only checks the topics file, never
+# the instances. Both `source` spellings the tree actually uses are accepted: a
+# bare service_id, and `/cells/<cell>/services/<S..>` (recorded as drift by
+# access.grant-changed.v2.schema.json's `envelope_drift`, not silently normalised).
+SOURCE_BARE = re.compile(r"^(S\d{2})$")
+SOURCE_CELL_URI = re.compile(r"^/cells/([^/]+)/services/(S\d{2})$")
+
+
+def _registries():
+    with open(os.path.join(CONTRACTS, "event-topics.v2.json"), encoding="utf-8") as f:
+        topics = {t["event_type"]: t for t in json.load(f)["topics"]}
+    with open(os.path.join(CONTRACTS, "service-catalog.v2.json"), encoding="utf-8") as f:
+        catalog = {s["service_id"] for s in json.load(f)["services"]}
+    return topics, catalog
+
+
+def envelope_identity_problems(doc, topics, catalog):
+    """Check that a typed example names a real topic, from that topic's producer."""
+    etype = doc.get("type")
+    if not isinstance(etype, str) or not etype:
+        return []                       # payload-only document, not an envelope
+    out = []
+    topic = topics.get(etype)
+    if topic is None:
+        out.append((
+            "<type>",
+            f"type {etype!r} is not an event_type in contracts/event-topics.v2.json; "
+            f"the envelope only requires a non-empty string, so nothing else catches this",
+        ))
+        return out                      # producer check would be noise without a topic
+
+    src = doc.get("source")
+    if not isinstance(src, str) or not src:
+        return out + [("<source>", "source is missing or empty")]
+    m = SOURCE_BARE.match(src)
+    service = m.group(1) if m else None
+    cell = None
+    if service is None:
+        m = SOURCE_CELL_URI.match(src)
+        if m:
+            cell, service = m.group(1), m.group(2)
+    if service is None:
+        return out + [(
+            "<source>",
+            f"source {src!r} is neither a catalog service_id nor "
+            f"/cells/<cell>/services/<S..>",
+        )]
+    if service not in catalog:
+        out.append(("<source>", f"source names {service}, which is not in service-catalog.v2.json"))
+    elif topic.get("producer") != service:
+        out.append((
+            "<source>",
+            f"source names {service} but topic {etype!r} is produced by "
+            f"{topic.get('producer')!r}; one of the two is wrong",
+        ))
+    if cell is not None and doc.get("home_cell") != cell:
+        out.append((
+            "<source>",
+            f"source says cell {cell!r} but home_cell is {doc.get('home_cell')!r}",
+        ))
+    return out
+
+
 def local_registry():
     from referencing import Registry, Resource
     from referencing.jsonschema import DRAFT202012
@@ -241,6 +306,7 @@ def main():
 
     reg = local_registry()
     payload = payload_schemas()
+    topics, catalog = _registries()
     paths = sorted(glob.glob(os.path.join(EXAMPLES, "*.json")))
     if not paths:
         print(f"no examples found under {EXAMPLES}")
@@ -275,6 +341,8 @@ def main():
             for e in Draft202012Validator(target, registry=reg).iter_errors(sub):
                 found.append((prefix + "/".join(str(x) for x in e.absolute_path), e))
         for loc, msg in aggregate_identity_problems(doc):
+            found.append((loc, _PlainError(msg)))
+        for loc, msg in envelope_identity_problems(doc, topics, catalog):
             found.append((loc, _PlainError(msg)))
         found.sort(key=lambda pair: pair[0])
 

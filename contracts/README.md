@@ -1083,8 +1083,11 @@ topic 放宽下界不是这个文件能决定的事。
 `schema_version` 收 `2.1` 拒。正向 8 例通过：五个 `state` 值全过（`ABSENT` 也在内，这是本 schema
 有意收的第五个）、`watermark: 0` 与 `lag_ms: 0` 过。信封层 4 例负向全拒——`correlation_id: null`
 （就是计划示例那一行）、`aggregate_sequence: 0`（PCA-4 的那一帧）、裸字符串 `data_ref`、空 `source`。
-信封层正向 2 例通过，其中一例确认 `aggregate_id` 与 `data.subscription_id` **没有**被钉成相等——
-本仓信封不对任何 topic 做这种跨层一致性校验，所以 PCA-1 的恒等式只能靠生产者自觉。
+信封层正向 2 例通过，其中一例确认**信封 schema 本身**不把 `aggregate_id` 与 `data.subscription_id`
+钉成相等——JSON Schema 的 `additionalProperties: false` 只管键，管不了同一份文档里不同位置的值
+之间的关系。这条恒等式现在由 `tools/validate/validate_examples.py` 的
+`aggregate_identity_problems()` 在**示例层**校验（要求 `data` 里某处有一个值等于
+`aggregate_id`），但它比「主键字段相等」弱，且该事件不在六个豁免里。
 
 ### `narrative.script-revision-created.v2.schema.json`：事件说自己带够了核验用的 hash，实际一个都复算不出来
 
@@ -1214,8 +1217,14 @@ hash 给 `zz`、`impact_plan_ref` 给字符串/拓扑变更时为 `null`/多一�
 
 一条**已知漏检**（不是本 schema 的缺陷）：信封的 `source` 与 `type` 都只收非空字符串
 （`event-envelope.v2.schema.json` 的 `source` 是 `{"type":"string","minLength":1}`），所以把
-`source` 改成 `S14` 而载荷仍是场景事件时，两层校验都放行。本仓信封不对任何 topic 钉生产者与
-主题的对应关系，`catalog` 检查管的是 `event-topics.v2.json` 里的 `producer` 字段，不是实例数据。
+`source` 改成 `S14` 而载荷仍是场景事件时，两层 schema 校验都放行。
+
+**这层校验已经补上，但不在 schema 层。** `catalog` 检查管的是 `event-topics.v2.json` 里的
+`producer` 字段；实例数据由 `tools/validate/validate_examples.py` 的
+`envelope_identity_problems()` 管——它要求每个带 `type` 的示例命中的 `event_type` 在
+`event-topics.v2.json` 里存在，且 `source`（裸 `S28` 或 `/cells/<cell>/services/S28` 两种写法）
+解析出的服务等于该 topic 的 `producer`、URI 里的 cell 等于 `home_cell`。所以上面那两种改法现在会
+被 `check_all` 的 `examples` 一项拒掉。`traceparent` 仍是裸字符串，仍无校验。
 
 ### `asset.character-revision-accepted.v2.schema.json`：说给订阅方加的那个键没有定义，点名的两个订阅方一个不订阅、一个不消费
 
@@ -1276,7 +1285,8 @@ envelope 侧 10 条负例全部被拒；正例 12 条（payload 11 + 信封 1）
 
 一条**已知漏检**，与 S13 那条同源：信封对 `source`/`type`/`traceparent` 都只收非空字符串，
 所以把 `source` 改成 `S14`、把 `type` 改成任意主题名、把 `traceparent` 写成垃圾串，两层校验都
-放行。本仓信封不钉生产者与主题的对应关系。
+放行。**前两种现在由 `envelope_identity_problems()` 拦住**（见 S13 那一节的说明），
+`traceparent` 仍然无人管。
 
 ### `asset.costume-revision-accepted.v2.schema.json`：为一个「必须发出去」的键，事件只发了三分之二
 
@@ -1348,7 +1358,8 @@ payload 侧 68 条负例（7 个必填各缺一次；根与 `costume_ref` 各多
 
 一条**已知漏检**，与 S11 / S13 / S14 四条同源：信封对 `source`/`type`/`traceparent` 都只收非空
 字符串，所以把 `source` 改成 `S11`、把 `type` 改成任意主题名、把 `traceparent` 写成垃圾串，两层
-校验都放行。本仓信封不钉生产者与主题的对应关系。
+校验都放行。**前两种现在由 `envelope_identity_problems()` 拦住**（见 S13 那一节的说明），
+`traceparent` 仍然无人管。
 
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 

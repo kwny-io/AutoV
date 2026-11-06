@@ -1741,3 +1741,92 @@ pattern entries (contracts/**/*.json, 148 files)       = 274 | sha = 143
 `minLength: 1`），检查不该在「本该为空」的地方制造第二重噪音。
 
 `python tools/check_all.py` 仍是九项全过（`examples` 一项的输出不变：71 valid / 0 failing / 1 without a schema）。
+
+### 16.9 把「示例的 `type` / `source` 对不对」也做成常驻检查
+
+§16.8 关掉的是「`aggregate_id` 追不到」那一类。同一批示例里还有另一类一直没人管，
+`contracts/README.md` 在**四处**把它记成「已知漏检」（S13 行 1215、S14 行 1277、
+S12 行 1349，以及 S47 行 1087 那条关于 `aggregate_id` 的）。四处都写着同一句话：
+信封的 `source` 与 `type` 只是 `{"type":"string","minLength":1}`，所以改坏了也没人拦。
+
+**先证实它不是空话。**把 `artifact-ingested.json` 的 `type` 改成 `artefact.ingested`
+（不存在的主题）、`source` 改成 `S99`（不存在的服务），跑 `python tools/check_all.py`：
+
+```
+exit code: 0
+  ok    examples   contracts/examples/
+  9 check(s) passed
+```
+
+改完之后**九项全过**——两个都改坏了，检查器一个都没发现。这条不是理论上的洞。
+
+**普查现有 55 个信封示例**（`_tmp_probe5.py` / `_tmp_probe6.py`，跑完即删）：
+
+```
+envelope examples          = 55
+type registered as topic   = 55 / 55
+source shapes              = {'bare': 54, 'cells-uri': 1}
+problems                   = 0
+
+home_cell  {'cell_a1': 55}
+time precision  no fractional seconds = 55,  with = 0
+specversion / schema_version  {('1.0', '2.0'): 55}
+```
+
+`source` 的两种写法都要接受，因为**仓库里本来就两种都有**：54 个裸 `S28`，1 个
+`/cells/cell_a1/services/S28`。后者不是笔误——`access.grant-changed.v2.schema.json` 行 216
+的 `envelope_drift` 已经把它记成漂移实例。检查器不把一种归一化成另一种，只要求两种都能解析出
+同一个 service_id。
+
+**断言的三件事**（`envelope_identity_problems()`，加进 `validate_examples.py`）：
+
+```
+1. 带 type 的示例，type 必须在 event-topics.v2.json 里是一个 event_type
+2. source 解析出的 service 必须在 service-catalog.v2.json 里，且等于该 topic 的 producer
+3. 若 source 是 /cells/<cell>/services/... 写法，<cell> 必须等于 home_cell
+```
+
+第三条只有那 1 个示例会走到，但它正是「URI 写法与 `home_cell` 两处各写一遍」的必然产物。
+
+**故意不做的两件事**，写在函数注释里：
+
+- **不钉 `subject` 的形态。**普查出来 39 个示例的 `subject != aggregate_id`，且形态五花八门
+  （`shot_3_2`、`series_demo/canon/ep003`、`manifest/manifest_ep3`、`training-job/job_01J...`）。
+  仓库没有任何一份文档规定 `subject` 该长什么样，硬钉一种就是**新增猜测**。
+- **不校验 `traceparent`。**它是 `00-<32hex>-<16hex>-<2hex>` 的 W3C 格式，但信封只收字符串。
+  要做就得先决定「非 W3C 的值该拒还是该放」，那是 owner 的口径问题，不是我能定的。
+
+12 条正负例（`_tmp_negtest2.py`）全部按预期：
+
+```
+  PASS  baseline bare source                   -> accepted
+  PASS  baseline cell URI                      -> accepted
+  PASS  type typo                              -> ["type 'artefact.ingested' is not an event_type ..."]
+  PASS  source unknown service                 -> ['source names S99, which is not in service-catalog.v2.json']
+  PASS  source wrong producer                  -> ["source names S14 but topic 'artifact.ingested' is produced by 'S28' ..."]
+  PASS  source unparseable                     -> ["source 's28.artifact' is neither a catalog service_id nor ..."]
+  PASS  source empty                           -> ['source is missing or empty']
+  PASS  source absent                          -> ['source is missing or empty']
+  PASS  cell disagrees                         -> ["source says cell 'cell_b2' but home_cell is 'cell_a1'"]
+  PASS  payload-only doc (no type)             -> accepted
+  PASS  payload-only doc (null type)           -> accepted
+  PASS  type not a topic skips producer check  -> ["type 'nope.event' is not an event_type ..."]
+ALL PASSED
+```
+
+最后一条是刻意的：`type` 不是 topic 时**不再报 producer 错**。否则一个类型名笔误会产生两条
+错误，第二条（`producer` 对不上）把真正的病灶盖住。
+
+端到端复验同一个洞：
+
+```
+exit code: 1
+  FAIL artifact-ingested.json: 1 error(s), first at <type>: type 'artefact.ingested' is not an event_type ...
+  FAIL  examples   1 problem(s)  [contracts/examples/]
+```
+
+**`contracts/README.md` 那四处「已知漏检」现在是假话，一并改了。**四处都拆成「schema 层仍不管 /
+示例层已由 `envelope_identity_problems()` 管 / `traceparent` 仍无人管」三段，只保留仍然为真的部分。
+S47 行 1087 那处原本讲的是 `aggregate_id`，改成了指向 §16.8 的 `aggregate_identity_problems()`。
+
+九项仍是全过，`examples` 一项输出不变（71 valid / 0 failing / 1 without a schema）。
