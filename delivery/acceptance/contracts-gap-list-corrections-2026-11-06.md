@@ -298,6 +298,24 @@ for c in nn:
 所以我在这轮之后加了一条自查动作：**凡是 schema 里写「某表有/没有某列」，先用脚本按行号取出那一行、**
 **把整段 DDL 的列名打出来对一遍**，不靠记忆。上面 33 处引用就是这么做过的（0 处不符）。
 
+## 9. S04 这一轮：两个 JSON 转义错误 + 一个手数的 hex 长度
+
+写 `narrative.script-revision-created.v2.schema.json` 时，前两个错都被校验器当场拦住（不是靠读，
+是靠 `json.loads` 和 `validate_examples.py`）；第三个是我自己的探针脚本把计数器写反，报了个
+假数字。三条都不是「文档理解错」，是「手上的活没做完就往下走」。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | schema `x-conflicts[NAR-5].description` | 把 `episode_id = "ep_..."` 的直引号直接放进 JSON 字符串里，未转义 | `episode_id = \"ep_...\"` | 写长段中文时逐字混进了一个 ASCII 双引号。这类错**只在 `json.loads` 时才现形**，肉眼扫一遍看不出来——`check_all` 的 `json` 项当场报 `Expecting ',' delimiter: line 226 column 369`。定位方法是写了一段逐字符的字符串状态机，把「在一个字符串内遇到一个后面不跟 `,}]:` 的引号」全打印出来（全文 2 处，同一行），没有靠 grep。 |
+| 2 | `contracts/examples/narrative-script-revision-created.json` 的 `content_hash` / `line_set_hash` | 手写的 63 位十六进制串 | `hashlib.sha256(...).hexdigest()`，并 `assert len(x) == 64` | 又手数了一遍 hex 位数（第 8 节第 4 条同源：手算代替脚本）。校验器报的是 `does not match '^[0-9a-f]{64}$'`，给出的是**整串**，不告诉你差在哪一位，所以肉眼找不出来。改成用 `hashlib` 生成后 `assert` 长度，不再手写。 |
+| 3 | 探针脚本 `tools/_tmp_nar_probe.py` 的正例计数 | 打印 `payload positives accepted: 0/8`，而 8 条逐行都是 `ACCEPT` | `8/8`——`p += probe(...)` 里 `probe` 返回的是「**有**错误」，正例通过时返回 `False`，把 `False` 相加就是 0 | 计数器把「通过」和「返回假」当成了同一件事。发现方式是逐行读输出：8 行全是 `ACCEPT`、末尾却是 `0/8`，两者不可能同时成立。修法是把 `p += probe(...)` 改成 `p += (not probe(...))`。**如果只抄末尾那个 `0/8` 去写报告，就会写成一个跟事实相反的结论**，所以报告里的 `8/8` 是重跑后取的。 |
+
+附一条同轮但**没有产生错误输出**的核对：`check_all` 的 `json` 计数是 **122**，而
+`contracts/*.json`（55）+ `contracts/examples/*.json`（59）只有 114，差的 8 个是
+`contracts/domain-v1/`（5）与 `contracts/quality/`（3）。所以那个计数是**递归**的
+（`glob('contracts/**/*.json', recursive=True)`），不是 `contracts/` 顶层。这一条先按 114 推断
+再按 122 实测对出来的，不是直接读校验器源码得来的——记在这里是为了下一轮别再用 114 去核。
+
 复核口径（本节数字回这张表数）：
 
 ```python

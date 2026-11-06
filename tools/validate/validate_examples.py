@@ -80,6 +80,7 @@ SCHEMA_OF = {
     "scheduler-permit-changed": "event-envelope.v2.schema.json",
     "snapshot-manifest-committed": "event-envelope.v2.schema.json",
     "storyboard-shot-revision-created": "event-envelope.v2.schema.json",
+    "narrative-script-revision-created": "event-envelope.v2.schema.json",
     "breakdown-revision-created": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }

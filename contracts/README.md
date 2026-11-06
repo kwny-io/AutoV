@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 41 个 topic 带**（14 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 42 个 topic 带**（13 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -106,6 +106,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `audit.export.ready` | `audit.export-ready.v2.schema.json` | S45 §4.3 |
 | `projection.cursor.advanced` | `projection.cursor-advanced.v2.schema.json` | S47 §4.4 |
 | `integration.command.accepted` | `integration.command-accepted.v2.schema.json` | S46 §4.5 |
+| `narrative.script.revision.created` | `narrative.script-revision-created.v2.schema.json` | S04 §5.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -1061,6 +1062,64 @@ topic 放宽下界不是这个文件能决定的事。
 信封层正向 2 例通过，其中一例确认 `aggregate_id` 与 `data.subscription_id` **没有**被钉成相等——
 本仓信封不对任何 topic 做这种跨层一致性校验，所以 PCA-1 的恒等式只能靠生产者自觉。
 
+### `narrative.script-revision-created.v2.schema.json`：事件说自己带够了核验用的 hash，实际一个都复算不出来
+
+S04 这条事件是「一个已经不可变的版本出现了」的通知：它**只在 seal 时发**（§4.3 行 552、§5.3
+行 686），DRAFT 不发，理由是 §5.3 行 690 那句「S05 会去分解一个还在改的剧本，S09 会建边，
+S16 的抽取会跑在一个不存在的版本上」。所以拿到这条事件的一方可以确信：分块取到的正文从此
+不会再变（§4.4 行 574）。
+
+问题在于它**自带的核验材料是残缺的**。`content_hash` 的算式（§2.2 行 218）是
+`sha256( JCS( {script_id, revision, title, language, structure, parent_revision} ) || "\n" || line_set_hash )`
+——六个输入。本事件给了 `script_id`、`revision`、`parent_revision` 三个，`title` 不在 payload，
+`structure` 被换成了一个没有定义的 `structure_hash`，而 `language` **根本不在
+`script_revision` 表里**，它在 `narrative.script`（行 171 `language text NOT NULL DEFAULT 'zh-CN'`），
+可读路径（§5.2 行 669–676）没有一处返回它，写路径（§5.1 行 648–659 的十条命令）也没有
+一条能改它。§4.4 行 573 把「`content_hash` 必须与 manifest 里写的完全一致」定为 S16 R1 的
+输入，于是 S16 想按规则自己算一遍，缺三个输入（NAR-3）。
+
+`line_set_hash` 同理：它的算式（§2.3 行 284）要吃**每一行**的 `(line_id, line_revision, text_hash)`，
+而本事件一个行身份都不带（`line_count` 是计数、`scene_markers` 是文本标记，二者都不是身份），
+行级事件 `narrative.line.revision.created` 在 §5.3 行 687 与 §10 C04-2 里都还标着「新增，
+待登记」——也就是说它**还不存在**（NAR-4）。
+
+**`structure_hash` 是这份契约里最典型的「看起来有出处」的字段。** 它在整个
+plans/S04-narrative.md 里只出现**一次**，就是 §5.3 行 702 那个示例值；`script_revision` 的
+DDL（行 189–211）没有这一列，`content_hash` 的算式里也没有它（那里放的是整个 `structure`
+对象，不是它的 hash）。所以它没有算法、没有输入键集、没有存储位置、在 `GET /scripts/{id}/
+revisions/{rev}` 上读不到。本 schema 因此**只收 `string, minLength: 1`，没有收 `^[0-9a-f]{64}$`**
+——收成 hex 就等于替计划编造了一个算法与长度。同一份文件里 `content_hash` / `line_set_hash`
+都收了那个 pattern，依据是 DDL 的 `char(64)` 与 `episode-manifest.v2.schema.json` 的
+`source_revisions[].content_hash`（S08 拿它做比对，两侧必须同形）（NAR-2）。
+
+**`produced_by` 在方案里有三个互不相同的定义**，这是本份 schema 唯一一处「收并集」的地方：
+
+| 出处 | 键集 |
+|---|---|
+| §2.2 行 201（`script_revision` 列注释） | `{task_id, agent_task_ref, context_pack_ref}` |
+| §2.4 行 298（`story_arc_proposal` 列注释，**另一张表**） | `{task_id, definition_revision, context_pack_ref, model_ref}` |
+| §4.2 行 533（散文） | `task_id / definition_revision / context_pack_ref`，还说「**必填**」 |
+
+三者只在 `task_id` 与 `context_pack_ref` 上一致。本 schema 把五个键名全列出来、**一个都不设为
+`required`**，`additionalProperties: false` 兜住键名之外的东西——把任何一组定成必填都等于替
+owner 在三种写法里选了一种（NAR-1）。而 §5.3 行 704 的示例本身给的是 `null`，与行 533 的「必填」
+直接冲突（NAR-6）。
+
+**最后是一件本 payload 没有的字段造成的缺口：`state`。** `script_revision.state` 是 DDL 的
+`NOT NULL` 列并带四值 `CHECK`（行 193、行 208–209：`DRAFT|SEALED|SUPERSEDED|WITHDRAWN`），
+但本事件不带它，接收方只能靠「本 topic 只在 seal 时发」这条文档约定推出「这是 SEALED」。
+而 `SEALED→SUPERSEDED`（§3.1 行 419）与 `SEALED→WITHDRAWN`（行 420）**都不发事件**——
+§5.3 的事件表只有三行，`narrative.script.withdrawn` 还标着「新增待登记」，**superseded 连打算
+都没有**。所以一个已经撤回的版本，在已经收到过 `created` 的下游那里永远是 SEALED（NAR-7）。
+
+本文件 `x-needs-owner` 四条、`x-conflicts` 七条（NAR-1..NAR-7）。探针实测：payload 侧 25 条
+负例（缺必填、空串、`revision` 为 0、hash 大写成 63 位、`scene_markers` 给整数、
+`author.principal_type` 给 `service`、`author` 多一个键、`produced_by` 给 `{"foo":"bar"}`、
+`parent_revision` 为 0、多一个 `script_kind`）全部被拒；envelope 侧 6 条负例（`correlation_id`
+为 `null`/空串、`aggregate_sequence` 为 0、缺 `traceparent`、`data_ref` 给字符串、信封多一个键）
+全部被拒；正例 8 条全过，其中关键的是 `produced_by` 取 `null`、只给 `{"task_id"}`、或给满五个
+键三种形状都放行——这是「不选边」在测试上的表现。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -1157,8 +1216,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 41 个 payload schema
-                                                              （见上表；其余 14 个 envelope-only）
+                                        └──data_schema_ref──▶ 42 个 payload schema
+                                                              （见上表；其余 13 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1171,11 +1230,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（120 个 JSON 解析）、`payloads`（96 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 41 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（122 个 JSON 解析）、`payloads`（97 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 42 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（57 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（58 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema
