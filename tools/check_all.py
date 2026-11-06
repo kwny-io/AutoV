@@ -906,6 +906,14 @@ README_CLAIMS = [
      "plantopics", r"(\d+) plan file\(s\)"),
     ("plantopics topic mention", r"`drama\.\*\.vN` 是注册表专属命名空间——(\d+) 处提及今天",
      "plantopics", r"(\d+) topic mention\(s\)"),
+    ("plantopics unjudged tokens", r"带点反引号 token 共 (\d+) 处",
+     "plantopics", r"(\d+) undeclared dotted token\(s\) are not judged"),
+    ("plantopics filename tokens", r"其中 (\d+) 是文件名",
+     "plantopics", r"(\d+) file name\(s\)"),
+    ("plantopics versioned-doc tokens", r"(\d+) 是带版本的文档名",
+     "plantopics", r"(\d+) versioned document name\(s\)"),
+    ("plantopics event-or-action tokens", r"剩下 (\d+) 处「事件或动作形状」",
+     "plantopics", r"(\d+) event-or-action shaped"),
 ]
 
 
@@ -1191,8 +1199,12 @@ def check_plan_topics(name):
     backtick tokens they are indistinguishable from permission actions
     (`asset.voice.authorize`, `platform.tenant.provision`), and plans legitimately
     propose new events and say so in the same line (`S04` 「新增，待登记」, `S06`,
-    `S44`). Flagging them would be mostly noise -- measured at 276 hits, nearly all
-    actions. The three such rows in S47 are recorded in its own §11 (C47-12/13/14).
+    `S44`). The note therefore reports how large that unjudged surface is, split
+    by shape, rather than pretending to cover it: most of it is not event names at
+    all (file names such as `service.yaml`, versioned document names such as
+    `shot-spec.v1`), and nothing in this repo declares permission action names, so
+    the remainder cannot be separated either way. The three such rows in S47 are
+    recorded in its own §11 (C47-12/13/14).
 
     Scope is `plans/` alone. `delivery/` holds the corrections reports, which have
     to be able to quote a wrong name verbatim to say what was wrong.
@@ -1215,6 +1227,11 @@ def check_plan_topics(name):
     pair_lines = 0
     mispaired = 0
     unjudgeable = []
+    # Size of the surface this check deliberately does not judge, split so the
+    # note cannot read as if the whole token space were covered.
+    _FILE_EXT = {"json", "yaml", "yml", "md", "sql", "proto", "sh", "py",
+                 "toml", "txt", "xml", "lock", "ini"}
+    shadow = {"filename": 0, "versioned-doc": 0, "event-or-action": 0}
     for p in files:
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
         for lineno, line in enumerate(_utf8(p).splitlines(), 1):
@@ -1225,6 +1242,17 @@ def check_plan_topics(name):
                     undeclared += 1
                     r.fail(f"{rel}:{lineno} names topic {t!r}, which "
                            f"event-topics.v2.json does not declare")
+            for m in _EVENT_IN_CELL.finditer(line):
+                tok = m.group(1)
+                if tok in declared or tok in events_of:
+                    continue
+                tail = tok.rsplit(".", 1)[-1]
+                if tail in _FILE_EXT:
+                    shadow["filename"] += 1
+                elif re.fullmatch(r"v\d+|\d+", tail):
+                    shadow["versioned-doc"] += 1
+                else:
+                    shadow["event-or-action"] += 1
             known = [t for t in named if t in events_of]
             if not known:
                 continue
@@ -1275,6 +1303,11 @@ def check_plan_topics(name):
     if unjudgeable:
         r.note += (f"; {len(unjudgeable)} pairing cell(s) name no declared event "
                    f"and could not be judged: {', '.join(unjudgeable)}")
+    shadowed = sum(shadow.values())
+    r.note += (f"; {shadowed} undeclared dotted token(s) are not judged: "
+               f"{shadow['filename']} file name(s), "
+               f"{shadow['versioned-doc']} versioned document name(s), "
+               f"{shadow['event-or-action']} event-or-action shaped")
     return r
 
 

@@ -4645,4 +4645,32 @@ FAIL  readme     1 problem(s)
   并明说没有注册表能把这 421 处判开——把「无法核实」写出来，而不是给它配一个假数。
 
 这一类错误和补记十、补记十一之三是同一个：**散文里的数没有探针盯着，就一定会漂。**
-`readme` 这一格只核它登记过的那 19 个数，登记不上的一律不受保护。
+`readme` 这一格只核它登记过的那 23 个数，登记不上的一律不受保护。
+（这里原写「19 个」——正是本节自己在说的那种漂移，写的时候 `README_CLAIMS` 已经是 23 条。）
+
+
+### 补记十一之五：`plantopics` 的 docstring 里也留着那个 276
+
+补记十一之四把 README 的「276 处」改掉了，但同一个数还在
+`tools/check_all.py` 的 `check_plan_topics` docstring 里：
+
+> Flagging them would be mostly noise -- measured at **276** hits, nearly all actions.
+
+**代码注释里的数字同样是散文**，没有探针盯着，也不会被 `readme` 核到——
+它比 README 更隐蔽，因为没人会去 grep 注释里的统计。
+
+改法不是换成 720，而是**让这个数由检查自己算出来**并写进 `note`：
+
+- `note` 末尾新增一个子句，把「不判的那部分」按形状分成三档报出来：
+  `720 undeclared dotted token(s) are not judged: 239 file name(s),
+  60 versioned document name(s), 421 event-or-action shaped`。
+- 新增 4 条 `README_CLAIMS`，把 README 里那 4 个数字逐个钉到 note 上。
+- 4 个方向各做了反向探针（720→721、239→240、60→61、421→422），全部报
+  `README says N for plantopics <label>`，4/4 被抓到，跑完恢复原文。
+
+这样「未判空间有多大」本身也变成了受约束的数字，而不是一句读后感。
+
+同时发现正文里「19 个手敲的数字」也已经漂了——`README_CLAIMS` 是 19 条时写的，
+加了 4 条后正文没跟着改。改为 23，「那 19 个数」改为「那 23 个数」并补上 4 项，
+「反向测过二十个方向」改为二十四个。**这一处 `readme` 管不到**——它核的是
+claim 与 note 是否相等，不核正文有没有把 claim 的条数写对。
