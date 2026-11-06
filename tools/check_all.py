@@ -757,10 +757,11 @@ def check_payload_refs(name):
     cannot load it, so the failure lands at read time in someone else's service.
 
     This walks topics forward only. The other direction -- a `contracts/*.schema.json`
-    that no topic names -- is not a failure: 8 of the 64 are REST request/response
-    shapes, reached by `$ref` from other schemas rather than by an event. The count
-    goes in the note because nothing else reports it, and the layout block that
-    describes this directory used to call all 64 "single-topic payload schema".
+    that no topic names -- is not a failure: 8 of the 64 are persistent domain objects
+    with no event of their own (revision / content_hash / execution_fence and the like),
+    meant to be inlined by whoever needs them. Only 2 of the 8 are reached by a `$ref`
+    today. The count goes in the note because nothing else reports it, and the layout
+    block that describes this directory used to call all 64 "single-topic payload schema".
     """
     r = Result(name)
     topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]

@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
-topic 指到——那是 REST 形状，不是错误，见缺口 7）、`checkids`（四份 QC 方案里 99 个
+topic 指到——那是没有自己事件的领域对象，靠内联使用，不是错误，见缺口 7）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1329 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
