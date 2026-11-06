@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 49 个 topic 带**（6 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天 55 个 topic 全都带**（envelope-only 已归零）。此前没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -114,6 +114,12 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `asset.character.revision.accepted` | `asset.character-revision-accepted.v2.schema.json` | S11 §5.3 |
 | `asset.costume.revision.accepted` | `asset.costume-revision-accepted.v2.schema.json` | S12 §5.3 |
 | `policy.revision.published` | `policy.revision-published.v2.schema.json` | S02 §10.2 行 718 |
+| `delivery.package.created` | `delivery.package-created.v2.schema.json` | S43 §5 表 `package` |
+| `delivery.package.sealed` | `delivery.package-sealed.v2.schema.json` | S43 §5 表 `package` + `manifest` |
+| `delivery.publish.failed` | `delivery.publish-failed.v2.schema.json` | S43 §5 表 `distribution_attempt` |
+| `analytics.metric.snapshot.created` | `analytics.metric-snapshot-created.v2.schema.json` | S44 §5 表 `metric_snapshot` |
+| `analytics.evaluation.completed` | `analytics.evaluation-completed.v2.schema.json` | S44 §5 表 `evaluation_run` |
+| `analytics.cost.projection.updated` | `analytics.cost-projection-updated.v2.schema.json` | S44 §5 表 `cost_projection` |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -132,14 +138,19 @@ S22 有真 DDL `CHECK`，S26 有 16 个状态却没有任何机器可读的闭�
 S42 / S43 / S41 这三条是又一种缺口，值得单说：**生产方宣布了一条事件，然后只给其中一部分
 写了字段**。S42 三条里只有 `post.master.rendered` 在计划里写了字段清单，另外两条后来由本仓
 补成了 `post.mix-completed.v2` / `post.render-failed.v2`（形状来自 §4.4、§4.6 与 §5 的 DDL，
-不是从 `post.master.rendered` 裁出来的）；S43 四条里只有 `delivery.package.published` 有
-payload schema；S41 一条事件有字段清单但消费方（S42）把它里面的字段叫成另一个名字。
+不是从 `post.master.rendered` 裁出来的）；S43 四条原本只有 `delivery.package.published` 有
+payload schema，其余三条同批补齐（`delivery.package-created.v2` / `delivery.package-sealed.v2` /
+`delivery.publish-failed.v2`，形状来自 §5 的 11 张表而不是从 `published` 裁）；S41 一条事件
+有字段清单但消费方（S42）把它里面的字段叫成另一个名字。
 `schema` 覆盖不到的那几条一律在 `x-needs-owner` 里点名而不猜——它们的名字已经在
 `event-topics.v2.json` 里登记过了，缺的不是登记，是形状。
 
-今天还剩 6 个 envelope-only topic，全在 S43 / S44：`delivery.package.created` /
-`delivery.package.sealed` / `delivery.publish.failed` / `analytics.metric.snapshot.created` /
-`analytics.evaluation.completed` / `analytics.cost.projection.updated`。
+**envelope-only 已经归零**：S43 剩下三条（`delivery.package.created` / `delivery.package.sealed` /
+`delivery.publish.failed`）与 S44 三条（`analytics.metric.snapshot.created` /
+`analytics.evaluation.completed` / `analytics.cost.projection.updated`）原本只登记了名字与聚合键，
+本批把它们补成 payload schema。六份的形状全部取自各自计划的 §5 DDL，不是从信封或同类事件裁的；
+挡路的歧义都写进各自的 `x-needs-owner` / `x-conflicts`（PDC / PDS / PDF / AMS / AEC / ACP），**没有一条
+是把散文里的建议值改写成 `enum` 得来的**。
 
 `post.master.rendered` 还多一层：它的 `data` 块里有个 `qc_trigger_requested`，**全文只在
 那一段示例里出现过一次**——没有对应 DDL 列、没有流程步骤、没有指标。一个必发字段的语义
@@ -806,7 +817,7 @@ schema 只是把它变得显眼：我们为一条无人订阅的事件写了 11 
 
 ### `project.episode-created.v2.schema.json`：唯一一条「有字段清单、没有出处」的事件
 
-在当时的 17 个 envelope-only topic 里（今天剩 6 个），这一条最该先做，理由很朴素：**§5.3 行 656 真的写出了字段清单**。
+在当时的 17 个 envelope-only topic 里（今天已是 0 个），这一条最该先做，理由很朴素：**§5.3 行 656 真的写出了字段清单**。
 `{episode_id, series_id, project_id, release_ordinal|null, shooting_ordinal|null, spec_hash}`——七个值，
 六个能在 DDL 里指到列，第七个指不到。这不是巧合，是本仓库写作顺序的反面：多数 topic 只有「何时发」，
 这条连「发什么」都有，于是它的缺陷一眼可见，而不是藏在散文里。
@@ -870,7 +881,7 @@ PEC-6 是这批里唯一需要往外补的：S03 §5.3 行 654–658 列了三�
 
 S45 只有一条发布事件（§4.3 行 443「只有一条」），而它的状态机有两条终点出口不产生任何信号。
 这份 schema 的每一个字段都有出处——七字段列表加完整示例（§4.3 行 445–466），是当时剩下 16 个
-envelope-only topic 里证据最全的一条（当时的口径；本段写完之后 S46 也补上了 payload schema，此后资产五族与 S02 相继补上，今天剩 6 个——每次变动这段括号里的数都要跟着改，它记录的是一个会移动的口径）——**问题不在字段，在字段背后的那台状态机**。
+envelope-only topic 里证据最全的一条（当时的口径；本段写完之后 S46 也补上了 payload schema，此后资产五族与 S02、S42、S43、S44 相继补上，今天已是 0 个——每次变动这段括号里的数都要跟着改，它记录的是一个会移动的口径）——**问题不在字段，在字段背后的那台状态机**。
 
 §3.6 行 305–310 的六个态是 `REQUESTED → BUILDING → SEALED → READY`，另有 `FAILED`（不可重试
 错误直接终止，可恢复错误重试后仍失败）和 `EXPIRED`（`expires_at` 到点）。事件名是 `ready`，
@@ -927,7 +938,7 @@ AEX-5 是示例层的适配：计划示例的 `data_ref` 写裸字符串 `"audit
 
 ### `integration.command-accepted.v2.schema.json`：事件是受理那一刻的快照，可唯一的消费方要的是流水
 
-这是当时剩下 16 个 envelope-only topic 里字段证据最全的一条（今天剩 6 个）：§4.5 行 369–392 给了九个字段加完整示例，
+这是当时剩下 16 个 envelope-only topic 里字段证据最全的一条（今天已是 0 个）：§4.5 行 369–392 给了九个字段加完整示例，
 八个值能在 DDL 里指到列。**字段是全的，缺的是时间。**
 
 先说最锋利的一处。§10.6 行 1052 是全篇唯一一条对消费方的**硬性呈现要求**：
@@ -1435,8 +1446,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 49 个 payload schema
-                                                              （见上表；其余 6 个 envelope-only）
+                                        └──data_schema_ref──▶ 55 个 payload schema
+                                                              （见上表；envelope-only 已归零）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1449,8 +1460,8 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（136 个 JSON 解析）、`payloads`（104 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 49 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（66 个示例对
@@ -1505,7 +1516,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
-   **但形状是全的**：65 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
+   **但形状是全的**：71 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
 
    注意这份校验**必须先建本地注册表**。schema 之间用 `.invalid` 的 `$id` 互相引用

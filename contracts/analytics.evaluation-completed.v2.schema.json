@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/analytics.evaluation-completed.v2.schema.json",
+  "title": "analytics.evaluation.completed payload v2",
+  "description": "event `analytics.evaluation.completed` 的 data 部分。**§6.3 对这条事件只给了聚合键一行**（行 678：`aggregate_id = evaluation_run_id`），没有任何字段清单；本 schema 的键取自 §5 的 `analytics.evaluation_run` DDL（行 467–484，13 列）与 §3.1 的状态机（行 187–198），不是从散文推出来的形状。**事件名叫 `completed`，而状态机有四个终态**：`SUCCEEDED` / `PARTIAL` / `FAILED` / `CANCELLED`（行 190–195）。本 schema 保留全四值并**不**加 DDL 里不存在的 if/then（对比 `post.mix-completed.v2` 复刻了 `mix_remix_needs_plan` CHECK——那条 CHECK 是 DDL 里真有的）。四个终态是否都发本事件文档**一个字都没说**；收窄成 `SUCCEEDED` 会让 `PARTIAL`（§3.1 行 197 明说「**必须存在**」）与 `FAILED` 在事件流里彻底消失。见 x-conflicts AEC-1。**`PARTIAL` 是本事件最重要的取值**：行 197 的原话是「评测跑 100 条，97 条成功、3 条超时——如果标 `SUCCEEDED`，下游会把 97 条当成完整结果；如果标 `FAILED`，97 条的有效结果白丢」，所以一个把 `PARTIAL` 读成 `SUCCEEDED` 的消费方会把不完整的结果当完整用。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补。"
+    },
+    "evaluation_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 469（主键，行 483）与 §6.3 行 675 表头 + 行 678 本事件那一行（`aggregate_id`）。**一个 run 只发一条终态事件**（状态机 §3.1 的四条终态边都是终点，行 190–195），所以 `aggregate_sequence` 恒为 1——但**事件名与状态机对不上时这个假设会崩**（见 x-conflicts AEC-1）。§9 行 796 的 E12-S44-02「重复评测启动 → 不产生第二次付费（经 S26 幂等）」说明同一个 `evaluation_run_id` 不会二次产生；重启续跑若产生新 run，那是新 ID。"
+    },
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 470（`dataset_id text NOT NULL`）与 `analytics.benchmark_dataset`（行 444–453，主键 `(tenant_id, dataset_id, version)`）。**评测的对象是基准数据集，不是生产集**：§1 与 §4.3 的盲评也是基于 `BenchmarkItem`（行 297「系统随机抽样 BenchmarkItem」）。所以这个字段回答「这次评测测的是什么」，而「测了哪些具体条目」在 `benchmark_item` 表里（行 455–465），事件不带。**`dataset_id` 单独不唯一**：必须配 `dataset_version`（下一个字段）才是完整的定位。"
+    },
+    "dataset_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5 行 471（`dataset_version integer NOT NULL`）与行 452（`PRIMARY KEY (tenant_id, dataset_id, version)`）。**必须带**：同名数据集的不同版本是不同内容（`benchmark_dataset.item_count` 行 450 可以不同），跨版本比较正确率就是把两把尺子的刻度混用。**与 `metric_version` 的区别**：那个是**指标定义**的版本（怎么算），这个是**数据**的版本（算什么）——一次评测同时带着两者，因为两者都可能变，而 `mixed_versions`（快照里）只报「样本跨版本」，不区分是定义变了还是数据变了。"
+    },
+    "evaluator_ref": {
+      "type": "object",
+      "description": "来源：§5 行 472（`evaluator_ref jsonb NOT NULL, -- 评测器（可能是 S19 agent 或规则）`）。**形状未定义，且注释本身给了两个不同类别**：「S19 agent」与「规则」——前者是有 `service_id` 的外部引用，后者很可能是 S44 内部的一条规则，两者不会同形。本 schema 只收 `object`，不列键，这是**刻意的不收窄**（与 `delivery.package-created.v2` 的 `gaps` 同一处理）。**这个字段决定 `PARTIAL` 归因给谁**：条目失败可能是数据集问题、评测器问题、还是上游产物问题，而 `failure` 那一侧（`excluded` 在快照里）没有归因字段。见 x-needs-owner 第 2 条。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "SUCCEEDED",
+        "PARTIAL",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "description": "来源：§5 DDL 行 473–475（七态 CHECK：`CREATED`/`QUEUED`/`RUNNING`/`SUCCEEDED`/`PARTIAL`/`FAILED`/`CANCELLED`）与 §3.1 行 190–195 的状态机。**只收四个终态**——这与 `post.mix-completed.v2` 收全部五态的处理不同，理由是本条的状态机在 §3.1 画得**明确**：`CREATED → QUEUED → RUNNING →` 四个出口全在图里，前三态是中间态。`post.mix.completed` 那边没有这样的图可依，所以取宽。**`PARTIAL` 必须保留**：§3.1 行 197 说它是「**必须存在的状态**」，行 198 说「`PARTIAL` 的结果**可用于分析**，但快照必须带 `excluded.failed_items`」。**`CANCELLED` 也在里面**：行 194 的「取消」边是状态机的正式出口，取消的 run 也可能消耗了对价（§4.2 行 218 提到实验臂仍走 S23/S22 付费），下游算成本时要能看见它。**但 `completed` 是否覆盖这四个终态，是 owner 的判断题**——见 x-conflicts AEC-1。"
+    },
+    "item_total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 476（`item_total integer NOT NULL`）。**这是失败率的分母**，与 `item_succeeded` / `item_failed` 两个分子一起构成 `PARTIAL` 的全部信息。**DDL 没有 CHECK 保证三者自洽**：没有 `item_succeeded + item_failed <= item_total` 这样的约束，也没有 `<=` 而不是 `=`——因为一个 run 可能既没成功也没失败（例如 `CANCELLED` 时剩下的条目根本没跑）。本 schema **不发明这个约束**（对比 `metric_snapshot` 的 `snapshot_value_null_iff_zero_n` 是 DDL 里真有的 CHECK）：若加一条 `succeeded + failed <= total`，`CANCELLED` 的语义就被写死成「没跑的不计入 total」——而文档没说 total 是「计划要跑的」还是「实际碰过的」。见 x-conflicts AEC-2。"
+    },
+    "item_succeeded": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 477（`item_succeeded integer NOT NULL DEFAULT 0`）与 §3.1 行 192（`PARTIAL`「附 成功/失败 条数」）。**默认 0 是 DDL 给的**，所以一个刚建成的 run 这两个计数都是 0——这进一步说明 `item_total` 与两者不必相等（`item_total > 0` 而两计数为 0 是合法的早中期状态）。**`SUCCEEDED` 时应当等于 `item_total`**，但 DDL 没有这个 CHECK，本 schema 也不加。"
+    },
+    "item_failed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 478（`item_failed integer NOT NULL DEFAULT 0`）与 §4.6 行 351–352（「评测条目全部失败 | `FAILED`，不产出快照」「评测部分失败 | `PARTIAL`，快照带 `excluded.failed_items`」）。**`item_failed` 与快照的 `excluded.failed_items` 是同一个数的两次表述**：本事件在评测结束时发出，快照在拿到结果后计算——若两次数字不同（例如重算时 excluded 按不同口径），文档没有说明哪个是权威。本 schema 只发这一个，消费方要判断「同一个失败被数了几次」必须回查快照。**`item_failed` 不回传到 S26/S23**：失败的条目不计费吗？§4.2 行 218 说实验臂仍走付费链路，而评测条目失败的原因可能是超时（已计费）也可能是输入无效（未计费）——**事件不带成本信息**，所以「失败条目的钱算谁的」在 S44 的事件流里答不了。"
+    },
+    "result_ref": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§5 行 479（`result_ref jsonb, -- 结果 artifact`，**可空**）与 §4.6 行 351（全部失败时「`FAILED`，**不产出快照**」）。**必须可 null，而且 null 与 state 的组合有明确含义**：`FAILED` 的 run 可以没有结果 artifact。**但 `CANCELLED` 呢？** 一个跑到一半被取消的 run 可能已经产出了部分结果——`result_ref` 非空还是 null，文档没说。**形状未定义**：注释只说「结果 artifact」，没有说是 S28 的四键引用还是 S44 自己的对象。本 schema 收 `object` 不收内部键。见 x-needs-owner 第 1 条。"
+    },
+    "budget_ref": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§5 行 480（`budget_ref jsonb, -- 若产生了推理成本，引用 S23/S26`）。**这是评测与生产之间唯一的成本连接点，而它是可空的**：`null` 表示「这次评测没产生推理成本」。**「引用 S23/S26」是两个不同的目标**——S23 是账本（`contracts/finance.ledger-entry-posted.v2.schema.json`），S26 是任务（`contracts/generation.job-state-changed.v2.schema.json`），两者的引用形状不同，而这一列一个字段要装两种。本 schema 只收 `object`。**成本类指标的分摊需要它**：§4.2 行 281–282 的规则 `{\"cost_type\":\"evaluation\",\"basis\":\"excluded_from_production\",\"dimension\":\"tenant_id\"}` 说明评测成本必须排除在生产成本之外，而「哪些成本是评测的」若仅靠 `budget_ref` 是否为空来判断，那么一个没填 `budget_ref` 的付费评测会被算进生产——§9 行 765 的 E38-S44-09「评测成本类别不计入 K3 的生产成本」会静默失效。见 x-conflicts AEC-3。"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 481（`started_at timestamptz`，**可空**）。**本 schema 要求非空**：能发终态事件的 run 一定开始过（状态机行 190 的路径必经 `RUNNING`）。**与 `finished_at` 一起给出实际耗时**，而 §8 的指标里只有 `analytics_snapshot_compute_seconds`（行 723，按 metric 切）——**评测耗时没有指标**（`analytics_eval_run_partial_total` 行 727 数的是部分失败次数，不是时长）。所以这两个时间戳是消费方算评测时长的唯一输入。"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 482（`finished_at timestamptz`，**DDL 可空，本 schema 要求非空**）。理由是终态事件必然对应一次结束写入。**与 envelope `time` 不同**：后者是事件落 outbox 的时刻。**`CANCELLED` 时「结束」指取消时刻**：状态机行 194 的取消边可能从 `RUNNING` 出发，此时 `finished_at` 记的是取消动作发生的时间，而不是评测自然跑完的时间——两者在字段上不可区分，这又是 `state` 必须随事件发出的一个理由。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evaluation_run_id",
+    "dataset_id",
+    "dataset_version",
+    "evaluator_ref",
+    "state",
+    "item_total",
+    "item_succeeded",
+    "item_failed",
+    "result_ref",
+    "budget_ref",
+    "started_at",
+    "finished_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`evaluator_ref` 与 `result_ref` 的形状（两个都只写了「jsonb」）",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 472（`evaluator_ref jsonb NOT NULL, -- 评测器（可能是 S19 agent 或规则）`）、行 479（`result_ref jsonb, -- 结果 artifact`）",
+      "s44_status": "两列都只有类型与一句注释。`evaluator_ref` 的注释**自己就承认能装两类东西**（S19 agent 是跨服务引用，规则是 S44 内部对象），`result_ref` 只说是「结果 artifact」——是 S28 的四键引用、还是 S44 自己的一行、还是 `benchmark_item.ground_truth` 那种标注对比结果，文档没说。仓内 55 处跨服务引用都用同一个四键 closed 形状（`service_id`/`id`/`revision`/`content_hash`），但 `evaluator_ref` 若指向「规则」就产不出这个形状。本 schema 对两者都只收 `object`。要收窄需要 owner 定：评测器的形状（是不是统一四键 + 一个 `kind` 判别）、结果 artifact 的存放位置（S28 还是 S44 自己的表——若后者的 `result_ref` 就不是引用而是内联）。"
+    },
+    {
+      "field": "`PARTIAL` 的失败条目没有归因字段，「谁该修」在事件里答不了",
+      "demanded_by": "plans/S44-evaluation-analytics.md §3.1 行 197–198、§4.6 行 352、§9 行 760 E38-S44-04（「cohort 含失败 run，K1 分母包含它们（不被悄悄剔除）」）",
+      "s44_status": "`PARTIAL` 的全部信息是 `item_total` / `item_succeeded` / `item_failed` 三个计数（本 schema 已发），**没有一个字段说明失败的条目为什么失败**。§3.1 行 198 说「`PARTIAL` 的结果**可用于分析**，但快照必须带 `excluded.failed_items`」——快照里那份 `excluded.failed_items` 也只是计数（见 `analytics.metric-snapshot-created.v2` 的 x-conflicts AMS-2：那个对象的键集合三处不一致）。于是「3 条超时」与「3 条输入损坏」在事件流里长得一样，而对应的处置完全不同（前者重跑，后者修数据集）。E38-S44-04 只要求失败 run 进分母，**不要求可归因**。要定的是：`PARTIAL` 是否需要一个失败原因的分类计数（例如 `failures_by_reason: {timeout: 3}`），以及原因码的闭集由谁定。"
+    },
+    {
+      "field": "评测成本与生产成本的边界只看 `budget_ref` 是否为空",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 480（`budget_ref jsonb, -- 若产生了推理成本`）、§4.2 行 281–282（`evaluation` 类成本 `excluded_from_production`）、§9 行 765 E38-S44-09",
+      "s44_status": "分摊规则靠 S23 的 `cost_type='evaluation'` 把评测成本排除出生产，而**这个 `cost_type` 由 S23 的账本条目携带，不由本事件携带**。本事件只有可空的 `budget_ref`：有它就是「产生了推理成本」，但**没有说这些成本在 S23 侧被打成了什么 `cost_type`**。若 S23 把那笔账记成 `generation`（因为底层确实是一次模型调用），S44 的规则就匹配不上，评测成本会进 K3——而 E38-S44-09 的断言是「评测成本类别不计入 K3 的生产成本」，它测的是 S44 的分摊结果，测不到 S23 侧的 `cost_type` 打标。要定的是：评测产生的推理成本在 S23 的 `entry_type` / `cost_type` 里如何标识（这需要在 S23 侧有对应值），以及 `budget_ref` 是否该带上那个标识以便对账。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "AEC-1",
+      "summary": "事件名 `completed` 盖住四个终态，而四个终态是否都发它、发出来的消费方怎么区分，全靠猜",
+      "s44_states": "§3.1 行 187–198 的状态机：`CREATED → QUEUED → RUNNING → SUCCEEDED`，`RUNNING` 另有三个出口 `PARTIAL`（部分条目失败）/ `FAILED`（全部失败）/ `CANCELLED`（取消）；§5 行 473–475 的 DDL CHECK 同七值",
+      "s44_events": "§6.3 行 658 只列事件名 `analytics.evaluation.completed`；**全文没有任何一行说明哪个状态触发它**。§3.1 行 197 强调 `PARTIAL` 是「**必须存在的状态**」，行 198 说它的结果可用于分析——但没说要发事件",
+      "s44_catalog_context": "全仓 `.failed` 结尾的 topic 只有两个（`post.render.failed`、`delivery.publish.failed`，脚本核对 `contracts/event-topics.v2.json` 的 55 条），**没有 `analytics.evaluation.failed`**",
+      "why_it_matters": "三种读法都成立，代价各不相同：(a) 只有 `SUCCEEDED` 发——那么 `PARTIAL` 与 `FAILED` 与 `CANCELLED` 在事件流里**完全不存在**，而 `PARTIAL` 恰恰是行 197 反复强调不能丢的那个状态；下游（例如 S39 的修复计划若要参考评测结论）只能靠轮询 `GET /evaluation-runs/{id}`，而 §6.2（行 642–650）的查询表里**没有这一条查询**（只有 POST）；(b) 四个终态都发、靠 `state` 区分——这是本 schema 的取法，它让 `PARTIAL` 有话可说，但把「completed」变成了「结束了」；(c) 只有 `SUCCEEDED` + `PARTIAL` 发（都可「用」），`FAILED` / `CANCELLED` 静默——那么「这次评测彻底失败了」永远不会被通知是最坏的组合，因为它既没有结果也没有事件。要 owner 定的是：(a)/(b)/(c) 选哪个，以及若选 (b)，消费方需要什么来区分「结果可用」与「结果不可用」（目前只能看 `state` 与 `result_ref` 是否为 null，而两者的组合语义未定义）。"
+    },
+    {
+      "id": "AEC-2",
+      "summary": "三个计数之间没有任何约束，而其中一个被两个下游当成不同口径使用",
+      "s44_ddl": "§5 行 476–478：`item_total integer NOT NULL`、`item_succeeded integer NOT NULL DEFAULT 0`、`item_failed integer NOT NULL DEFAULT 0` —— **三个都没有 CHECK**（对比同方案的 `metric_snapshot` 有两个 CHECK，行 412–414）",
+      "s44_partial": "§3.1 行 192：「部分条目失败 ──► PARTIAL（附 成功/失败 条数）」；行 198：「`PARTIAL` 的结果可用于分析，但快照必须带 `excluded.failed_items`」",
+      "s44_k1": "§9 行 760 E38-S44-04：「cohort 含失败 run，**K1 分母包含它们**（不被悄悄剔除）」",
+      "why_it_matters": "`item_total` 是「这次评测计划要评多少条」还是「实际碰过多少条」，决定 K1 的分母怎么算，而文档没说。`CANCELLED` 的 run 最能暴露这个歧义：若取消时还有 40 条没跑，`item_total` 若仍是 100 而两个计数只加了 60，那么 `succeeded + failed = 60 < total = 100`——这在 DDL 层完全合法（无 CHECK），在下游就有两种读法：分母取 100（把没跑的算作失败）或取 60（只算碰过的）。E38-S44-04 说「失败 run 进分母」，但**没说是哪种分母**。同一个歧义还影响 §8 的 `analytics_eval_run_partial_total`（行 727，按次数计数不影响）与 K5 返工率（§6.3 行 668 说分母按 defect_type 闭集归并——那是另一套口径）。要定的是：三个计数的定义（计划 / 实际 / 成功 / 失败四者关系），以及是否该在 DDL 加一条约束把 `CANCELLED` 的语义钉死。"
+    },
+    {
+      "id": "AEC-3",
+      "summary": "评测跑在别人的预算上：事件能证明花了钱，却不能证明花的是哪个桶、算不算生产成本",
+      "s44_budget": "§5 行 480：`budget_ref jsonb, -- 若产生了推理成本，引用 S23/S26`；§3.3 行 218：「**实验不得绕过准入**：实验臂的每次生成仍走 S21→S26→S23/S22。S44 不能『为了对照多跑 100 次』而自己造付费任务」；§4.2 行 287：「**`evaluation` 类成本必须排除在生产成本之外**，否则评测跑得越多，K3 越难看。这是真实会发生的口径污染」",
+      "s44_rules": "§4.2 行 281–282 的分摊规则：`{\"cost_type\":\"evaluation\", \"basis\":\"excluded_from_production\", \"dimension\":\"tenant_id\"}`；§6.2 行 652：「**全部不带金额写入能力。** S44 的写操作只影响分析对象」；§9 行 766 E38-S44-10：「S44 无任何写入 S23 的路径（静态断言 + 网络策略）」",
+      "why_it_matters": "S44 自己不能写账（行 652、行 766），所以评测花的钱记在 S23 的账上，由 S23 打 `cost_type`。于是「这笔钱是评测还是生产」这个判定**发生在 S23 侧**，而 S44 这边只能按 `cost_type='evaluation'` 去匹配——**本事件无法证明那笔账被打成了 `evaluation`**：`budget_ref` 只指向 S23/S26 的某个对象，不带 `cost_type`、不带金额。若 S23 把一次评测用的模型调用记成 `generation`（它的视角是「一次生成」），S44 的分摊规则匹配不上，那笔成本就留在生产成本里，K3 被污染——而行 287 把这种污染说成「真实会发生的」。E38-S44-09 的断言测的是「评测成本类别不计入 K3」，它测的是 S44 的分摊结果，**测不到 S23 的 `cost_type` 打标是否正确**。要定的是：`cost_type=evaluation` 由谁判定（S23 收到什么信号才知道这是评测）、`budget_ref` 是否应携带该判定结果，以及是否需要一条从 S44 到 S23 的「这笔是评测成本」的标注（如果是，它会不会撞上 E38-S44-10 的「无写入路径」——标注不是写金额，但也不是只读）。"
+    }
+  ]
+}

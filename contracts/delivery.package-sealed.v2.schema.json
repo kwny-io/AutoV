@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/delivery.package-sealed.v2.schema.json",
+  "title": "delivery.package.sealed payload v2",
+  "description": "event `delivery.package.sealed` 的 data 部分。**§6.3 行 655 只给了事件名，唯一一句关于它的话在 §4.2 行 302**（「8. 发 `post.delivery.package.sealed`（供 S45 审计、S47 更新工作台）」——注意那里的名字带 `post.` 前缀，与目录里登记的 `delivery.package.sealed` 不一致，见 x-conflicts PDS-1）。本 schema 的键取自 §5 的 `delivery.package`（行 377–404）、`delivery.manifest`（行 433–443）三张表，不是从散文推出来的形状。**这条事件是四条里唯一有已声明外部消费者的**：contracts 之外的 plans/S46-developer-integration.md 行 129 把 `delivery.package.sealed` 列为客户 webhook 可订阅的 `event_types` 之一，而 S46 行 262 规定 webhook 签名覆盖**原始 body 字节**、行 268 规定同订阅同 `aggregate_id` 串行投递——所以这条 payload 的形状是**对外契约**，改它等于改客户的集成（见 x-conflicts PDS-1）。同时 plans/S47-realtime-projection.md 行 84 的消费表把它映射到「交付进度」，行 335 又把它列入默认通知白名单。**两条已声明的消费者，一条是外部的**，这是本批次六条事件里最不该继续留空的。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补。**对本条尤其要紧**：它是唯一流到客户 webhook 的 S43 事件，payload 版本是客户能做兼容判断的唯一依据——S46 行 138 只校验 `event_types` 是否为已注册类型的子集，**不校验 payload 版本**，所以版本错了不会有任何一层拒绝。见 x-conflicts PDS-1。"
+    },
+    "package_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 379（主键，行 403）。四条发布事件的 `aggregate_id` 都是它（§6.3 行 659–660）。§6.3 行 661–662：`aggregate_sequence` 的 `created`=1、此后每发一条 +1，所以本事件若是同包第二条则为 2——**但 `created` 是否一定先发、建包时同步封包是否让两条各发一次，文档没定**（见 x-conflicts PDC-1 与 PDC-2）。**S46 的 webhook 去重因此不能依赖这个序号**：行 266 的 `X-Drama-Delivery-Id = <subscription_id>:<event_id>:<attempt>` 用的是 envelope `id`，客户重放同一 `package_id` 的 `sealed` 与真的又封了一次在 webhook 侧长得一样。"
+    },
+    "package_type": {
+      "type": "string",
+      "enum": [
+        "missing_material",
+        "preview",
+        "formal"
+      ],
+      "description": "来源：§5 DDL 行 384–385（三值 CHECK）。**只有 `formal` 包要求签名**：§2.3 行 134–147 的十道门是 `formal` 包的判据，行 151 说预览包只过一部分，行 248 说「`formal` 包缺签名 → 409 `SIGNATURE_REQUIRED`」。所以收到本事件时，`package_type != 'formal'` 就意味着**这个包可能根本没签过名**——消费方不能把「收到 `sealed`」读成「已签名」。这与 `delivery.package-published.v2` 里同一个键的说明互补（那里说的是「能走到 `published` 的 `formal` 包一定签过名」）。"
+    },
+    "episode_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：§5 行 382（可空）。**可 null 的理由与 `delivery.package-published.v2` 同一条**（那里是 x-conflicts PDL-4：§12 未决问题 1 与 §11 C7 支持系列级包，而事件只有 `episode_id`），本条不重复登记。**S47 的投影受影响更大**：plans/S47-realtime-projection.md 行 84 把本事件映射成「交付进度」，而 S47 的 `run_dashboard_projection` 是 run 作用域的（§5.1），一个系列级包（`episode_id=null`）在按集组织的看板上无处可放——这一条与 PDL-4 是同一个空洞的消费者侧。"
+    },
+    "master_candidate_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§5 行 387（`master_candidate_id text, -- S42 候选`，可空）。**可 null**：`missing_material` 与 `preview` 类包封包时未必有 master 候选（§1.1 行 61–73），而封包的门集（§2.3 行 151）对它们本来就放宽。**这是候选，不是被接受的 master**：谁是当前有效版归 S08（§0）。**S45 审计要用的正是这个**——它回答「这一包封的是哪一次渲染的候选」，而接受指针的版本由 S08 的 `snapshot.manifest.committed` 另证。"
+    },
+    "manifest_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§5 行 391（`manifest_hash char(64)`）与行 436（`delivery.manifest.manifest_hash char(64) NOT NULL`）。**裸 64 位小写 hex，不带 `sha256:` 前缀**——S43 全文 9 处写 `sha256:`，`char(64)` 装不下（同一处矛盾已登记为 `delivery.package-published.v2` 的 PDL-5，不在此重复）。**这是封包事件的核心字段**：§4.2 行 299 给了唯一一处算式 `manifest_hash = sha256(canonical_json(manifest) || canonical_version)`，行 296–298 定死了 manifest 的内容（按 role, ordinal 排序；每项 role / artifact_ref / content_hash / byte_size / mime / locale；**排除自身 manifest 项**）。**可复算性仍缺一环**：算 hash 要 `canonical_version`（本 schema 带了）和 manifest 本体（本 schema 不带，见下一条），所以消费方拿到 hash 只能**比对**，不能**独立验证**——除非再调 §6.2 行 645 的 `GET /delivery-packages/{id}/manifest`。"
+    },
+    "canonical_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 392（`canonical_version text NOT NULL DEFAULT 'jcs-v1'`）与行 437。**必须随 hash 一起发**：§4.2 行 305 原话「**规范化版本进 hash**…换规范化实现 = 换 hash = 旧签名失效。必须显式版本化，否则『同一清单在不同版本服务上算出不同 hash』」。只发 `manifest_hash` 而不发 `canonical_version`，等于给了一个别人无法复算的摘要——同一个 hash 在不同 `canonical_version` 下指的不是同一份 manifest。仓内 `contracts/*.schema.json` 此前没有任何 payload 带规范化算法版本，**这是第一处**；若将来其它服务也发规范化 hash，这个字段名应统一。**取值域不收窄**：DDL 给了一个默认值 `'jcs-v1'`，但默认值不是闭集（行 305 明说可以是「项目自定规范」）。"
+    },
+    "item_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 439（`item_count integer NOT NULL`）与 §2.4 行 157–164（六项固定内容，其中第 1 项 `manifest` 是**自引用且排除在签名内容外**）。**`item_count` 数的是什么文档没写**：`delivery.item` 的主键是 `(tenant_id, package_id, role, ordinal)`（行 425），一个 role 可以有多个 ordinal（例如多语言字幕），所以它既可能等于行数、也可能等于 role 种类数。`manifest.item_count` 是封包时算出来的，本 schema 照收**不重算**。消费方拿它做进度或完整性判断前要先确认口径——`GET /delivery-packages/{id}/manifest`（行 645）给的是规范化清单，那里的项数才是与签名对齐的那个数。"
+    },
+    "total_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 440（`total_bytes bigint NOT NULL`）。**这是渠道准入的输入，不是观感数字**：§2.3 的 G2 只校验 artifact 存在与 hash，**大小上限在渠道侧**（`delivery.channel.max_file_bytes`，行 524），§4.4 行 345「文件超限 | 终态 | `CHANNEL_FORMAT_UNSUPPORTED`，需 S42 重渲染」。所以这个值一旦超过渠道上限，包虽然封了也发不出去。**但事件不带 `channel_id`**：封包与选渠道是两件事（§6.1 行 618–620 的 publish 请求体才带 `channel_id`），消费方无法据此判断「这个包能否发给某渠道」——要判断必须自己回查 `delivery.channel`，而该表**在契约里没有任何读取接口**（§6.2 行 642–649 的六个查询都不暴露 channel）。见 x-needs-owner 第 2 条。"
+    },
+    "sealed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 401（`sealed_at timestamptz`）。**可空在 DDL 里，本 schema 要求非空**：能发出 `sealed` 事件的包一定已经过了 §4.2 行 301「事务写 manifest + signature → SEALED」，该事务与 `state='SEALED'` 是同一笔，所以 `sealed_at` 必然已落。**这不是「签名完成的时刻」的同义词**：§4.2 第 6 步（行 300 调 KMS）与第 7 步（行 301 写库）之间可能隔着一次重试，`sealed_at` 记的是第 7 步的写库时间（DDL 无 default，由应用写入），而签名请求发生在更早。审计要「什么时候确定封的」用这个字段；要「签名什么时候算的」必须回查 `delivery.integrity_signature.created_at`（行 456），而那个值不在事件里。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_id",
+    "package_type",
+    "episode_id",
+    "master_candidate_id",
+    "manifest_hash",
+    "canonical_version",
+    "item_count",
+    "total_bytes",
+    "sealed_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`delivery.package.sealed` 的 payload 键集合本身",
+      "demanded_by": "plans/S43-delivery.md §4.2 行 302（唯一一句话）与 §6.3 行 655（只列事件名）、§11 C8 行 865（「payload schema 仍缺」）",
+      "s43_status": "全文 876 行里**没有任何一段定义这条事件的字段**。本 schema 的 10 个属性里 1 个是 `schema_version`，其余 9 个从 §5 的 `delivery.package` 23 列、`delivery.manifest` 8 列里挑出。取舍是：取 `manifest_hash` / `canonical_version` / `item_count` / `total_bytes`（manifest 表里的四个封包产物）、`sealed_at`（包表的封包时刻）、`package_type` / `episode_id` / `master_candidate_id`（与 `published` 对齐的定位键）；**刻意去掉 `delivery.integrity_signature` 的全部 11 列**（`signature_id` / `key_ref` / `algorithm` / `signature_b64` / `verified` / `verified_at` / `verify_error`），因为 §6.3 行 678 明说「**事件不含签名内容**、不含下载链接、不含渠道凭据。下游需要签名去查 API」——`signature_b64` 是内容，`key_ref` 是密钥引用。**但「签名标识」算不算「签名内容」是个判断**：`signature_id` 与 `algorithm` 不含密钥材料，带上它们能让 S45 一条事件就对上 `GET /delivery-packages/{id}/manifest?signed=true`（行 646）的那一行，不带则要多一次查询。本批次取**不带**（严格照行 678 的字面），owner 若要带上，是 additive 的扩大。"
+    },
+    {
+      "field": "`delivery.channel` 没有任何读取接口，而封包时的渠道兼容性无法判断",
+      "demanded_by": "plans/S43-delivery.md §5 行 516–529（`delivery.channel` 10 列，含 `accepted_formats` / `required_artifacts` / `max_file_bytes`）、§6.2 行 642–649（六个查询全是 `/delivery-packages/**`，无渠道查询）、§4.4 行 345",
+      "s43_status": "`delivery.channel` 的 `accepted_formats`（行 522）、`max_file_bytes`（行 524）、`required_artifacts`（行 523）是 §2.3 G2 与 §4.4 失败矩阵的判据输入，但**§6.2 的六个查询接口一个都不暴露渠道**，`contracts/openapi.v2.yaml` 里也没有渠道端点（本批次核对 `GET /delivery-packages` 一族）。于是本事件带了 `total_bytes` 却没有 `channel_id` 与渠道上限，消费方（或运维看板）看到「封了 8.2GB 的包」无法判断它能否发给某个渠道，只能等外发时撞 `CHANNEL_FORMAT_UNSUPPORTED`。这是「封包时不做渠道校验」的直接后果——§4.3 的行 320 把渠道匹配放在**外发**的第 3.e 步。要 owner 定的是：是否给 `delivery.channel` 开一个只读查询（然后本事件可以带 `channel_id` 之外的渠道约束快照），抑或明确「渠道兼容性只有外发时才有答案」。"
+    },
+    {
+      "field": "封包在信封里如何表达「这是第几次封」（同一包可能封两次）",
+      "demanded_by": "plans/S43-delivery.md §4.1 行 279–281（建包时同步封包）与 §4.2 行 288–303（独立 `:seal` 命令）、§6.3 行 661–662（`aggregate_sequence` 语义）",
+      "s43_status": "有两条路径能把包推到 `SEALED`：建包请求内的同步封包（§4.1 第 10 步），与单独的 `POST /delivery-packages/{id}:seal`（§4.2）。§4.2 行 292 说 `seal` 自己带 `command_id` 做幂等，但**幂等的是命令，不是事件**。若一个包在建包时已封包并发过 `sealed`，随后有人再调一次 `:seal`，§4.2 行 293 的「校验 package 处于 DRAFTING」会拒绝——所以重复封包在状态机上不可能。**真正没定的是第一条路径发不发事件**：§4.2 行 302 的「8. 发 `sealed`」写在 `:seal` 命令的流程里，建包流程（§4.1）的第 10 步只写到「签名成功 → SEALED」，**没有一步说发事件**。两种读法都成立：(a) 建包时若同步封包则发 `sealed`，`aggregate_sequence` = 2；(b) 只有独立 `:seal` 命令才发，建包时同步封包**静默**。后者会让 S46 的客户 webhook 与 S47 的交付进度**漏掉所有建包即封的包**——而 §6.1 行 601 的 201 响应示例写的正是 `\"state\":\"SEALED\"`，说明建包即封是常规路径而非例外。owner 需要明确 (a) 或 (b)。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PDS-1",
+      "summary": "这条事件流到客户 webhook，而它的名字在两处不一致、payload 版本无人校验",
+      "s43_name": "§4.2 行 302 写作 `post.delivery.package.sealed`（带 `post.` 前缀）；§6.3 行 655 的事件表与 contracts/event-topics.v2.json 登记的是 `delivery.package.sealed`（无前缀）。同一份方案里两个名字",
+      "s46_subscription": "plans/S46-developer-integration.md 行 129 的订阅示例：`\"event_types\": [\"orchestration.run.state-changed\", \"delivery.package.sealed\"]`；行 138 要求 `event_types` 必须是已注册类型的子集——**用的是无前缀名**，与目录一致、与 §4.2 不一致",
+      "s46_delivery": "plans/S46-developer-integration.md 行 262：webhook 签名 `X-Drama-Signature: t=<ts>,v1=<hmac_sha256(secret, f\"{ts}.{raw_body}\")>` —— **覆盖原始 body 字节**；行 266：`X-Drama-Delivery-Id = <subscription_id>:<event_id>:<attempt>`；行 268：同订阅同 `aggregate_id` 串行投递",
+      "why_it_matters": "三件事叠起来就没有退路了：(1) 这条 payload **逐字节发给客户**并签名，所以任何字段增删改都是客户集成侧的破坏性变更，而 payload 版本（`schema_version`）**没有任何一层在消费方校验**——S46 行 138 只校验事件名是否已注册，不校验 payload 版本；(2) 事件名本身在 S43 方案里就有两个写法，若实现按 §4.2 的 `post.delivery.package.sealed` 发，S46 行 138 的子集校验会拒掉订阅、webhook 静默变成空流（与 S44 §6.3 行 670–671 说的「订阅粗粒度名只会静默收到空流」是同一类失败）；(3) 行 268 的串行保证按 `aggregate_id` 分组，而本事件与 `created` / `published` 共用一个 `package_id`，所以客户侧收到的顺序是包内有序的——**这条是对的**，但它依赖「同包四条事件都发」这个未经文字确认的前提（见 PDS-3 的 x-needs-owner 第 3 条）。要定的是：`post.` 前缀是否为笔误（本批次按目录的无前缀名建 schema），以及是否需要把 `schema_version` 纳入 S46 的订阅/投递校验。"
+    },
+    {
+      "id": "PDS-2",
+      "summary": "`sealed` 的全部意义是「已签名」，事件却按 §6.3 行 678 不得含签名内容，于是审计方无法把事件与签名行对上",
+      "s43_meaning": "§3.1 行 218：「`SEALED` 是『包已定稿、可交付』的分界」；§4.2 行 299–301：算 `manifest_hash` → 签名 → 同一个事务写 `manifest + signature` → `SEALED`；§2.3 G9：「`IntegritySignature` 校验通过」否则 `SIGNATURE_INVALID`；「签名是为 `formal` 包服务」这句不在 §4.2 里：它写在 §2.1 行 103（「`formal` 包没有有效签名时 `deliverable=false`，但记录保留」）与 §3.3 行 247（「`formal` 包缺签名 → 409 `SIGNATURE_REQUIRED`」）；§4.2 行 283 是空行",
+      "s43_event_rule": "§6.3 行 678：「**事件不含签名内容**、不含下载链接、不含渠道凭据。下游需要签名去查 API」",
+      "s43_signature_ddl": "§5 行 445–458 `delivery.integrity_signature`：`signature_id` / `manifest_hash` / `key_ref` / `algorithm` / `signature_b64` / `verified`（**DEFAULT false**）/ `verified_at`（可空）/ `verify_error`（可空）",
+      "why_it_matters": "`verified` 的默认值是 `false`，而 §4.2 的第 5–7 步（行 299–301）**只有算 hash、请求签名、写库三步，没有任何一步做验证**。G9 要求「校验通过」，那么验证发生在哪一步、由谁写 `verified=true`，全文没有交代——若验证是盖章时异步做的，则一个刚 `SEALED` 的 `formal` 包完全可能 `verified=false`，也就是「封了但签名还没验过」。这一点单独看是 S43 内部问题；与行 678 的禁令合起来就变成契约问题：事件不带 `signature_id` 也不带 `verified`，**S45 审计（行 302 明说 `sealed` 是给它用的）收到事件后必须另查一次 API 才知道签名是哪一行、验没验过**，而 §6.2 的 `?signed=true` 查询（行 646）只返回清单的签名，不返回 `verified`/`verify_error`。于是「S45 能审计签名」这句话在契约层落不了地：审计链上少一环。要定的是：`verified` 由谁、在何时写；以及是否允许事件带**签名标识**（`signature_id` + `algorithm`，不含密钥材料）以闭合审计链。"
+    },
+    {
+      "id": "PDS-3",
+      "summary": "封包之后再无包级事件，而被判过期的包在事件流里永远显示「可交付」",
+      "s43_transitions": "§3.1 行 213–215：`SEALED → PUBLISHED`（成功）/ `SEALED → SEALED`（可重试失败）/ `SEALED → PUBLISH_FAILED`（终态失败）——**三条都是外发引起的**；§3.3 行 245–249 还有一条：对 `BLOCKED` 请求外发 → 409 `PACKAGE_BLOCKED`、对 `DRAFTING` 请求外发 → 409 `PACKAGE_NOT_SEALED`、`formal` 缺签名 → 409 `SIGNATURE_REQUIRED`、「外发时 S08 accepted pointer 已变 → 409 `MASTER_SUPERSEDED`（包已过期，需新建）」",
+      "s47_use": "plans/S47-realtime-projection.md 行 84：`drama.delivery.v2` 的 `delivery.package.sealed` → 投影「交付进度」；行 88：「**S47 的消费是「投影」，不是「状态同步」**…事件里没有的字段，投影里就没有」；行 335：`delivery.sealed` 在默认通知白名单里",
+      "why_it_matters": "`MASTER_SUPERSEDED` 是**最需要通知的状态**：包还在、清单还完整、签名还有效，但它引用的 master 已经不是当前接受版，所以这个包永远发不出去（行 249 明说「包已过期，需新建」）。而这条结论**只在有人调外发时才产生**（§4.3 行 316 的实时复查），没有事件、没有包级状态位——`delivery.package.state` 的 CHECK（行 394–395）里**没有 `SUPERSEDED`**。所以 S47 的「交付进度」投影在收到 `sealed` 之后，若这个包再也没人点外发，就会**永久显示「已封包、可交付」**——而它实际上已过期。同理，`delivery_superseded_publish_total` 指标（§8 行 735）是 S43 自己的计数器，消费方拿不到。行 88 那句「事件里没有的字段，投影里就没有」正好把这个后果说透了：投影忠实，但输入缺了一条。要定的是：包被判过期时是否发事件（可复用 `delivery.publish.failed` 带 `MASTER_SUPERSEDED`，但那条事件此刻的语义是「外发尝试失败」，而这里根本没有发生外发尝试），以及 `state` 是否需要 `SUPERSEDED` 或 `EXPIRED`。"
+    }
+  ]
+}

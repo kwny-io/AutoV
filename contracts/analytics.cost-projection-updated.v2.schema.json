@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/analytics.cost-projection-updated.v2.schema.json",
+  "title": "analytics.cost.projection.updated payload v2",
+  "description": "event `analytics.cost.projection.updated` 的 data 部分。与 `analytics.evaluation.completed` 一样，**§6.3 对这条事件只给了聚合键一行**（行 679：`aggregate_id = projection_id`），没有任何字段清单；本 schema 的键取自 §5 的 `analytics.cost_projection` DDL（行 534–546，10 列），不是从散文推出来的形状。**这条事件的语义约束比其它事件都重**，因为 §4.5 行 340 有一句硬规则：「**投影不用于放行**。S23/S22 的预算校验用实际值，不用 S44 的投影。S44 的投影是给经营看板和人看的。」——这句话要求一个消费方必须能从事件里看出「这是投影不是实际」，而本 schema 能给的区分**只有字段名**（`projected_*` 对 `actual_to_date_micro`），两者的数值类型完全相同（都是 `bigint` micro），结构上可互换。见 x-conflicts ACP-3。**三个金额字段的语义在 §2.1 行 69–90 被划得很清**：原始费用（S23）→ 分摊（S44 按 AllocationPolicy 拆维度）→ 投影（按当前速率外推）。本事件只带最后一段，**中段的分摊结果不在事件里**，所以「这个投影是按哪版 policy 分摊出来的」在事件里无从得知（表里也没有那一列）。**`projection_id` 不是一次计算的 ID，是一个投影的 ID**：事件名是 `updated` 不是 `created`（§6.3 行 658），说明同一个 `projection_id` 会被反复重算并重发，`aggregate_sequence` 随之递增；而 DDL 的主键 `(tenant_id, projection_id)`（行 545）意味着**新算一次是覆盖旧行**，历史投影不保留——想对比「昨天算的和今天算的差多少」必须从事件流里回放，这正是 `replay_side_effects` 声明为 `false` 的那类消费。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补。"
+    },
+    "projection_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 536（主键，行 545）与 §6.3 行 675 表头 + 行 679 本事件那一行（`aggregate_id`）。**它是「一个投影」的标识，不是「一次投影计算」的标识**：事件名 `updated`（§6.3 行 658）+ 主键 `(tenant_id, projection_id)` 且无版本列 = 同一 ID 反复覆盖。**这直接影响消费方的幂等写法**：按 `(projection_id)` 去重会丢掉后续更新，必须按 `aggregate_sequence` 取最大。本 schema 不新增 `revision` 字段——仓内 55 处四键引用里的 `revision` 属于跨服务引用，这里没有那个结构。"
+    },
+    "scope": {
+      "type": "object",
+      "description": "来源：§5 行 537（`scope jsonb NOT NULL, -- {project_id} 或 {tenant_id}`）。**这一列是这条事件里最难用的一处**：注释给的两种形状是二选一，但**没有判别字段**——消费方拿到的要么是带 `project_id` 的对象、要么是带 `tenant_id` 的对象，只能靠「有没有某个键」去猜。而 `tenant_id` 本来就在 envelope 上（每条事件都有），所以 `tenant_id` 形状的 `scope` 在信息上是冗余的，它出现只是为了表达「这个投影是全租户粒度」。**`project_id` 来自哪个服务也没说**：§2.1 行 76 的分摊维度是「(项目, 集, 场景, 角色, 模型)」，`project_id` 应当是其中一个维度的取值，但 S44 的表里没有任何一张列了这些维度的全量（`cost_allocation` 的维度列不在 §5 的这段里）。本 schema 只收 `object`，不列键——与 `delivery.package-created.v2` 的 `gaps` 同一处理。见 x-needs-owner 第 1 条。"
+    },
+    "window": {
+      "type": "string",
+      "enum": [
+        "7d",
+        "30d"
+      ],
+      "description": "来源：§5 行 538（`window text NOT NULL CHECK (window IN ('7d','30d'))`）与 §4.5 行 339（「必须标明基于哪个窗口的速率（近 7 天 / 近 30 天），**两者可能差 3 倍**」）。**这里必须说清 `window` 指什么，因为它的名字会骗人**：§4.5 行 339 的上下文说明它是**求速率用的历史窗口**，不是投影的目标期——投影的目标期在 §4.5 行 330 的公式里写作 `projected_month_cost`（一个月），而**「哪个月」这个信息在本表里不存在**。所以 `window='7d'` 的含义是「用最近 7 天的日均速率外推」，被外推到什么时候是未知的。见 x-conflicts ACP-2。**`7d` 与 `30d` 差 3 倍**（行 339 原话）意味着同一个 `projection_id` 换窗口重算就是换一个数，而事件名 `updated` 会让两次都落在同一条流上、同一个聚合键下。"
+    },
+    "actual_to_date_micro": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 539（`actual_to_date_micro bigint NOT NULL`）与 §4.5 行 330–332 的公式首项 `actual_to_date`。**这是本事件里唯一的一个「实际值」**，其余两个金额都是推算。**它的截止时刻没有单独的字段**：公式里它代表「到现在为止的累计」，而「现在」在事件里有三个候选——`computed_at`（行 544，投影计算的时刻）、envelope 的 `time`（落 outbox 的时刻）、以及消费方读到时的时刻。三者可能相差数小时（`replay_side_effects: false` 但不代表不重投）。本 schema 不新增 `actual_to_date_through`——那会是从散文发明字段。**它与 `projected_total_micro` 的关系决定了两者的可信度**：若 `actual_to_date_micro` 已经接近 `projected_total_micro`，说明这个投影的推算部分占比小、可信度高；但**没有任何字段告诉你「这个月的多少比例已经过完了」**，所以消费方算不出这个比值。"
+    },
+    "projected_total_micro": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 540（`projected_total_micro bigint NOT NULL`）与 §4.5 行 330（公式左侧 `projected_month_cost`）。**这是全条事件最需要小心读的数**：它叫 `_total_`，而 §4.5 的公式把它定义为 `actual_to_date + remaining_days * p50_daily_rate`——**「total」是「到期末的累计总额」，不是「剩余部分」**，两读之差可能是一倍。**它没有时间范围字段**：§4.5 行 330 的变量名是 `projected_month_cost`（一个月），§2.1 行 46–47 又说这个实体是「生成成本的时间投影（**按日/按集/按模型**）」——三种粒度。于是 `projected_total_micro` 到底是「本月总额」「本日总额」还是「本集合计」，**从事件里读不出来**。表里没有 `granularity` 列，没有 `period_start`/`period_end`，也没有 `target_month`。见 x-conflicts ACP-2，这是本事件最严重的一处。**金额单位是 micro**（与全部 `_micro` 列一致），但**币种不存在于表里**：跨币种客户的投影会是一个没有货币单位的数（`customer_roi.revenue_micro` 行 553 同样如此，注释说收入来自外部，但没说币种）。"
+    },
+    "ci_low_micro": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "来源：§5 行 541（`ci_low_micro bigint,` —— **DDL 可空**）与 §4.5 行 338（「**必须给区间，不给单点**」）。**这两句直接冲突，本 schema 不选边**：本字段列在 `required` 里（**键必须存在**，这样消费方的读取路径是确定的），但值允许 `null`（**不发明 DDL 没有的非空约束**）。也就是说 schema 层面「有没有算区间」这件事只能靠 `null` 表达，而 §4.5 要求的是「不许没有」。**`null` 的两种解释无法区分**：(a) 这个投影算不出区间（数据不足）；(b) 这个投影是旧版本写的、当时还没实现区间。要区分就需要一个 `ci_method` 或 `interval_computed: bool`，两者都不在表里。**`ci_low_micro` 与 `ci_high_micro` 之间也没有顺序约束**：DDL 没有 `CHECK (ci_low_micro <= ci_high_micro)`，本 schema 也不加（加了会与「本表不发明约束」的取法冲突，且 `null` 组合会更复杂）。见 x-conflicts ACP-1。"
+    },
+    "ci_high_micro": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "来源：§5 行 542（`ci_high_micro bigint,`）。与 `ci_low_micro` 成对，同样的问题：**可空 vs 必须给区间**。**区间是单侧还是双侧也未定义**：§4.5 行 333 的公式写作 `± CI`（对称），但成本分布是右偏的（少数超长集合拉高尾部），对称区间会把下界压成负数——而 `ci_low_micro` 是 `bigint` 且无 `CHECK (ci_low_micro >= 0)`，所以**一个负的下界在 DDL 层是合法的**。本 schema 不加上界也不加下界约束。**区间的置信水平没有字段**：`ci95` 这个名字出现在 §5 行 403 的 `analytics.metric_snapshot` 列上，但本表的两个列叫 `ci_low_micro`/`ci_high_micro`，**不含置信度**，所以这条事件的区间到底是不是 95% 无法从事件里得知——而同一个 S44 的两类事件用了两套区间表达，消费方要跨事件比较可信度就没有共同刻度。"
+    },
+    "based_on_rate": {
+      "type": "number",
+      "description": "来源：§5 行 543（`based_on_rate numeric NOT NULL`）。**这一列是唯一一个「金额但不是 `_micro`」的列，而它的单位没人定义**：同表其它金额全是 `bigint ... _micro`（行 539–542），这一列是 `numeric` 且名字不带单位。**唯一的线索来自 §4.5 行 332 的公式**：`remaining_days * p50_daily_rate`——所以它应当是**日速率**，且很可能是**主币单位（元）而不是 micro**，因为若它是 micro/日，那么 `remaining_days * rate` 得到的就是 micro，与 `actual_to_date_micro` 可直接相加，公式成立；若它是元/日，乘出来是元，与 micro 相加就错了。**两种读法都让公式「看起来成立」，而结果差 10^6 倍**——这是本事件里唯一可能导致量级错误的字段。本 schema 只收 `number`，**不写 `multipleOf: 0.000001` 之类的推测**（那是从散文发明约束）。见 x-needs-owner 第 2 条。**它也不说是 p50 还是均值**：公式里是 `p50_daily_rate`（中位数），列名只叫 `based_on_rate`；若某天算法改成均值，同一个列名会装不同的统计量，而事件里没有 `rate_statistic` 字段。"
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 544（`computed_at timestamptz NOT NULL DEFAULT now()`）。**必须带，且不能靠 envelope 的 `time` 代替**：outbox 重投会把 `time` 与计算时刻拉开（`delivery: at_least_once`），而本事件的重点恰恰是「这个投影是什么时候算的」——因为 `window` 与 `based_on_rate` 都是时变的，同一个 `projection_id` 在不同时间算出的数不同。§4.6 行 355 的「同一 cohort 并发重算 → 结果应相同」那条自检针对的是**快照**（`MetricSnapshot`），**本表没有对应的自检条目**：`cost_projection` 靠 `now()` 做 `computed_at`，而投影天然依赖「现在」（`remaining_days` 就是拿当前日期算的），所以**同参数重算必然不同**——这不是 bug，是投影的定义。这也正好说明为什么投影不能冒充快照：快照可以要求可复现，投影不能。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "projection_id",
+    "scope",
+    "window",
+    "actual_to_date_micro",
+    "projected_total_micro",
+    "ci_low_micro",
+    "ci_high_micro",
+    "based_on_rate",
+    "computed_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`scope` 的两种形状之间没有判别字段",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 537（`scope jsonb NOT NULL, -- {project_id} 或 {tenant_id}`）",
+      "s44_status": "注释用「或」连接两种互斥形状，**没有 `scope_type` 之类的判别键**，也没有说 `project_id` 这个维度值从哪来。§2.1 行 76 把分摊维度列为「(项目, 集, 场景, 角色, 模型)」，但 `cost_projection` 表**只允许两种 scope**，所以一个「按场景」或「按模型」的投影无处安放——而 §2.1 行 46–47 说这个实体本身就是「按日/按集/按模型」的。本 schema 只收 `object`。要定的是：`scope` 是否该有一个闭集的 `scope_type` 判别键、支持的维度集合是否就是注释里的两个、以及 `tenant_id` 形状是否真的需要（envelope 上已有 `tenant_id`，重复出现只表达「全租户粒度」这一件事）。"
+    },
+    {
+      "field": "`based_on_rate` 的单位与币种 —— 唯一一个不带 `_micro` 的金额列",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 543（`based_on_rate numeric NOT NULL`）、行 539–542（同表其它金额均为 `bigint ... _micro`）、§4.5 行 330–332（公式 `remaining_days * p50_daily_rate`）",
+      "s44_status": "同表五个金额列里有四个是 `bigint` + `_micro` 后缀，只有 `based_on_rate` 是 `numeric` 且无后缀。**单位读法有两种，结果差 10^6 倍**：若为 micro/日，`remaining_days * rate` 与 `actual_to_date_micro` 同单位可直接相加（公式成立）；若为元/日，相加前必须先换单位（公式按字面就不成立）。文档两处都没说。**币种同样缺失**：整张表没有任何币种列，跨币种客户的投影是一个没有货币单位的数。要定的是：`based_on_rate` 的确定单位（建议改名带后缀）、它的统计量（§4.5 公式写的是 `p50`，列名不带）、以及 `cost_projection` 是否需要一个 `currency` 列（`customer_roi.revenue_micro` 行 553 与 `allocated_cost_micro` 行 554 也一样缺）。"
+    },
+    {
+      "field": "投影带不出分摊口径：没有 `allocation_policy_version`，也没有 `allocation_basis`",
+      "demanded_by": "plans/S44-evaluation-analytics.md §2.1 行 87（「`AllocationPolicy` 版本化；`MetricSnapshot` 记录 `allocation_policy_version`」）、行 88（`allocation_basis: estimated_by_policy` 与精确分摊**不得混在一个 KPI 里**）、§5 行 534–546（`cost_projection` 无这两列）、§5 行 408（`metric_snapshot` 有 `allocation_policy_version` 列）",
+      "s44_status": "投影建立在分摊之上（§2.1 行 71–81 的三段管线），而**分摊是版本化的、且有「精确 vs 估算」两种 basis**；`metric_snapshot` 两样都记了（`allocation_policy_version` 列 + 行 88 的 `allocation_basis` 规则），**`cost_projection` 两样都没记**。于是：同一个 `projection_id` 在 policy v2 与 v3 下算出来的数，事件里不可区分；一个基于 `estimated_by_policy` 的投影与一个基于精确分摊的投影，事件里也不可区分——而行 88 明说「估算分摊的金额**不得**与精确分摊的金额混在一个 KPI 里，那会让『每可用分钟成本』看起来有小数点后两位的精度，实际是拍的」。本 schema 不补这两列（补了就是从散文发明字段）。要定的是：`cost_projection` 是否应加 `allocation_policy_version` 与 `allocation_basis` 两列（若加，是改 DDL 还是只进事件 payload）。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "ACP-1",
+      "summary": "「必须给区间，不给单点」是一条 MUST，而两个区间列都可空，事件里也没有任何字段说明「这次算没算区间」",
+      "s44_rule": "§4.5 行 338：「必须给区间，不给单点。」行 333 的公式末项写作 `± CI`",
+      "s44_ddl": "§5 行 541–542：`ci_low_micro bigint,` 与 `ci_high_micro bigint,` —— 两列**都没有 NOT NULL**，而同表其它六个非主键列全都 NOT NULL（行 537–540、543–544）",
+      "why_it_matters": "这是「规则说必须」与「表结构允许没有」的正面冲突，而**事件是消费方唯一能看到的东西**。三种后果：(a) 若某次计算确实产不出区间（数据不足），事件里 `ci_low_micro: null` 与「这个投影是旧版本写的、当时还没实现区间」**完全同形**，消费方无法区分「算不出来」和「没算」；(b) 若某次计算产出了区间但恰好对称到极窄，数值上看起来像单点，也无法与「没给区间」区分；(c) 看板若按「有区间就画误差条、没有就画单点」实现，那么规则里的 MUST 就退化成「有时有」——而行 340 说投影是「给经营看板和人看的」，看板正是唯一的消费场景。要 owner 定的是：区间是**硬需求**（那么 DDL 应改为 NOT NULL，且需要一个「算不出时怎么办」的规则——例如拒绝生成投影）还是**软需求**（那么 §4.5 的措辞该改，且事件需要一个 `ci_method` / `interval_computed` 标志）。本 schema 取「键必在、值可 null」，不替你选边。"
+    },
+    {
+      "id": "ACP-2",
+      "summary": "`projected_total_micro` 没有时间范围也没有粒度：「total」是到期末的累计还是剩余部分、期末是哪天、按日还是按集，三个问题都没答案",
+      "s44_formula": "§4.5 行 330–334：`projected_month_cost = actual_to_date + remaining_days * p50_daily_rate ± CI`",
+      "s44_ddl": "§5 行 534–546：表里只有 `window`（且它是**速率窗口**，行 339）、`actual_to_date_micro`、`projected_total_micro`、`based_on_rate`、`computed_at`；**没有 `period_start`、没有 `period_end`、没有 `target_month`、没有 `granularity`、没有 `remaining_days`**",
+      "s44_entity": "§2.1 行 46–47：「`GenerationCostProjection` —— 生成成本的时间投影（**按日/按集/按模型**）」",
+      "why_it_matters": "读这个数至少要三个未知量才能解释，而三个都不在事件里。(1) **口径**：公式左边的变量名是 `projected_month_cost`，右边是「已发生 + 剩余天数 × 日速率」——所以它是「到月末为止的累计」；但列名是 `projected_total_micro`，「total」在成本语境里同样可以是「本期总额」，两读在数值上相差 `actual_to_date` 那一部分（可能是一半）。(2) **期末是哪天**：公式用 `remaining_days`，而「剩余」相对于某个月末；表里没有目标期，消费方只能假设「本月」——但 `computed_at` 可能是月末最后一天（`remaining_days→0`，投影≈实际）也可能是月初（`remaining_days→30`，投影几乎全是外推），**同一个投影在月中和月末算出来，可信度天差地别，而事件无法表达**。(3) **粒度**：行 47 说这个实体支持按日/按集/按模型三种粒度，表里只有一个无粒度的金额列——一个「按集」的投影和一个「按模型」的投影在事件里完全同形，只能靠 `scope` 猜（而 `scope` 只允许 `{project_id}` 或 `{tenant_id}`，见 x-needs-owner 第 1 条）。要 owner 定的是：`projected_total_micro` 的确切口径（是否含 `actual_to_date`）、投影目标期的表达方式（`target_month` 还是一对 `period_start`/`period_end`）、以及粒度是否需要独立字段（还是约定「一个 `projection_id` 只对应一种粒度」）。"
+    },
+    {
+      "id": "ACP-3",
+      "summary": "「投影不用于放行」是一条硬规则，而投影在事件里与实际值同形、可互换，且同一个 `projection_id` 会反复覆盖",
+      "s44_rule": "§4.5 行 340：「**投影不用于放行**。S23/S22 的预算校验用实际值，不用 S44 的投影。S44 的投影是给经营看板和人看的。」",
+      "s44_accounting": "§2.1 行 90：「**S44 的库里有金额，但它不是账本。** 判据：删掉 S44 的全部数据，S23 的账本仍然完整、仍然能出账单。反过来删掉 S23，S44 的金额全部失去依据。」§6.2 行 652：「全部不带金额写入能力。S44 的写操作只影响分析对象」",
+      "s44_event_nature": "§6.3 行 658 事件名为 `analytics.cost.projection.updated`（**updated 不是 created**）；§5 行 545 主键 `(tenant_id, projection_id)` **无版本列** —— 重算即覆盖",
+      "why_it_matters": "规则的防线是「人看投影、机器看实际」，但事件流里**没有任何字段在机器可读层面标出这一点**：`projected_total_micro` 与 `actual_to_date_micro` 都是 `bigint`、都以 `_micro` 结尾、都在同一个 payload 里。一个把「本月花了多少」写成 `data.projected_total_micro` 的消费方（很自然会这么写，因为叫 total）拿到的是一个外推值，而它看起来和一个真实金额毫无区别。风险在 `updated` 这个动词上被放大：同一个 `projection_id` 每隔一段时间重算重发，`aggregate_sequence` 递增，**历史值被覆盖**——若某个下游真的拿它做了告警或阈值判断，同一个「事实」会随时间自己变大变小，而事件流里没有一条「这值作废了」的消息（对比 `delivery.publish-failed` 至少有 `FAILED_UNRESOLVED` 这个状态词）。再叠加 `window` 的 7d/30d 差 3 倍（行 339），同一个 `projection_id` 换窗口重算能让金额跳三倍，而事件里除了 `window` 字段外没有任何提示说「这次数和上次数不可比」。要 owner 定的是：是否需要一条机器可读的「仅供展示、禁止用于放行」标记（或在 catalog 的 `consumers` 侧约束），以及同 `projection_id` 的多次 `updated` 之间是否需要 `revision` 或 `supersedes` 关系（目前消费方只能按 `aggregate_sequence` 取最新，无法知道中间跳变了几次）。"
+    }
+  ]
+}

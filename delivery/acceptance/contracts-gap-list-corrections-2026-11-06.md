@@ -1251,3 +1251,376 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 这一层关系没有工具能校验——`additionalProperties: false` 只管键，不管同一份文档里不同位置的
 值之间的关系。本轮的示例靠人工保持一致（`aggregate_id` 与 `data.mix_job_id` 都写成
 `mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2`），下一步做 codegen 校验器时应当把这类约束一起表达。
+
+## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十一处错
+
+第 15 轮把 S42 剩下两条补齐之后，`envelope-only` 归零的最后一格是 S43 与 S44 的六条事件。
+这一轮把六条都写成 payload schema，`event-topics.v2.json` 的 `data_schema_ref` 从 49 条涨到
+**55 条**，`envelope-only` 从 6 降到 **0**。六份 schema 各 3 条 `x-needs-owner`、各 3 条
+`x-conflicts`（前缀 PDC / PDS / PDF / AMS / AEC / ACP），共 36 条新编号。
+
+这一节的 §16.1 是**本轮自己写错的数**——十一处，其中四处在写完这一轮报告时才发现、属于
+「引用了不存在的行」，另外三处是我在这一节的初稿里又写错的 ref 计数。§16.2 起是把源表重新数
+一遍的脚本输出，不沿用 §15.2 的任何中间结果。
+
+### 16.1 修正本轮自己写错的十一条数
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `delivery.package-created.v2` / `purpose` 与 `x-needs-owner[0]` | 「`package_hash` 在 `DRAFTING` 事务里刚算出来、签名尚未发生（§4.2 行 299–302）」「创建时未定稿」 | **S43 全文没有写出 `package_hash` 的算法**。它只出现 4 次：行 393 的 DDL 列（`char(64) NOT NULL`）、行 408 的唯一索引、行 602 与行 670 的示例；§4.2 行 299 算的是 `manifest_hash`，不是它。因为 DDL 是 `NOT NULL`，它必须在 §4.1 行 278 写 `package(DRAFTING)` 时就已算出——**但「已算出」这件事本身是推断，不是文档给的** | 我把「`package_hash` 此刻已定稿」与「文档写了它的算法」当成同一件事，然后把算式归给了 §4.2 的 `:seal` 流程。**行 299–302 是 `:seal` 的 8 步，算的是 `manifest_hash`**——两个 hash 混了。更要紧的是：这份 schema 原来那句把一个**没写出来的步骤**说成有出处，改完之后它变成了一条真缺口 |
+| 2 | `delivery.package-sealed.v2` / `PDS-2` 的 `s43_meaning` | 「§11 C8 区域之外的 §4.2 行 283 还说过签名是为 `formal` 包服务的」 | **行 283 是空行**。「`formal` 包没有有效签名时 `deliverable=false`」在 **§2.1 行 103**；「`formal` 包缺签名 → 409 `SIGNATURE_REQUIRED`」在 **§3.3 行 247** | 行 283 在 §4.1 的创建流程（行 262–281）之后、那段「第 9–10 步拆开是刻意的」解释（行 284）之前——是个空行。**「我记得这里说过」不是出处**，回读一次就能发现 |
+| 3 | `delivery.package-sealed.v2` / `manifest_hash` | 「除非再 `GET /delivery-packages/{id}/manifest`（§6.2 行 645）」 | 行 645 的**表行**写的是路径 `/delivery-packages/{id}/manifest`，不带 `GET ` 前缀（方法在行 644 的「方法」列，按表行读是 `\| GET \|`）。两处都对得上，但引用里的字符串不是源文原文 | 我把 markdown 表格的两个单元格拼成了一个字符串。**表行不能当散文引用**——要么引单元格原文，要么引整行 |
+| 4 | `analytics.cost-projection-updated.v2` / `ci_low_micro` | 「`ci95` 这个名字出现在 `analytics.metric_snapshot_created.v2` 里（§5 行 416）」 | **`ci95 jsonb,` 在 §5 行 403**；行 416 是 `CREATE INDEX snapshot_lookup_idx ON analytics.metric_snapshot` | 我把「`ci95` 这一列」与「这张表的索引」两行看串了。行号落在 400 附近的同一张 DDL 里，肉眼扫过去很像 |
+| 5 | `analytics.cost-projection-updated.v2` / `x-needs-owner[2]` | 「§5 行 412–418（`metric_snapshot` 有 `allocation_policy_version` 列）」 | **`allocation_policy_version text,` 在 §5 行 408**；行 412–414 是同表两条 CHECK（`snapshot_n_nonneg` / `snapshot_value_null_iff_zero_n`），行 416–417 是索引 | 同一处病灶：我用「这张 DDL 的范围」代替了「那一列的行号」。**41X 那一段里没有 `allocation_policy_version`** |
+| 6 | `analytics.metric-snapshot-created.v2` / `snapshot_id` | 「与 §6.3 行 677（`aggregate_id`）」 | 行 677 是 `\| \`analytics.metric.snapshot.created\` \| \`snapshot_id\` \|` ——**`aggregate_id` 这个词在行 675 的表头**（`\| event_type \| aggregate_id \|`） | 我引了「那一行」，却在括号里承诺「`aggregate_id` 这个词」。**承诺一个 token 就必须确认那一行里有它** |
+| 7 | `analytics.evaluation-completed.v2` / `evaluation_run_id` | 同上，「与 §6.3 行 678（`aggregate_id`）」 | 同上：`aggregate_id` 在行 675 表头，行 678 是本事件那一行 | 同 #6 |
+| 8 | `analytics.cost-projection-updated.v2` / `projection_id` | 同上，「与 §6.3 行 679（`aggregate_id`）」 | 同上：`aggregate_id` 在行 675 表头，行 679 是本事件那一行 | 同 #6 |
+| 9 | `post.mix-completed.v2` / `repair_plan_ref` 的 `description` | 「与仓内 **52 处**同形引用一致」 | 按四重条件（`type=object` + `properties`/`required` 恰为四键 + `additionalProperties: false`）数 `contracts/*.schema.json`（64 个文件）得 **53 处 / 31 个文件** | 52 是**上一轮写完 `post.mix-completed` 之前**的口径（`git show HEAD~3` 数得 52）。**在一个会随本轮改动的分母上引用了旧值**——与 §15.1 第 3 条同一类错，那一轮修了一次，这一轮又犯 |
+| 10 | `post.mix-completed.v2` / `MIX-2` 的 `why_it_matters` | 「仓内 **55 处**严格四键 closed 引用（另有 **2 处**同形但允许 null，**都在本文件**）」「脚本按 `properties`+`required`+`additionalProperties:false` **三重**条件数 `contracts/*.schema.json`，其中 **3 处**就是本文件」 | **55 处 / 32 个文件**（递归 glob）/ **53 处 / 31 个文件**（顶层 glob），差的 2 处都在 `contracts/quality/qc-report.v2.schema.json`；可空同形 **6 处 / 4 个文件**（`episode-manifest.v2` 1、`event-envelope.v2` 的 `data_ref` 1、`generation-command.v2` 2、`post.mix-completed.v2` 2）；**本文件贡献 1 处严格（`source_video_ref`）** | 一处句子里叠了四个错：(a) 宣称的 glob（`contracts/*.schema.json`）数不出 55；(b) 「三重条件」漏了 `type=object`，于是把 `continuity.check-completed.v2` 里一个 `required` 只有两项的开放形状算进了 33 个文件；(c) 「可空都在本文件」漏了另外三个文件；(d) **「3 处就是本文件」把 1 处严格 + 2 处可空加在了一起**，那是两个不相加的数 |
+| 11 | `post.mix-completed.v2` / `MIX-2` 的三条出路 (2) | 「与仓内其余 **54 处**不同形」 | 其余 **54 处**（严格 55 − 本文件 1；按递归 glob），若按顶层 glob 则是 52 | 与 #9 同源：分母口径没写死就减 |
+
+第 10 条值得单独一句：**「本文件贡献几处」这种归属计数必须把严格与可空分开数**。我第一版
+修完写成「本文件贡献 0 处严格、只贡献 2 处可空」，回读时发现 55 − (其余文件) 对不上，才
+数出 `source_video_ref`。**总数与归属两个数要能互相验算**——只对得上一个说明另一个错了。
+
+### 16.2 本轮脚本输出（不沿用第 15.2 节的中间结果）
+
+`_tmp_census16.py`：
+
+```
+=== 1. contract census (after this round) ===
+contracts/*.schema.json       = 64
+contracts/**/*.schema.json    = 71
+contracts/**/*.json           = 148
+contracts/examples/*.json     = 72
+topics total                  = 55
+  with data_schema_ref        = 55
+  envelope-only               = 0
+  schema_ref + data_schema_ref= 110
+  topics having "consumers"   = 0
+
+=== 2. the six schemas written this round ===
+  delivery.package.created               props=10  req=10  needs=3 conf=3 allOf=False
+  delivery.package.sealed                props=10  req=10  needs=3 conf=3 allOf=False
+  delivery.publish.failed                props=13  req=10  needs=3 conf=3 allOf=False
+  analytics.metric.snapshot.created      props=17  req=17  needs=3 conf=3 allOf=True
+  analytics.evaluation.completed         props=13  req=13  needs=3 conf=3 allOf=False
+  analytics.cost.projection.updated      props=10  req=10  needs=3 conf=3 allOf=False
+
+=== 3. canonical closed 4-key ref across contracts/**/*.schema.json ===
+  strict 4-key closed refs      = 55 in 32 files
+  nullable same-shape refs      = 6 in 4 files
+
+=== 4. hash pattern forms across contracts/**/*.schema.json ===
+  "pattern" entries            = 264
+  of which == ^[0-9a-f]{64}$   = 139
+  "pattern" containing sha256: = 0
+
+=== 5. event types ending in .failed ===
+  n = 2 ['post.render.failed', 'delivery.publish.failed']
+
+=== 6. conflict-id prefix collisions ===
+  conflict ids                 = 303
+  distinct prefixes            = 55
+  PDC new, used by             = ['PDC-1', 'PDC-2', 'PDC-3']
+  PDS new, used by             = ['PDS-1', 'PDS-2', 'PDS-3']
+  PDF new, used by             = ['PDF-1', 'PDF-2', 'PDF-3']
+  AMS new, used by             = ['AMS-1', 'AMS-2', 'AMS-3']
+  AEC new, used by             = ['AEC-1', 'AEC-2', 'AEC-3']
+  ACP new, used by             = ['ACP-1', 'ACP-2', 'ACP-3']
+
+=== 7. README table rows vs topics ===
+  README payload-table rows    = 55
+  topics absent from the table = []
+
+=== 8. examples registered in SCHEMA_OF ===
+  SCHEMA_OF rows               = 65
+```
+
+第 3 行是这一轮改过两次的那个数。第一版用「`type=object` + `properties` 恰为四键」两个条件，
+得 55 处但 **33 个文件**；加上 `required` 恰四项与 `additionalProperties: false` 之后是
+**32 个文件**。差的那一个文件是 `continuity.check-completed.v2.schema.json`：它有两个
+`properties` 是四键、`additionalProperties: false`，但 `required` 只有 `id` / `revision`
+两项——**同一族形状的「宽松版」，不是引用**。附带发现，`contracts/quality/` 下的
+`qc-report.v2.schema.json` 内含 **2 处**严格引用，这就是顶层 glob 与递归 glob 相差的那 2 处。
+
+`_tmp_refs17.py`（两个 glob 分开数）：
+
+```
+=== current working tree ===
+TOP  glob=contracts/*.schema.json
+  files matched        = 64
+  strict 4-key refs    = 53  in 31 file(s)
+  nullable same-shape  = 6  in {'episode-manifest.v2.schema.json': 1, 'event-envelope.v2.schema.json': 1, 'generation-command.v2.schema.json': 2, 'post.mix-completed.v2.schema.json': 2}
+RECURSIVE  glob=contracts/**/*.schema.json
+  files matched        = 71
+  strict 4-key refs    = 55  in 32 file(s)
+  nullable same-shape  = 6  in {'episode-manifest.v2.schema.json': 1, 'event-envelope.v2.schema.json': 1, 'generation-command.v2.schema.json': 2, 'post.mix-completed.v2.schema.json': 2}
+
+delta (only under contracts/**):
+  contracts\quality\qc-report.v2.schema.json
+```
+
+`git show` 逐 commit 回数（证明 52 是旧值）：
+
+```
+HEAD~1 strict=54 nullable=4 files=63  postmix(strict=0 nullable=0)
+HEAD~2 strict=53 nullable=4 files=62  postmix(strict=0 nullable=0)
+HEAD~3 strict=52 nullable=4 files=61  postmix(strict=0 nullable=0)
+```
+
+`HEAD~1` 的 54 → 现在 55，只涨 1，因为第 15 轮的两份 schema 里没有四键引用；52 出现于
+`HEAD~3`，那正是 `post.mix-completed` 尚未写入时。
+
+`_tmp_cols16.py`（按括号深度解析 DDL，不按行切——多行 `CHECK (... IN ('a','b','c'))` 会
+把一行切成几段）：
+
+```
+=== plans/S43-delivery.md ===
+  delivery.package                           L377 -404  23 cols
+  delivery.item                              L410 -430  10 cols
+  delivery.manifest                          L433 -443   8 cols
+  delivery.integrity_signature               L445 -458  11 cols
+  delivery.publish_authorization_ref         L462 -476  11 cols
+  delivery.distribution_attempt              L478 -496  13 cols
+  delivery.receipt                           L502 -513   9 cols
+  delivery.channel                           L516 -529  10 cols
+  delivery.command_receipt                   L531 -538   5 cols
+  delivery.outbox                            L540 -551  10 cols
+  delivery.inbox                             L555 -560   3 cols
+
+=== plans/S44-evaluation-analytics.md ===
+  analytics.metric_definition                L366 -378  10 cols
+  analytics.cohort                           L380 -389   7 cols
+  analytics.metric_snapshot                  L393 -415  17 cols
+  analytics.allocation_policy                L419 -426   5 cols
+  analytics.cost_allocation                  L428 -440   7 cols
+  analytics.benchmark_dataset                L444 -453   7 cols
+  analytics.benchmark_item                   L455 -465   8 cols
+  analytics.evaluation_run                   L467 -484  13 cols
+  analytics.blind_review                     L486 -498  10 cols
+  analytics.blind_review_vote                L500 -510   8 cols
+  analytics.experiment                       L512 -523   9 cols
+  analytics.experiment_assignment            L525 -532   5 cols
+  analytics.cost_projection                  L534 -546  10 cols
+  analytics.customer_roi                     L548 -558   8 cols
+  analytics.outbox                           L560 -571  10 cols
+  analytics.inbox                            L575 -580   3 cols
+```
+
+六份 schema 里每一处「N 列」的断言都以这张表为准：`delivery.package` 23、
+`delivery.distribution_attempt` 13、`analytics.metric_snapshot` 17、`analytics.evaluation_run` 13、
+`analytics.cost_projection` 10。**`evaluation_run` 是 13 而不是 15**——`_tmp_verify16.py` 里
+那个按逗号切分的临时数法把它数成 15，因为它把 `CHECK (state IN (...))` 里的两个逗号也当成了
+列分隔符。这就是为什么最终数字一律取括号深度解析的结果。
+
+### 16.3 本轮改了哪些文件
+
+| 文件 | 状态 | 改了什么 |
+|---|---|---|
+| `contracts/delivery.package-created.v2.schema.json` | 新增 | 10 属性 / 10 必填 / 3 `x-needs-owner` / 3 `x-conflicts`（PDC-1..3） |
+| `contracts/delivery.package-sealed.v2.schema.json` | 新增 | 10 / 10 / 3 / 3（PDS-1..3） |
+| `contracts/delivery.publish-failed.v2.schema.json` | 新增 | 13 属性 / 10 必填 / 3 / 3（PDF-1..3） |
+| `contracts/analytics.metric-snapshot-created.v2.schema.json` | 新增 | 17 / 17 / 3 / 3（AMS-1..3），含 `allOf` 复刻 `snapshot_value_null_iff_zero_n` |
+| `contracts/analytics.evaluation-completed.v2.schema.json` | 新增 | 13 / 13 / 3 / 3（AEC-1..3） |
+| `contracts/analytics.cost-projection-updated.v2.schema.json` | 新增 | 10 / 10 / 3 / 3（ACP-1..3） |
+| `contracts/examples/*.json`（6 个） | 新增 | 每条事件一个完整信封示例，`aggregate_id` 与 `data` 里的主键逐一对齐 |
+| `contracts/event-topics.v2.json` | 改 | 6 条 topic 各加一个 `data_schema_ref`；`git diff --stat` 只 +6 行（其余键不动） |
+| `tools/validate/validate_examples.py` | 改 | `SCHEMA_OF` +6 行，全部指向 `event-envelope.v2.schema.json`（不是 payload schema） |
+| `contracts/README.md` | 改 | 8 处计数勘误 + 6 行 payload 表新增（表从 49 行涨到 55 行） |
+| `contracts/delivery.package-published.v2.schema.json` | 改 | `x-needs-owner[1]` 的 `s43_status` 加一句：那三条「payload schema 仍缺」已由本轮补齐 |
+| `contracts/post.mix-completed.v2.schema.json` | 改 | 第 15 轮遗留的 ref 计数（`52 处` / `MIX-2`）按 §16.1 第 9–11 条改写 |
+
+`validate_examples.py` 那 6 行必须是信封而不是 payload：`SCHEMA_OF` 的键是示例文件名，示例
+是**完整信封**。写第一版时我把 6 条都指向了各自的 payload schema，`check_all.py` 立刻报
+六个 `'<key>' is a required property at <root>`——信封缺 payload 的键。**payload 只能经
+`data_schema_ref` 到达，`SCHEMA_OF` 永远指信封**。
+
+### 16.4 六条事件的出处与逐字段理由
+
+六条事件的写法分两类，正好对应两种文档状态：
+
+**（一）只有事件名，没有字段清单（S43 三条 + S44 三条共六条，全部如此）。**
+S43 §6.3 行 655 只列四个事件名；S44 §6.3 行 658 只列三个事件名。六条事件在各自方案的
+全文里都**没有 `data` 块、没有示例、没有字段表**。因此六份 schema 的键全部取自 §5 的 DDL，
+取舍写进各自的 `x-needs-owner` 第 1 条：
+
+- **`delivery.package.created`** — 取自 `delivery.package` 的 23 列。取 `package_id` /
+  `package_type` / `episode_id` / `purpose` / `master_candidate_id` / `state` / `gaps` /
+  `gate_results` / `created_at`。刻意去掉 `tenant_id`（信封已有）、`manifest_hash` /
+  `package_hash`（后者全文无算法）、`canonical_version`、`execution_fence`、
+  `created_by`（actor 形状未定义，见 `x-needs-owner[2]`）。
+- **`delivery.package.sealed`** — 取自 `delivery.package` + `delivery.manifest`（8 列）+
+  `delivery.integrity_signature`（11 列）。取 `manifest_hash` / `canonical_version` /
+  `item_count` / `total_bytes` / `sealed_at` 与三个定位键；**`integrity_signature` 的 11 列
+  一列都不取**，因为 §6.3 行 678 明说「事件不含签名内容」——这是 PDS-2 的核心张力：
+  一条「已签名」的事件不许带签名标识，审计方就必须再查一次 API。
+- **`delivery.publish.failed`** — 取自 `delivery.distribution_attempt` 的 13 列。取
+  `attempt_no` / `failure_code` / `failure_detail` / `channel_id` / `attempted_at` 等；
+  13 属性里 10 必填，`failure_detail` 与两个渠道侧的可空列不强制。
+- **`analytics.metric-snapshot-created`** — 取自 `analytics.metric_snapshot` 的 17 列，
+  **17 属性全必填**（DDL 里这 17 列也全部 `NOT NULL` 或有 `DEFAULT`），并用 `allOf` 的
+  if/then 复刻行 412–414 的 `snapshot_value_null_iff_zero_n`：`n=0` 时 `value` 必须为
+  `null`，`n>0` 时必须为数字。这是六份 schema 里唯一带条件约束的一份。
+- **`analytics.evaluation-completed`** — 取自 `analytics.evaluation_run` 的 13 列，
+  13 属性全必填。`state` 收成闭集（DDL 行 473–475 有 `CHECK (state IN (...))`），
+  这是本仓「取值域只在 DDL 有 CHECK 时才收窄」规矩的正面例子。
+- **`analytics.cost-projection-updated`** — 取自 `analytics.cost_projection` 的 10 列，
+  10 属性全必填。`based_on_rate` 的单位与币种在方案里两处都没写，登记为
+  `x-needs-owner[1]`——**同一张表五个金额列里唯一不是 `bigint ... _micro` 的一个**。
+
+**（二）「事件名 + 聚合键一行」以外的信息量。** S44 的三条比 S43 稍多一行：§6.3 行 675–679
+给了聚合键表。三条的 `aggregate_id` 分别是 `snapshot_id` / `evaluation_run_id` /
+`projection_id`，本批三份 schema 都把它写进 `description` 并与 `data` 里的同名字段对齐。
+`cost.projection.updated` 的 `updated` 与「主键 `(tenant_id, projection_id)` 且无版本列」
+合起来意味着同一 ID 反复覆盖——这条语义写进了 `projection_id` 的说明，是本轮唯一一处
+「从事件名推导语义」的地方，也标了出处（§6.3 行 658 + §5 行 536 / 545）。
+
+**（三）谁在消费。** 六条里只有 `delivery.package.sealed` 有本方案之外的提及者：
+`plans/S46-developer-integration.md`（行 129 的订阅示例、行 262 的 webhook 签名）与
+`plans/S47-realtime-projection.md`。另外五条**在整个 `plans/` 目录里只出现在自己的方案中**
+（`_tmp_verify16.py` 的 C 段）。这意味着这五条 payload 的形状**今天没有任何真实消费者可以
+校验**——写成什么样都不会被下游拒掉。这不是本轮能解决的，但它是 `x-conflicts` 里好几条
+（尤其 PDC-1、AMS-1）的共同背景：没有消费方，就无法判断某个字段该不该上事件。
+
+### 16.5 两处「上一轮的结论被这一轮推翻」
+
+**（一）`delivery.package-published.v2` 的 `x-needs-owner[1]`。** 原文说那三条事件的
+payload 仍是缺口。本轮补齐之后这句就过期了，改成「后三条已由本仓补成 …」并保留
+「本条 `published` 仍缺的东西与那三份不同：见各条 `x-conflicts`」。**没有删掉这一条**——
+它记的是「方案里没写 payload」这个事实，那个事实不因我们补了 schema 而消失。
+
+**（二）`post.mix-completed.v2` 的 MIX-2。** 第 15 轮修过一次 ref 计数（§15.1 第 3 条），
+修法是「52 → 55，本文件贡献 3 处」。这一轮按 §16.1 第 10 条重新数，**那个修法本身是错的**：
+本文件贡献 1 处严格引用，不是 3 处；3 是「1 严格 + 2 可空」，两个不相加的数被加在了一起。
+现在的写法把 glob 与「可空」两个口径都写死，并给出 53/31 与 55/32 两个数。
+**连续两轮在同一句话上出错，说明「一处引用形状的计数」这个说法本身需要模板**：分母（哪个
+glob）、条件（哪几个关键字）、严格与可空是否分开——三样缺一样，数出来的东西就不能引用。
+
+### 16.6 探针
+
+`_tmp_probe16.py`：41 条探针对六份 payload schema 直接跑（`Draft202012Validator`，示例的信封
+拆出 `data` 后再验），7 条因该 schema 没有合适字段而跳过。全部符合预期：
+
+```
+=== delivery.package-created  (payload of 10 keys) ===
+  PASS baseline                           accepted
+  PASS schema_version:schema_version      REJECTED  const        @ schema_version
+  PASS extra_root:zz_unexpected           REJECTED  additionalProperties @ <root>
+  PASS drop_required:package_id           REJECTED  required     @ <root>
+  SKIP sha_prefix (no suitable field)
+  SKIP negative_int (no suitable field)
+  PASS null_required:package_id           REJECTED  type         @ package_id
+  PASS enum:package_type                  REJECTED  enum         @ package_type
+
+=== delivery.package-sealed  (payload of 10 keys) ===
+  PASS baseline                           accepted
+  PASS schema_version:schema_version      REJECTED  const        @ schema_version
+  PASS extra_root:zz_unexpected           REJECTED  additionalProperties @ <root>
+  PASS drop_required:package_id           REJECTED  required     @ <root>
+  PASS sha_prefix:manifest_hash           REJECTED  pattern      @ manifest_hash
+  PASS negative_int:item_count            REJECTED  minimum      @ item_count
+  PASS null_required:package_id           REJECTED  type         @ package_id
+  PASS enum:package_type                  REJECTED  enum         @ package_type
+
+=== delivery.publish-failed  (payload of 13 keys) ===
+  PASS baseline                           accepted
+  PASS schema_version:schema_version      REJECTED  const        @ schema_version
+  PASS extra_root:zz_unexpected           REJECTED  additionalProperties @ <root>
+  PASS drop_required:package_id           REJECTED  required     @ <root>
+  SKIP sha_prefix (no suitable field)
+  PASS negative_int:attempt_no            REJECTED  minimum      @ attempt_no
+  PASS null_required:package_id           REJECTED  type         @ package_id
+  PASS enum:package_type                  REJECTED  enum         @ package_type
+
+=== analytics.metric-snapshot-created  (payload of 17 keys) ===
+  PASS baseline                           accepted
+  PASS schema_version:schema_version      REJECTED  const        @ schema_version
+  PASS extra_root:zz_unexpected           REJECTED  additionalProperties @ <root>
+  PASS drop_required:snapshot_id          REJECTED  required     @ <root>
+  SKIP sha_prefix (no suitable field)
+  PASS negative_int:metric_version        REJECTED  minimum      @ metric_version
+  PASS null_required:snapshot_id          REJECTED  type         @ snapshot_id
+  SKIP enum (no suitable field)
+
+=== analytics.evaluation-completed  (payload of 13 keys) ===
+  PASS baseline                           accepted
+  PASS schema_version:schema_version      REJECTED  const        @ schema_version
+  PASS extra_root:zz_unexpected           REJECTED  additionalProperties @ <root>
+  PASS drop_required:evaluation_run_id    REJECTED  required     @ <root>
+  SKIP sha_prefix (no suitable field)
+  PASS negative_int:dataset_version       REJECTED  minimum      @ dataset_version
+  PASS null_required:evaluation_run_id    REJECTED  type         @ evaluation_run_id
+  PASS enum:state                         REJECTED  enum         @ state
+
+=== analytics.cost-projection-updated  (payload of 10 keys) ===
+  PASS baseline                           accepted
+  PASS schema_version:schema_version      REJECTED  const        @ schema_version
+  PASS extra_root:zz_unexpected           REJECTED  additionalProperties @ <root>
+  PASS drop_required:projection_id        REJECTED  required     @ <root>
+  SKIP sha_prefix (no suitable field)
+  PASS negative_int:actual_to_date_micro  REJECTED  minimum      @ actual_to_date_micro
+  PASS null_required:projection_id        REJECTED  type         @ projection_id
+  PASS enum:window                        REJECTED  enum         @ window
+
+probes: 41 PASS / 41 run, 7 skipped
+```
+
+`delivery.package-created` 跳过 `sha_prefix` 与 `negative_int`，是因为它**没有哈希列也没有
+计数列**：`gaps` / `gate_results` 是裸 `array` / `object`，`state` 是闭集但没有数值。这不是
+漏检，是那份 payload 确实没有可探的数值/哈希字段——第 16.4 节说了它是「消费方只拿到定位
+与门结果」的设计。
+
+`_tmp_neg2.py` 单独验 `analytics.metric-snapshot-created` 的 `allOf`（2×2 真值表）与
+`format` 是否被强制：
+
+```
+=== allOf truth table on metric-snapshot (n vs value) ===
+  n=0   value=None   -> accepted  OK
+  n=0   value=0.5    -> REJECTED  OK
+       keyword=type  path=['value']  msg=0.5 is not of type 'null'
+  n=12  value=None   -> REJECTED  OK
+       keyword=type  path=['value']  msg=None is not of type 'number'
+  n=12  value=0.5    -> accepted  OK
+
+=== format is advisory: rfc3339_validator installed? ===
+  rfc3339_validator = NOT INSTALLED -> jsonschema never enforces "format"
+  jsonschema version = 4.26.0
+```
+
+第二条很重要：本仓 264 处 `"pattern"` 里 139 处是 `^[0-9a-f]{64}$`，这些**是被强制的**
+（`pattern` 不是 `format`）；而所有 `"format": "date-time"` 一处都不生效。**六份 schema 里
+每一个时间字段写 `format: date-time` 都只是文档约定**，若真要在 CI 里挡住畸形时间戳，需要装
+`rfc3339-validator` 或改用 `pattern`。这是全仓既有的约定，不是本轮引入的缺陷，但它解释了
+为什么探针里没有一条「坏时间戳」的负例——加了也不会被拒。
+
+`python tools/check_all.py`：九项全过。
+
+```
+ok    json       148 file(s)
+ok    payloads   110 schema ref(s), 55 topic(s) with a payload schema
+ok    checkids   99 check_id(s), 3 known non-conforming (owner decision, see contracts/README.md gap 4)
+ok    links      1321 local link(s)
+ok    catalog    48 service(s), 55 topic(s)
+ok    families   14 family/families
+regenerated 48 services
+wrote 13 agents
+wrote 9 connectors
+ok    scaffold   120 generated file(s)
+
+71 example(s) valid, 0 failing, 1 without a schema
+ok    examples   contracts/examples/
+ok    registry   no check-registry.v2.json yet; nothing to validate
+
+9 check(s) passed
+```
+
+`payloads` 从第 15 轮的 `104 schema ref(s), 49 topic(s)` 变成 `110 / 55`，`envelope-only` 归零。
+`scaffold` 重新生成 120 个文件后 `git status` 干净——本轮没有改
+`contracts/service-catalog.v2.json`，所以生成物不该变，也确实没变。
+
+**一条已知漏检继续存在**：信封对 `type` / `source` 只收非空字符串，所以示例里
+`type`、信封 `aggregate_id` 与 `data` 里主键三者的**值相等**这一层关系没有工具能校验。
+本轮六个示例靠脚本逐对断言（`aggregate_id == data.<主键字段>`）保持一致，**但那条断言
+只在我的临时脚本里，没有进仓库**。与 §15.6 末段记的是同一件事，下一步做 codegen 校验器
+时应把它变成常驻检查。

@@ -98,7 +98,7 @@
     {
       "field": "`delivery.package.created` / `delivery.package.sealed` / `delivery.publish.failed` 的 payload",
       "demanded_by": "plans/S43-delivery.md §6.3 行 655（只列事件名）与 §11 C8（已裁决四条全部登记进 `event-topics.v2.json`，但明说「**payload schema 仍缺**」）",
-      "s43_status": "四条事件只有 `delivery.package.published` 有字段清单和示例（行 664–678）。另三条在 §6.3、§4.1–§4.4、§10 的测试清单里都只以名字出现（行 302 提到 `sealed` 供 S45 审计与 S47 更新工作台，行 728 提到 `delivery_package_created_total` 指标），**没有任何一处写出字段**。本批次只做 `published`：从散文推断另外三条的字段名会让 schema 变成 S43 没同意过的契约（AGENTS.md「契约与文档冲突 → 停下」，contracts/README「不从散文推断这些值」）。要补需要 owner 先给出形状。"
+      "s43_status": "四条事件里只有 `delivery.package.published` 在 §6.3 行 664–678 写了字段清单和示例；另三条在 §6.3、§4.1–§4.4、§10 的测试清单里都只以名字出现（行 302 提到 `sealed` 供 S45 审计与 S47 更新工作台，行 728 提到 `delivery_package_created_total` 指标），**没有一处写出字段**。**后三条已由本仓补成 `delivery.package-created.v2` / `delivery.package-sealed.v2` / `delivery.publish-failed.v2`**：形状取自 §5 的 11 张表（`package` / `manifest` / `distribution_attempt` 等），不是从 `published` 裁出来的，也没有从散文推断——每份都只取 DDL 里真有的列，取舍写进各自的 `x-needs-owner`，剩下来的歧义写成 PDC / PDS / PDF 冲突条目。本条 `published` 仍缺的东西与那三份不同：见各条 `x-conflicts`。"
     }
   ],
   "x-conflicts": [
