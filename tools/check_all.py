@@ -275,7 +275,30 @@ def check_examples(name):
         r.fail("cannot run (jsonschema missing?); this is not a pass")
     elif rc != 0:
         r.fail("at least one example failed its schema")
+
+    # validate_examples.py's local_registry() globs contracts/*.schema.json, which
+    # is not recursive, so a schema in a subdirectory is never loaded and never
+    # gets a chance to reject anything. Nothing $refs those files either, so an
+    # unsatisfiable pattern inside one is invisible: no example is checked against
+    # it and no other schema pulls it in. Making the glob recursive is a semantic
+    # change (files that have never been enforced would start enforcing), so the
+    # honest thing is to count them out loud until an owner decides.
+    top_level = {os.path.basename(p)
+                 for p in glob.glob(os.path.join(CONTRACTS, "*.schema.json"))}
+    unloaded = [
+        os.path.relpath(p, CONTRACTS)
+        for p in glob.glob(os.path.join(CONTRACTS, "**", "*.schema.json"), recursive=True)
+        if os.path.basename(p) not in top_level
+    ]
     r.note = "contracts/examples/"
+    if unloaded:
+        by_dir = {}
+        for rel in unloaded:
+            d = os.path.dirname(rel).replace(os.sep, "/") or "."
+            by_dir[d] = by_dir.get(d, 0) + 1
+        summary = ", ".join(f"{n} in {d}/" for d, n in sorted(by_dir.items()))
+        r.note += (f"  [{len(unloaded)} schema file(s) never loaded by the validator: "
+                   f"{summary}]")
     return r
 
 

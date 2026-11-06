@@ -1948,7 +1948,7 @@ grep -rn "README 行 [0-9]\|README L[0-9]" contracts/ docs/ plans/ delivery/ too
 §16.11 那条教训练「立完规矩当轮就扫自己写的字」。这次照做了，扫到的不是行号，是**一句只说了
 一半的解释**。
 
-`contracts/README.md` 行 934–937 说 `expires_at: "tomorrow"` 能过是因为
+`contracts/README.md` 里讲 AEX-5 负向探针那一段说 `expires_at: "tomorrow"` 能过是因为
 `validate_examples.py` 不传 `format_checker`。这话不假，但不完整。`FormatChecker()` 在
 这台机器上注册的检查器是：
 
@@ -1970,7 +1970,7 @@ grep -rn "README 行 [0-9]\|README L[0-9]" contracts/ docs/ plans/ delivery/ too
 
 | # | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|---|
-| 1 | `contracts/README.md` 行 934–937 | 「`format: date-time` 在本仓库只是注解，`validate_examples.py` …不传 `format_checker`」（把原因归给调用方一处） | 两层原因：调用方不传 **且** `jsonschema` 的 `date-time` 检查器依赖可选的 `rfc3339_validator`，未安装即未注册。只有 `date`/`time`/`email`/`uuid`/`regex`/`ipv4`/`ipv6`/`idn-*` 这些内置项会生效 | **把「我知道的那个原因」当成「全部原因」。**`format_checker` 是我在 `validate_examples.py` 里亲眼见过的字眼，而 `rfc3339_validator` 从没进过视线——查一次 `FormatChecker().checkers` 就能看见它不在列表里 |
+| 1 | `contracts/README.md` / AEX-5 负向探针那一段 | 「`format: date-time` 在本仓库只是注解，`validate_examples.py` …不传 `format_checker`」（把原因归给调用方一处） | 两层原因：调用方不传 **且** `jsonschema` 的 `date-time` 检查器依赖可选的 `rfc3339_validator`，未安装即未注册。只有 `date`/`time`/`email`/`uuid`/`regex`/`ipv4`/`ipv6`/`idn-*` 这些内置项会生效 | **把「我知道的那个原因」当成「全部原因」。**`format_checker` 是我在 `validate_examples.py` 里亲眼见过的字眼，而 `rfc3339_validator` 从没进过视线——查一次 `FormatChecker().checkers` 就能看见它不在列表里 |
 | 2 | `contracts/audit.export-ready.v2.schema.json` / `expires_at` 的描述 | 同 #1 的一句话（「不传 `format_checker`，所以 `tomorrow` 也能过」） | 同上，补一句「即使传了也不管用」并点出 `suppress(ImportError)` | 同 #1，这处是那句解释的原始出处 |
 
 **这次新写的数字也错了一个。**初稿写「分布在 71 个 schema 文件中的 22 个」，回源一数：
@@ -1991,4 +1991,140 @@ time-ish example strings      = 88
 所以现在启不启用都看不出差别——**差别只在下一次有人写坏的时候**。要不要加依赖、或改用
 `pattern` 硬约束，是 owner 决定（`pattern` 是硬校验，`format` 不是），这一轮不改。
 
-九项仍全过。
+### 16.13 `pattern` 是硬校验，所以它拒掉的东西是真拒掉——但有一半的 schema 根本没被加载
+
+§16.12 的结论是 `format` 不算数、`pattern` 算数。顺着「算数的那一半有没有真在看」查下去，
+发现算数的那一半**只覆盖了 64 个文件里的内容**，而仓里有 71 个 schema。
+
+`tools/validate/validate_examples.py` 的 `local_registry()`：
+
+```python
+for p in glob.glob(os.path.join(CONTRACTS, "*.schema.json")):
+```
+
+`glob` 不带 `recursive=True`，所以只收顶层。实测：
+
+```
+top-level = 64  recursive = 71  never loaded = 7
+    domain-v1\change-plan.v1.schema.json
+    domain-v1\event-envelope.v1.schema.json
+    domain-v1\generation-request.v1.schema.json
+    domain-v1\qc-report.v1.schema.json
+    domain-v1\shot-spec.v1.schema.json
+    quality\check-registry.v2.schema.json
+    quality\qc-report.v2.schema.json
+```
+
+而且这 7 个文件**没有被任何 `$ref` 拉进去过**（全仓指向 `quality/`、`domain-v1/`、
+`qc-report`、`check-registry` 的 `$ref` 命中数 = **0**）。所以「没被当作根加载」不是
+「被当作 `$ref` 目标加载了」——是两边都没有，这 7 个文件里的每一个 `pattern` 都从未执行过。
+
+**第一个后果：`quality/qc-report.v2.schema.json` 里的两个 pattern 和仓里全部 4 个真实值矛盾。**
+
+```
+qc-report.v2 /properties/report_id                     ^qc_[a-z0-9]{26}$
+qc-report.v2 /properties/supersedes/oneOf[0]/…/report_id  ^qc_[a-z0-9]{26}$
+qc-report.v2 /$defs/defect/properties/defect_id        ^df_[a-z0-9]{26}$
+```
+
+示例里 `qc_` 出现 10 次、4 个不同值，**全部**是纯大写 ULID：
+
+| 值 | 出现次数 | 主体长度 | 大写 | 小写 | 符合 pattern |
+|---|---|---|---|---|---|
+| `qc_01J9Z4Q2K7M3N8P5R1S6T0V4W2` | 3 | 26 | 12 | 0 | **否** |
+| `qc_01J9Z5A3L8N4P9Q6S2T7U1W5X3` | 3 | 26 | 12 | 0 | **否** |
+| `qc_01J9Z6B4M9P5Q1R7S3T8U2V6W4` | 3 | 26 | 12 | 0 | **否** |
+| `qc_01J9Z7C5N1Q6R2S8T4U9V3W7X5` | 1 | 26 | 12 | 0 | **否** |
+
+长度全对（26），大小写全反。把同一个值改成小写就能过：
+
+```
+'qc_01J9Z4Q2K7M3N8P5R1S6T0V4W2' -> REJECT
+'qc_01j9z4q2k7m3n8p5r1s6t0v4w2' -> accept
+```
+
+而 `report_id` 自己的 `description` 写的是「**ULID 风格**」——ULID 的 Crockford base32
+是**大写**。这就不是「示例写错了」一句话能盖过去的了：
+
+| 来源 | 说的是 | 效果 |
+|---|---|---|
+| `plans/S35-technical-qc.md` §2.6 那张伪代码块里的 `base32_lower(...)` 一行 | `report_id = "qc_" + base32_lower(derived_key)[0:26]` | 小写 |
+| `qc-report.v2.schema.json` `pattern` | `^qc_[a-z0-9]{26}$` | 小写 |
+| `qc-report.v2.schema.json` `description` | 同一节点，写着「ULID 风格」 | 大写 |
+| 示例（4 个不同值 / 10 处） | `qc_01J9Z...` | 大写 |
+| 全仓其他 ULID 值（`evt_`/`cmd_`/`tnt_`/… 共 **425** 处、76 个前缀） | `_01J9...` | 大写 |
+
+**同一个节点的 `pattern` 和 `description` 互相打架**，而且 `pattern` 那一侧有方案撑腰、
+`description` 那一侧有全仓 435 处惯例撑腰。按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，
+不要自行选边」，这一轮**不改任何一侧**。
+
+**后果的后果：`qc-report.v2` 的 payload 从来没有任何实例被校验过。** 质量主题的
+`data_schema_ref` 指向的是 `quality.technical-completed.v2.schema.json` 等**事件** schema，
+那几处 `report_id` 是故意不收窄的，`description` 里明写理由：
+
+> S35 只在示例里写成 `qc_…`，没有把前缀写成约束，故此处不收窄为 pattern——收窄会拒掉
+> S35 自己没禁止的形式。
+
+也就是说：**事件层故意放宽、报告 schema 收得比示例还紧、报告 schema 又从不加载。** 三层叠起来，
+这个矛盾在九项检查里一次都不会显形。
+
+`df_` 更彻底：`defect_id` 的 pattern 是 `^df_[a-z0-9]{26}$`，但**全仓 0 个示例含 `df_` 值**，
+方案里也没有 `defect_id` 的派生式（全文只出现两次：`required` 列表里一个名字，
+和一段 schema 片段里同一个 pattern）。所以它连「示例对不上」都谈不上——没有示例。
+
+**第二个后果（顺带查到，与上面独立）：两份 schema 对 `check_id` 的段数约定不同。**
+
+```
+qc-report.v2      ^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+\.[A-Z0-9_]+$     <- 恰好三段
+check-registry.v2 ^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$  <- 至少三段
+check_all.py      ^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$  <- 至少三段（与 registry 一致）
+```
+
+实测分歧点：
+
+```
+TECH.A.B                     qc-report=ok      check-registry=ok
+TECH.A.B.C                   qc-report=REJECT  check-registry=ok   <-- 分歧
+VIS.SAFE_AREA.VIOLATION.SUB  qc-report=REJECT  check-registry=ok   <-- 分歧
+```
+
+也就是说：一个 `check_id` **能在 registry 里登记成功、也能被 `check_all` 的 `checkids`
+放行，但写进 QC 报告时会被拒**。今天不炸，因为 99 个表行 check_id 里 96 个是三段、
+3 个是两段（那 3 个是已知的 owner 决定项），**四段及以上的一个都没有**。所以这是
+「还没有实例走到分歧里」，不是「分歧不存在」。
+
+**做的事：把「7 个文件从没被加载」变成一条常驻提示，不改任何语义。**
+
+改 `check_all.py` 的 `check_examples`，让它自己数一遍递归 glob 与顶层 glob 的差集：
+
+```
+ok    examples   contracts/examples/  [7 schema file(s) never loaded by the validator: 5 in domain-v1/, 2 in quality/]
+```
+
+反向验证：往 `contracts/quality/` 塞一个空 schema 文件，数字变 8；删掉，回到 7，
+`git status --porcelain contracts/quality/` 为空。
+
+**为什么只报告不发难：** 把 glob 改成 `recursive=True` 会让这 7 个文件里的 pattern 第一次真正执行。
+那是语义变更——今天是绿的，改完可能立刻红（`qc-report.v2` 的 `^qc_[a-z0-9]{26}$` 对上 4 个示例值
+就会红），而且红的根因是上表那个 pattern/description 冲突。**先修根因再扩覆盖**，顺序不能反。
+
+| # | 位置 | 原状 | 现在 | 错因 |
+|---|---|---|---|---|
+| 1 | `tools/check_all.py` / `check_examples` | `examples` 那条绿写「71 example(s) valid」，看不出 7 个 schema 从未参与 | 追加 `[N schema file(s) never loaded by the validator: …]`，按目录计数 | **把「有文件」当成「有约束」。**`glob` 的 `recursive` 默认 `False`，我没查过默认值就假设子目录也在内 |
+| 2 | 本节初稿：表格里「全仓其他 ULID 值 … 共 435 处」 | 435（含 `qc_` 自己那 10 处） | **425**，76 个前缀 | 想写「其他」却填了含自身的总数。`435 = 425 + 10`，差值正好是自己那一格 |
+| 3 | 本节初稿：「只有行 504 的 required 列表和行 510 的 schema 片段」 | 两处裸行号 | 改成描述（`df_`/`defect_id` 在 `plans/S35` 全文只出现两次，各是什么） | §16.11 立的规矩是**当轮**扫自己写的字。这次扫到了自己刚写的裸行号 |
+| 4 | 上一轮我这处对「孤立」的判断 | 曾以为「仓里没人 `$ref` qc-report」就等于「它完全孤立」 | 两件事都要说：既没被当根加载，也没被 `$ref` 拉进去。**结论一样，但证据链少一半** | 先有结论再找证据，找到一条能支撑的就停了；`$ref` 命中数 = 0 是这一轮才数的 |
+
+**owner 决定（三条，都不自行选边）：**
+
+1. `qc-report.v2` 的 `report_id` / `supersedes.report_id` / `defect_id` 到底是大写还是小写？
+   - 选大写 → 改两个 `pattern` 为 `^qc_[A-Za-z0-9]{26}$`（或 `0-9A-HJKMNP-TV-Z` 的 Crockford 严格式），
+     同时把 `description` 的「ULID 风格」写实；示例不动。
+   - 选小写 → 改 4 个示例值（10 处），`base32_lower` 一侧不动；`description` 的「ULID 风格」要改词，
+     否则它继续骗人。
+2. `qc-report.v2` 与 `check-registry.v2` 的 `check_id` 段数取哪个？「恰好三段」还是「至少三段」？
+   `check_all` 已经选了「至少三段」，所以统一到 QCR 是要改 QCR；统一到「恰好三段」则
+   `check_all` 和 registry 都要改。
+3. `local_registry()` 要不要改成 `recursive=True`？改之前得先定上面 1，否则 `examples` 会由绿转红。
+
+九项仍全过（`examples` 那条现在带上面那个提示）。
