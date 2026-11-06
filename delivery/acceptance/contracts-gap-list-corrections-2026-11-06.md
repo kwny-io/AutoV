@@ -3523,3 +3523,95 @@ tool scopes that S19's CHECK would reject: ['publish', 'review']
 | 4 | 本节「四处全仓搜过（排除 `.claude/worktrees/` 与 `docs/design-package/`）」 | 「四处」对；但第一遍的搜法漏了 `plans\S46`（字段名不是 `required_scope`），第二遍才补上。本节写下的这句只对最终结果成立 | 见第 2 行，同一类错。**纠正后必须重跑一遍确认结论仍然成立**，不能只改文字 |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
+
+## 16.29 connector 说「从 catalog 派生」，但 catalog 里没有渠道数据
+
+`AGENTS.md` 的「生成物」一节写着：
+
+> `services/*/service.yaml`、`agents/*/agent.yaml`、`connectors/*/*/connector.yaml`
+> 从 `contracts/service-catalog.v2.json` 派生。改内容请改 catalog 再重新生成。
+
+`plans/S27-provider-connectors.md:803` 原样引了这句，紧跟着 §12 的激活流程第 3 步是：
+
+> 改 catalog 里该渠道的 `status: active` 与 `lifecycle: active`，重新生成 yaml
+
+**这一步今天做不出来。** `service-catalog.v2.json` 只有两个顶层键 `schema_version` 和
+`services`；48 个服务项的字段集是
+
+```
+acceptance command_api data_owner depends_on deployment_unit domain maturity
+name published_events query_api recovery runtime_owner_team scaling
+schema_owner service_id slug
+```
+
+`status` / `lifecycle` / `evidence_checked_at` / `protocol` **四个字段一个都没有**，也没有任何
+`channel` 键（`json.dumps` 全文里 `"channel"` 出现 **0** 次）。catalog 里提到
+`seedance` / `kling` 的地方只有 S27 自己的 `scaling` 一句话：
+
+```
+"Seedance/Kling/Wan/Veo/Sora/Vidu/MiniMax及图像语音渠道逐个独立Deployment与网络身份"
+```
+
+那是散文，不是九个渠道的机器可读清单。
+
+**所以实际情况是**：`tools/scaffold/generate_connectors.py` 里的 `CHANNELS` 列表
+（9 项）是**唯一的数据源**，不是 catalog。`scaffold` 检查拿这个列表渲染一遍再和盘上比，
+所以九个 `connector.yaml` 与它一致——**一致的对象是生成器自己，不是 catalog**。
+按 AGENTS.md 的规矩，这九个文件是手改必被覆盖的生成物；但它们派生自的地方
+既不在 catalog，也不在任何被声明过的地方。
+
+### 危害面
+
+1. **文档承诺的激活路径不存在。** S27 §12 让人「改 catalog」，照做的人会找不到字段。
+2. **「改内容请改 catalog」这条纪律在这里落空。** 真正该改的是
+   `tools/scaffold/generate_connectors.py` 的 `CHANNELS`——那是个代码列表，
+   不是契约文件，没有任何 schema 或校验覆盖它。
+3. **`agents/*/agent.yaml` 是同一形状。** `generate_agents.py` 的 `ROLES`（13 项）
+   同样不在 catalog 里；`runtime_service: S19-agent-runtime` 是模板里写死的字符串常量。
+
+### 附带量到的两件事（都不是缺陷，是「没人守」）
+
+- `runtime_service` 的值 `S19-agent-runtime` 既不是 catalog 的 `service_id`（`S19`）
+  也不是 slug（`agent-runtime`），而是 **`{service_id}-{slug}`** 拼起来的形式。
+  实测 48 个服务的 `{id}-{slug}` 组合恰好都是合法值，13 个 agent 全部解析得上。
+  **但这是碰巧成立**：没有检查把 `runtime_service` 与 catalog 对照过。
+- `docs/09-model-execution.md:13` 点名的渠道是 **12 个**，仓库里是 **9 个 connector**
+  （7 个 provider 目录）。逐个对上：
+
+  | 文档条目 | 仓库 | |
+  |---|---|---|
+  | Volcengine | `seedance/volcengine` | ✅ |
+  | BytePlus | `seedance/byteplus` | ✅ |
+  | Kling | `kling/api` | ✅ |
+  | Wan官方API | `wan/official` | ✅ |
+  | Wan自托管 | `wan/self-hosted` | ✅ |
+  | Veo各官方渠道 | `veo/official` | ✅ |
+  | Sora历史占位 | `sora/historical` | ✅ |
+  | Vidu | `vidu/api` | ✅ |
+  | MiniMax | `minimax/api` | ✅ |
+  | 图像 | 无 | ❌ |
+  | TTS | 无 | ❌ |
+  | LLM/VLM | 无 | ❌ |
+
+  差的三类是 `图像`、`TTS`、`LLM/VLM`——都是模态族而不是具体供应商，
+  文档自己也只给了这三类而没有给供应商名。**这可能是「等具体供应商定了再建」，
+  也可能是漏了**，两读都成立，不选边。
+
+### 没做什么
+
+- **没有改 `generate_connectors.py`**：把 `CHANNELS` 搬进 catalog 需要先定 schema
+  （渠道的键是什么、`status` 与 `lifecycle` 是两个字段还是一个、`protocol` 要不要每渠道可覆写），
+  这是契约设计决策。
+- **没有补 `图像` / `TTS` / `LLM/VLM` 三个 connector**：缺供应商名，补了只能填占位。
+- **没有改 `AGENTS.md` 或 S27 §12**：两边都只是说了「从 catalog 派生」这个意图，
+  改哪一边都等于替 owner 选边。
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。
+
+### 更正表
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 本节初稿「点名的渠道是 **10 类**」 | **12 个**：Volcengine、BytePlus、Kling、Wan官方API、Wan自托管、Veo、Sora历史、Vidu、MiniMax、图像、TTS、LLM/VLM | **10 是 `body.split("、")` 的碎片数，不是条目数。**首片 `Volcengine和BytePlus分开Deployment；Kling` 一个碎片里塞了两件事（Seedance 的两个 Deployment + Kling），按 `、` 切只数出一片。10 和 12 之差正好是首片没拆开的那两个。**按分隔符切之前先看清分隔符的语义**——这句里 `和`、`；`、`、` 三种都在用 |
+| 2 | 同上「仓库里是 **7 个 provider 目录、9 个 connector**」 | 两个数都对，但它们不是同一个缺口的两面：9 个 connector 分布在 7 个 provider 下（`seedance`、`wan` 各两个渠道）。写在一起容易被读成「7 对 9 差了 2」 | 没写清单位。按目录数和文件数分别说，或者直接给映射表 |
+| 3 | 本节初稿脚本「mapped dirs that do not exist: 9 个全缺」 | **假阳性，0 个缺** | 路径解析写成 `rsplit("/", 2)` 再拼第 1、2 段，把 `connectors/seedance/volcengine/connector.yaml` 解成了 `volcengine/connector.yaml`，丢掉了 provider 那一层。改成 `'/'.join(path.split('/')[1:3])` 后 9 个全部命中。**脚本报「全都不存在」时，先怀疑解析，不是先怀疑数据** |
