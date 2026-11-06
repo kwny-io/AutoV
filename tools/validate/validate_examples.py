@@ -99,6 +99,99 @@ SCHEMA_OF = {
 }
 
 
+class _PlainError:
+    """A jsonschema-error-shaped stand-in for the checks that are not schema checks."""
+
+    def __init__(self, message):
+        self.message = message
+
+
+def _strings(node, path="data"):
+    """Yield (path, value) for every string leaf under `node`."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            for pair in _strings(v, f"{path}.{k}"):
+                yield pair
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            for pair in _strings(v, f"{path}[{i}]"):
+                yield pair
+    elif isinstance(node, str):
+        yield path, node
+
+
+# `aggregate_id` must be reachable from `data`, because a consumer that has to
+# re-read the aggregate source (the normal case) needs the id it just got told
+# about. An event whose aggregate is a *scope* or a *composite key* rather than
+# the payload's primary key cannot satisfy that, and each such case below is a
+# documented decision, not an oversight. The check is either/or on purpose:
+# an unlisted mismatch fails, and a listed event that starts matching fails too
+# (the list stops being true the moment the underlying doc is fixed).
+#
+# event_type -> (why aggregate_id is not in data, where that is written down)
+AGGREGATE_EXEMPT = {
+    "connector.observation.received": (
+        "aggregate_id 是平台侧 provider job id（`pj_`），payload 里的 dispatch_id 是 S27 "
+        "自己的幂等锚点、provider_job_ref 是供应商侧任务 id，三者是三个不同的 id",
+        "PCR-6 / PCR-7（contracts/connector.observation-received.v2.schema.json），"
+        "S27 §9.2 行 683 写 aggregate_id = provider_job_id（可空）",
+    ),
+    "context.pack.created": (
+        "aggregate_id 是装配作用域 `series:branch:episode`，payload 的 context_pack_id "
+        "是 pack 自己的 id，不是同一个实体",
+        "CCP-4（contracts/context.pack-created.v2.schema.json），"
+        "S18 §6.3 行 469–470",
+    ),
+    "continuity.check.completed": (
+        "aggregate_id 是 `series:branch:episode` 作用域，payload 的 report_id 才是这条事件"
+        "真正指向的实体",
+        "contracts/README.md 行 206 与 CCP-4，S17 §5.2 行 343–344",
+    ),
+    "generation.job.state-changed": (
+        "aggregate_id = provider_job_id，按 S26 明文选择，不是 payload 里的 attempt_id",
+        "S26 §12 行 1016；本 schema 的 description 复述了这条选择",
+    ),
+    "memory.canon.committed": (
+        "aggregate_id 是 `series:branch`，也就是 commit_sequence 的单调作用域"
+        "（DDL 行 98「每 series+branch 单调递增」）",
+        "MSC-7（contracts/memory.canon-committed.v2.schema.json）",
+    ),
+    "model.capability.changed": (
+        "aggregate_id 是四段复合键 `{provider}/{channel}/{model_id}/{model_snapshot}`，"
+        "payload 只带内容寻址的 snapshot_id",
+        "MCG-2（contracts/model.capability-changed.v2.schema.json），S24 §3.5 行 596",
+    ),
+}
+
+
+def aggregate_identity_problems(doc):
+    """Check that the envelope's aggregate_id is reachable from `data`."""
+    agg = doc.get("aggregate_id")
+    if not isinstance(agg, str) or not agg:
+        return []
+    data = doc.get("data")
+    if not isinstance(data, dict):
+        return []
+    hits = [p for p, v in _strings(data) if v == agg]
+    etype = doc.get("type")
+    exempt = AGGREGATE_EXEMPT.get(etype)
+    if hits:
+        if exempt:
+            return [(
+                "<aggregate_id>",
+                f"STALE exemption for {etype}: aggregate_id is now reachable at "
+                f"{hits[0]}; delete the AGGREGATE_EXEMPT entry",
+            )]
+        return []
+    if exempt:
+        return []
+    return [(
+        "<aggregate_id>",
+        f"aggregate_id {agg!r} appears nowhere in data, and {etype} is not in "
+        f"AGGREGATE_EXEMPT. Either the example drifted or the exemption is missing",
+    )]
+
+
 def local_registry():
     from referencing import Registry, Resource
     from referencing.jsonschema import DRAFT202012
@@ -181,6 +274,8 @@ def main():
         for target, sub, prefix in checked:
             for e in Draft202012Validator(target, registry=reg).iter_errors(sub):
                 found.append((prefix + "/".join(str(x) for x in e.absolute_path), e))
+        for loc, msg in aggregate_identity_problems(doc):
+            found.append((loc, _PlainError(msg)))
         found.sort(key=lambda pair: pair[0])
 
         if found:

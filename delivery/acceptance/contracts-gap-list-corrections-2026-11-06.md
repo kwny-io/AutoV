@@ -1053,7 +1053,7 @@ contracts/examples/*.json     = 66
 topics total                  = 55
   with data_schema_ref        = 49
   envelope-only               = 6
-  schema_ref + data_schema_ref= 104
+  schema_ref + data_schema_ref= 104  (= 55 schema_ref + 49 data_schema_ref, a ref count)
   topics having "consumers"   = 0
 
 === 2. the 6 remaining envelope-only topics ===
@@ -1252,18 +1252,18 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 值之间的关系。本轮的示例靠人工保持一致（`aggregate_id` 与 `data.mix_job_id` 都写成
 `mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2`），下一步做 codegen 校验器时应当把这类约束一起表达。
 
-## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十二处错
+## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十三处错
 
 第 15 轮把 S42 剩下两条补齐之后，`envelope-only` 归零的最后一格是 S43 与 S44 的六条事件。
 这一轮把六条都写成 payload schema，`event-topics.v2.json` 的 `data_schema_ref` 从 49 条涨到
 **55 条**，`envelope-only` 从 6 降到 **0**。六份 schema 各 3 条 `x-needs-owner`、各 3 条
 `x-conflicts`（前缀 PDC / PDS / PDF / AMS / AEC / ACP），共 36 条新编号。
 
-这一节的 §16.1 是**本轮自己写错的数**——十二处，其中四处在写完这一轮报告时才发现、属于
-「引用了不存在的行」，另外三处是我在这一节的初稿里又写错的 ref 计数，第十二处（#12）是本节点
-自检时才发现的：散文里的「本仓」没写分母。§16.2 起是把源表重新数一遍的脚本输出，不沿用 §15.2 的任何中间结果。
+这一节的 §16.1 是**本轮自己写错的数**——十三处，其中四处在写完这一轮报告时才发现、属于
+「引用了不存在的行」，另外三处是我在这一节的初稿里又写错的 ref 计数，第十二处（#12）与第十三处（#13）是后续定时自检回合才发现的：
+散文里的「本仓」没写分母，以及 `schema_ref + data_schema_ref` 那个 ref 数被当成了 topic 数。§16.2 起是把源表重新数一遍的脚本输出，不沿用 §15.2 的任何中间结果。
 
-### 16.1 修正本轮自己写错的十二条数
+### 16.1 修正本轮自己写错的十三条数
 
 | # | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|---|
@@ -1279,6 +1279,7 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 | 10 | `post.mix-completed.v2` / `MIX-2` 的 `why_it_matters` | 「仓内 **55 处**严格四键 closed 引用（另有 **2 处**同形但允许 null，**都在本文件**）」「脚本按 `properties`+`required`+`additionalProperties:false` **三重**条件数 `contracts/*.schema.json`，其中 **3 处**就是本文件」 | **55 处 / 32 个文件**（递归 glob）/ **53 处 / 31 个文件**（顶层 glob），差的 2 处都在 `contracts/quality/qc-report.v2.schema.json`；可空同形 **6 处 / 4 个文件**（`episode-manifest.v2` 1、`event-envelope.v2` 的 `data_ref` 1、`generation-command.v2` 2、`post.mix-completed.v2` 2）；**本文件贡献 1 处严格（`source_video_ref`）** | 一处句子里叠了四个错：(a) 宣称的 glob（`contracts/*.schema.json`）数不出 55；(b) 「三重条件」漏了 `type=object`，于是把 `continuity.check-completed.v2` 里一个 `required` 只有两项的开放形状算进了 33 个文件；(c) 「可空都在本文件」漏了另外三个文件；(d) **「3 处就是本文件」把 1 处严格 + 2 处可空加在了一起**，那是两个不相加的数 |
 | 11 | `post.mix-completed.v2` / `MIX-2` 的三条出路 (2) | 「与仓内其余 **54 处**不同形」 | 其余 **54 处**（严格 55 − 本文件 1；按递归 glob），若按顶层 glob 则是 52 | 与 #9 同源：分母口径没写死就减 |
 | 12 | §16.5 行 1591 的散文 | 「**本仓** 264 处 `"pattern"` 里 139 处是 `^[0-9a-f]{64}$`」 | 264 / 139 是按 `contracts/**/*.schema.json`（71 个文件）数出来的；放宽到 `contracts/**/*.json`（148 个文件）是 274 / 143，多出的 10 处来自 `redaction-policy.v2.json`（6 处，无一是 sha）与 `mcp-tools.v2.design.json`（4 处，全是 sha） | **「本仓」不是分母**。同一个报告的第 4 节括注了 glob，散文里却退回「本仓」——§16.2 刚立的口径规则，自己在 270 行后就违反了 |
+| 13 | §15.2、§16.2、§16.7 的 `schema_ref + data_schema_ref` 三行 | 「`schema_ref + data_schema_ref= 104`」「`= 110`」，与同一块里的 `topics total = 55` 排在同一个列表里 | 这两行是 **ref 数**，不是 topic 数：55 个 topic 每个都同时有 `schema_ref` 与（本轮之后）`data_schema_ref`，所以 55 × 2 = 110；本轮之前是 55 + 49 = 104 | **数对了，单位没写。**它紧跟在 `topics total = 55` 下面、又用同一个 `=` 对齐，读起来像「110 个 topic」。这正是本报告反复出事的那一类：分母/单位不写清楚，数本身再对也会被误读 |
 
 第 10 条值得单独一句：**「本文件贡献几处」这种归属计数必须把严格与可空分开数**。我第一版
 修完写成「本文件贡献 0 处严格、只贡献 2 处可空」，回读时发现 55 − (其余文件) 对不上，才
@@ -1297,7 +1298,7 @@ contracts/examples/*.json     = 72
 topics total                  = 55
   with data_schema_ref        = 55
   envelope-only               = 0
-  schema_ref + data_schema_ref= 110
+  schema_ref + data_schema_ref= 110  (= 55 topics x 2 refs)
   topics having "consumers"   = 0
 
 === 2. the six schemas written this round ===
@@ -1430,9 +1431,9 @@ HEAD~3 strict=52 nullable=4 files=61  postmix(strict=0 nullable=0)
 | `contracts/analytics.metric-snapshot-created.v2.schema.json` | 新增 | 17 / 17 / 3 / 3（AMS-1..3），含 `allOf` 复刻 `snapshot_value_null_iff_zero_n` |
 | `contracts/analytics.evaluation-completed.v2.schema.json` | 新增 | 13 / 13 / 3 / 3（AEC-1..3） |
 | `contracts/analytics.cost-projection-updated.v2.schema.json` | 新增 | 10 / 10 / 3 / 3（ACP-1..3） |
-| `contracts/examples/*.json`（6 个） | 新增 | 每条事件一个完整信封示例，`aggregate_id` 与 `data` 里的主键逐一对齐 |
+| `contracts/examples/*.json`（6 个） | 新增 | 每条事件一个完整信封示例，`aggregate_id` 与 `data` 里的主键逐一对齐（这 6 条现在由 §16.8 的检查守着） |
 | `contracts/event-topics.v2.json` | 改 | 6 条 topic 各加一个 `data_schema_ref`；`git diff --stat` 只 +6 行（其余键不动） |
-| `tools/validate/validate_examples.py` | 改 | `SCHEMA_OF` +6 行，全部指向 `event-envelope.v2.schema.json`（不是 payload schema） |
+| `tools/validate/validate_examples.py` | 改 | `SCHEMA_OF` +6 行，全部指向 `event-envelope.v2.schema.json`（不是 payload schema）；另加 `aggregate_identity_problems()` 常驻检查（见 §16.8） |
 | `contracts/README.md` | 改 | 8 处计数勘误 + 6 行 payload 表新增（表从 49 行涨到 55 行） |
 | `contracts/delivery.package-published.v2.schema.json` | 改 | `x-needs-owner[1]` 的 `s43_status` 加一句：那三条「payload schema 仍缺」已由本轮补齐 |
 | `contracts/post.mix-completed.v2.schema.json` | 改 | 第 15 轮遗留的 ref 计数（`52 处` / `MIX-2`）按 §16.1 第 9–11 条改写 |
@@ -1632,11 +1633,10 @@ ok    registry   no check-registry.v2.json yet; nothing to validate
 `scaffold` 重新生成 120 个文件后 `git status` 干净——本轮没有改
 `contracts/service-catalog.v2.json`，所以生成物不该变，也确实没变。
 
-**一条已知漏检继续存在**：信封对 `type` / `source` 只收非空字符串，所以示例里
-`type`、信封 `aggregate_id` 与 `data` 里主键三者的**值相等**这一层关系没有工具能校验。
-本轮六个示例靠脚本逐对断言（`aggregate_id == data.<主键字段>`）保持一致，**但那条断言
-只在我的临时脚本里，没有进仓库**。与 §15.6 末段记的是同一件事，下一步做 codegen 校验器
-时应把它变成常驻检查。
+**那条「已知漏检」已经不在了**（下面 §16.8 记的是同一件事的收尾）：信封对 `type` / `source`
+只收非空字符串，所以「信封 `aggregate_id` 与 `data` 里主键的值相等」这一层关系 schema 表达不了
+——但现在由 `tools/validate/validate_examples.py` 的 `aggregate_identity_problems()` 常驻检查。
+它已经进了 `check_all.py` 的 `examples` 项，不再是我的临时脚本。
 
 ### 16.7 定时自检回合：把第 16 节的每个数重新数一遍
 
@@ -1648,7 +1648,7 @@ contracts/examples/*.json                 = 72
 topics total                              = 55   (event_type 去重 55，无重复)
   with data_schema_ref                    = 55
   envelope-only                           = 0
-  schema_ref + data_schema_ref            = 110
+  schema_ref + data_schema_ref            = 110  (= 55 topics x 2 refs, not 110 topics)
   topics having "consumers"               = 0
 event types ending in .failed             = 2 ['delivery.publish.failed', 'post.render.failed']
 kafka topics distinct                     = 48
@@ -1678,3 +1678,66 @@ pattern entries (contracts/**/*.json, 148 files)       = 274 | sha = 143
 **窄检测器会漏掉 `episode-manifest.v2`、`event-envelope.v2`、`generation-command.v2` 那 4 处**；
 反过来，宽检测器若把整个 `oneOf` 节点当成一个可空引用、不再下钻，严格数会从 55 掉到 51。
 两个数各自都对，但**必须写清用的是哪个算法**——这与 §16.2 对 glob 的要求是同一类。
+
+### 16.8 把 `aggregate_id == data.<主键>` 做成常驻检查，以及它暴露的六个例外
+
+§15.6 与 §16.6 都记着同一件事：示例里「信封的 `aggregate_id` 与 `data` 里主键的值相等」
+这层关系没有工具能校验，只有临时脚本在断言。这一段把它落进仓库。
+
+**先说结论：这条断言在 55 个带 `aggregate_id` 的示例里只对 49 个成立。**若照 §16.6 原话
+直接写成「每个示例都必须相等」，会有 6 条误报。这 6 条全部有明文依据，不是示例写错：
+
+| event_type | `aggregate_id` 是什么 | 凭什么 |
+|---|---|---|
+| `connector.observation.received` | 平台侧 `provider_job_id`（`pj_`） | PCR-6 / PCR-7；S27 §9.2 行 683 写 `aggregate_id = provider_job_id`（可空） |
+| `context.pack.created` | 装配作用域 `series:branch:episode` | CCP-4；S18 §6.3 行 469–470 |
+| `continuity.check.completed` | 同上作用域；真正指向的实体是 `report_id` | contracts/README.md 行 206、CCP-4；S17 §5.2 行 343–344 |
+| `generation.job.state-changed` | `provider_job_id`，S26 明文选择不用 `attempt_id` | S26 §12 行 1016 |
+| `memory.canon.committed` | `series:branch`，即 `commit_sequence` 的单调作用域 | MSC-7；S16 DDL 行 98「每 series+branch 单调递增」 |
+| `model.capability.changed` | 四段复合键 `{provider}/{channel}/{model_id}/{model_snapshot}` | MCG-2；S24 §3.5 行 596 |
+
+所以检查写成**二选一**，不是「一律相等」：
+
+```
+命中（data 里有值等于 aggregate_id） 且 不在豁免表  -> 通过
+命中 且 在豁免表                                  -> STALE（豁免已过期，删掉）
+未命中 且 在豁免表                                -> 通过
+未命中 且 不在豁免表                              -> 失败
+```
+
+第三、四行是关键：**豁免表里的一条一旦开始命中就报错**，否则文档修好之后豁免会永远躺着，
+把真回归盖住。这与 §16.2「统计口径要能被复核」是同一个思路——豁免也得有失效条件。
+
+实现放在 `tools/validate/validate_examples.py` 的 `aggregate_identity_problems()`，
+已由 `check_all.py` 的 `examples` 项自动跑到（它 `import` 那个模块并调用 `main()`）。
+`_strings()` 递归取 `data` 下所有字符串叶，所以嵌在 `*_ref.id` 里的也算。这是必须的：
+**55 个带 `aggregate_id` 的示例里有 15 个在 `data` 顶层找不到相等的 `*_id`**，其中
+9 个靠嵌套命中——`artifact.ingested`（`data.artifact_ref.id`）、`asset.binding-set.created`
+（`data.binding_set_ref.id`）、`asset.{character,costume,prop,scene}-revision.accepted`
+（`data.*_ref.id`）、`policy.revision.published`（`data.policy_ref.id`）、
+`prompt.compiled` 与 `snapshot.manifest.committed`（`data.manifest_ref.id`）。
+只看顶层的话这 9 条会全部误报，再加上下面 6 条豁免，一共 15 条假失败。
+
+**这条检查比「主键相等」弱，要说清楚**：它断言的是「`data` 里某处有一个值等于
+`aggregate_id`」，不是「`data` 的主键字段等于 `aggregate_id`」。差别在于前者理论上可被
+一个恰好相等的非主键字段满足。之所以没写成后者：55 个示例的主键字段名各不相同
+（`package_id` / `run_id` / `shot_lineage_id` / `data.package_ref.id`……），而 schema 里没有
+「哪一个是主键」的标记，靠命名猜会引入新的猜测。**这条检查能挡住「id 漂移」这类真回归，
+挡不住「相等但出现在错误字段」的假通过**——后者要等 schema 有了 `x-primary-key` 之类的
+标记才做得动，记在这里不假装做到了。
+
+反向测试（`_tmp_negtest.py`，四种情形，跑完即删）：
+
+```
+1. baseline: 71 个示例全部过                       problems: 0
+2. 把 delivery.package.created 的 aggregate_id 改坏 -> 报「appears nowhere in data ... not in AGGREGATE_EXEMPT」
+3. 给 memory.canon.committed 塞一个相等的 data.aggregate_id -> 报「STALE exemption ... delete the AGGREGATE_EXEMPT entry」
+4. 造一个不在 registry 的新 event_type + 不匹配的 id -> 报同一类失败
+5. 豁免事件的 aggregate_id 置空（PCR-5 的 UNMAPPED 路径） -> 跳过，不报
+6. 六条豁免的 event_type 全在 event-topics.v2.json 里        -> 6/6 True
+```
+
+第 5 条是刻意的：`aggregate_id` 为空时这条事件按 PCR-7 本来就发不出去（envelope 要求
+`minLength: 1`），检查不该在「本该为空」的地方制造第二重噪音。
+
+`python tools/check_all.py` 仍是九项全过（`examples` 一项的输出不变：71 valid / 0 failing / 1 without a schema）。
