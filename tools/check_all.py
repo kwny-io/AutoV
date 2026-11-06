@@ -2157,6 +2157,18 @@ def check_planrefs(name):
     Headings are read without requiring a space after the number, because this
     repo writes both `## 3. 跨集改稿` and `## 3.跨集改稿`. Requiring the space
     turned 7 correct refs into apparent errors when this was measured.
+
+    The pattern requires `§` to follow `Snn` directly (whitespace only). It
+    was widened once to allow up to six intervening characters, to catch
+    `S07 的 §6.5` / `S25（§2.6）`. That widening was measured and rejected:
+    of the 12 refs it newly flagged in plan files, 11 were not attributions
+    at all but self-references with a service name mentioned for context --
+    `| 候选兼容性探测（S25 用，§2.6） |` cites S20's own §2.6 in the column
+    that describes who calls the endpoint, and S25 has no §2.6. Only one,
+    `plans/S47-realtime-projection.md:1077` "S23 方案 §1180", was a genuine
+    cross-plan ref, and it means line 1180, not a section. A widened
+    attribution predicate reads surrounding prose, not the text of the ref,
+    so it is worse than the narrow one.
     """
     r = Result(name)
     fences = re.compile(r"```.*?```", re.S)
