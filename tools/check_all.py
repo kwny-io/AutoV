@@ -545,6 +545,119 @@ def check_maturity(name):
     return r
 
 
+def check_safety_switches(name):
+    """`contracts/examples/runtime-safety.yaml` really does say "all off".
+
+    AGENTS.md opens with "所有生产开关默认关闭" and lists what must never happen:
+    bypass S26 for model calls, bypass S23/S22 for payment, pre-fill a provider
+    as `active`. This file is the machine-readable form of that paragraph --
+    `plans/S43:3` cites its `external_publish_enabled: false` for "外部分发一律
+    默认关闭", and `plans/S27:24` cites its `accepted_manifest_authority: S08` as
+    the authority that S27 does *not* hold. Nothing read the file. Every check in
+    this module globs `.json`; `examples` globs `*.json` too, so both YAML files
+    in that directory were skipped by a detail of the glob.
+
+    A flag flipped to `true` here is not a broken link -- it is the repo claiming
+    a production switch is on. That failure is silent everywhere else: the file
+    parses, no schema covers it, and the plans keep citing it as if it still said
+    false. So every gate named in the YAML block is asserted to be `False` by
+    name, not merely counted -- a count of "4 false values" stays 4 when one true
+    and one false are swapped around a rename.
+
+    Only the closed set below is asserted. If a new gate appears in the file it
+    is not silently ignored: it shows up in the note as unrestrained. Refusing to
+    fail on an unknown key keeps this a check on the switches AGENTS.md names,
+    not a schema that would reject a legitimate addition by an owner.
+    """
+    r = Result(name)
+    path = os.path.join(CONTRACTS, "examples", "runtime-safety.yaml")
+    if not os.path.exists(path):
+        r.fail("contracts/examples/runtime-safety.yaml is missing")
+        return r
+    try:
+        import yaml
+    except ImportError:
+        r.fail("PyYAML is not installed, so the safety switches cannot be read; "
+               "this is not a pass")
+        return r
+    doc = yaml.safe_load(_utf8(path))
+
+    # Each is False in AGENTS.md's terms: off by default, not enabled by a flag.
+    GATES = ("real_provider_calls_enabled", "business_services_deployed",
+             "external_publish_enabled", "real_credential_values_present")
+    gates_ok = 0
+    for g in GATES:
+        if g not in doc:
+            r.fail(f"{g} is not in runtime-safety.yaml; the file no longer states it")
+        elif doc[g] is not False:
+            r.fail(f"{g} is {doc[g]!r}, not false -- AGENTS.md requires every "
+                   f"production switch closed by default")
+        else:
+            gates_ok += 1
+
+    # AGENTS.md: "预填供应商状态为 active" is forbidden. Every provider entry in
+    # this file must say enabled: false; a provider that is simply absent from
+    # `providers` is not enabled, so this only inspects what is declared.
+    providers = doc.get("providers") or {}
+    on = [k for k, v in providers.items() if (v or {}).get("enabled") is not False]
+    for k in on:
+        r.fail(f"provider {k!r} is not explicitly enabled: false -- providers are "
+               f"always inactive until an operator verifies them")
+    no_key = [k for k, v in providers.items() if "enabled" not in (v or {})]
+    for k in no_key:
+        r.fail(f"provider {k!r} has no `enabled` key, so its state cannot be read")
+    prov_off = len(providers) - len({*on, *no_key})
+
+    # A provider entry put in the wrong block is invisible to the loop above, so
+    # it is caught by shape instead of by name: any mapping nested under
+    # enterprise_defaults that carries an `enabled` key is a provider that
+    # escaped `providers`. Probe 1b found this the hard way -- appending
+    # `smuggled_provider: {enabled: true}` puts it here and nothing noticed.
+    defaults_early = doc.get("enterprise_defaults") or {}
+    misplaced = sorted(k for k, v in defaults_early.items()
+                       if isinstance(v, dict) and "enabled" in v)
+    for k in misplaced:
+        r.fail(f"enterprise_defaults.{k} is a mapping with an `enabled` key; "
+               f"provider entries belong under `providers`, where they are checked")
+
+    # The enterprise defaults name which service owns each authority. Those are
+    # service ids, so a rename in the catalog that misses this file would leave a
+    # dangling authority nobody owns. Checked against the catalog rather than a
+    # hardcoded list.
+    cat = json.loads(_utf8(os.path.join(CONTRACTS, "service-catalog.v2.json")))["services"]
+    ids = {s["service_id"] for s in cat}
+    defaults = defaults_early
+    auth = sorted(k for k in defaults if k.endswith("_authority"))
+    dangling = [k for k in auth if defaults[k] not in ids]
+    for k in dangling:
+        r.fail(f"enterprise_defaults.{k} = {defaults[k]!r} is not a catalog service_id")
+
+    # `shared_database_writes` is the file's copy of AGENTS.md's first hard rule
+    # (no cross-service DB writes). It is a gate too, just nested one level down.
+    db_ok = defaults.get("shared_database_writes") is False
+    if not db_ok:
+        r.fail(f"enterprise_defaults.shared_database_writes is "
+               f"{defaults.get('shared_database_writes')!r}, not false -- AGENTS.md "
+               f"forbids cross-service database writes")
+
+    obvious = set(GATES) | {"shared_database_writes"}
+    unrestrained = sorted(k for k in defaults if isinstance(defaults[k], bool)
+                          and k not in obvious)
+    # Every clause is passing/total. A bare "4 gate(s) false" would stay 4 while
+    # one gate turned true and another was renamed into its place -- and the
+    # rename is the case the first draft missed entirely, r.fail-ing correctly
+    # while all three clauses of its note stayed green. Fifth time in this module.
+    r.note = (f"{gates_ok}/{len(GATES)} gate(s) false, "
+              f"{db_ok:d}/1 shared_database_writes false, "
+              f"{prov_off}/{len(providers)} provider(s) explicitly disabled, "
+              f"{len(auth) - len(dangling)}/{len(auth)} authorities name a catalog "
+              f"service, {0 if misplaced else 1}/1 no provider entry outside "
+              f"`providers`"
+              + (f"; {len(unrestrained)} boolean default(s) not asserted: "
+                 + ", ".join(unrestrained) if unrestrained else ""))
+    return r
+
+
 # The numbers contracts/README.md quotes in its check summary, pinned to the
 # numbers the checks produce. Each entry is (label as README says it, regex
 # over the README summary paragraph, the check whose Result supplies the truth,
@@ -572,6 +685,8 @@ README_CLAIMS = [
     ("unmapped example", r"另 (\d+) 个刻意不映射", "examples", r"(\d+) without a schema"),
     ("archive match", r"逐个比字节数并算哈希，\*\*(\d+)\*\* 个对得上",
      "archive", r"(\d+)/\d+ match MANIFEST\.md"),
+    ("safety provider", r"\*\*(\d+)\*\* 个 provider 都显式",
+     "safety", r"(\d+)/\d+ provider\(s\) explicitly disabled"),
 ]
 
 
@@ -1276,6 +1391,7 @@ CHECKS = [
     ("examples", check_examples, "contracts/examples/ validate against their schemas"),
     ("maturity", check_maturity, "catalog maturity matches whether services/*/src/ has code"),
     ("archive", check_archive, "docs/design-package/ matches the checksums in its MANIFEST"),
+    ("safety", check_safety_switches, "runtime-safety.yaml keeps every production switch off"),
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]

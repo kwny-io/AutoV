@@ -4281,3 +4281,112 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 同步改成「十六项检查 / 14 个数 / 十五个方向」，`README_CLAIMS` 加了一行
 `archive match`，把 51 钉进 `readme` 检查。`archive` 的 note 里 51 与 54 都是
 本次实算，`known divergences` 由冻结集逐条比对得出，不是写死的字面量。
+
+### 补记八：`runtime-safety.yaml` 是 AGENTS.md「生产开关默认关闭」的机器可读版，此前零校验
+
+补记七告一段落后我做了一次「还有哪些文件没有任何检查在读」的普查，做法是把
+`tools/check_all.py` 里所有字符串字面量抽出来，和磁盘上的文件名比对。结果里
+`agents/`（13 个）和 `connectors/`（9 个）是 `scaffold` 的比对对象、属于误报，
+真正的发现是 `contracts/examples/` 下那两个 `.yaml`：
+
+```
+== contracts/  (2) ==
+   contracts/examples/runtime-safety.yaml
+   contracts/examples/service-interactions.yaml
+```
+
+原因很简单：`examples` 只 glob `*.json`
+（`glob.glob(os.path.join(CONTRACTS, "examples", "*.json"))`），而这个目录里
+56 个文件中有 2 个是 `.yaml`。一个 glob 的细节让两个文件整层漏掉。
+
+**这两个文件不是摆设，它们是别的文档直接引用的权威来源**：
+
+| 引用处 | 引的是什么 | 依赖这行的真假 |
+|---|---|---|
+| `plans/S43-delivery.md:3` | `runtime-safety.yaml`: `external_publish_enabled: false` | S43 说「外部分发一律默认关闭」 |
+| `plans/S27-provider-connectors.md:24` | `accepted_manifest_authority: S08` | S27 说自己**没有**接受成片的权限 |
+| `plans/S40-human-review.md:19` | `service-interactions.yaml` 的 `accept_script_to_memory` | 三者顺序是**固定**的 |
+
+也就是说，把 `external_publish_enabled` 改成 `true`，`plans/S43` 那句就变成假话，
+而当时全仓没有任何检查会红——文件能解析，没有 schema 覆盖它，`plans` 照旧引它。
+
+**先核数据，不能假设它是对的**（脚本输出）：
+
+```
+catalog service ids: 48   topics: 55
+
+== service-interactions.yaml: 3 interaction(s) ==
+  steps: 18
+  from-id not in catalog: []
+  to-id   not in catalog: []
+  event   not a topic   : []
+  step not exactly from/to/(action|event): []
+
+== runtime-safety.yaml ==
+  real_provider_calls_enabled: False
+  business_services_deployed: False
+  external_publish_enabled: False
+  real_credential_values_present: False
+  providers: 8  not explicitly disabled: {}
+  shared_database_writes: False
+  financial_authority: 'S23'  in catalog: True
+  quota_authority: 'S22'  in catalog: True
+  accepted_manifest_authority: 'S08'  in catalog: True
+  memory_authority: 'S16'  in catalog: True
+  provider_job_authority: 'S26'  in catalog: True
+```
+
+18 步全部指向真实 `service_id`，事件名全部是真 topic，8 个 provider 全部
+显式 `enabled: false`，5 个 authority 全部是 catalog 里的服务。
+**数据本身没有错**——这一项是补防护，不是修错。
+
+**新检查 `safety`（第 17 项）**，只守 `runtime-safety.yaml`：
+
+```
+ok    safety    4/4 gate(s) false, 1/1 shared_database_writes false,
+                8/8 provider(s) explicitly disabled,
+                5/5 authorities name a catalog service,
+                1/1 no provider entry outside `providers`;
+                3 boolean default(s) not asserted: automatic_region_failover_paid_resubmission,
+                one_home_cell_per_series, require_current_dispatch_authorization
+```
+
+4 个总开关、`shared_database_writes`、8 个 provider 的 `enabled`、5 个
+`*_authority` 对 catalog，**逐条按名断言**而不是只数个数——个数在「一个改 true、
+另一个改名顶上」时仍然是 4。最后那句 `3 boolean default(s) not asserted` 是
+主动报出来的未覆盖面：`automatic_region_failover_paid_resubmission` 等三个布尔值
+我也认为该为 false，但 AGENTS.md 没有把它们的语义写死（比如「区域故障自动切换并
+付费重提」到底允不允许），所以只报不判，留给 owner。
+
+`service-interactions.yaml` **没有**纳入这一项：它需要一个「action 名是否合法」的
+清单，而这个清单目前不存在（`docs/04` 只有散文）。把「18 步的 from/to/event 都在
+catalog/topics 里」单独立成一项检查是可以做的，但那属于新增覆盖面而不是修复漏洞，
+先记录在这里。
+
+| 探针（都在 `runtime-safety.yaml` 上） | 输出 |
+|---|---|
+| `real_provider_calls_enabled` → true | `FAIL safety 1` / `3/4 gate(s) false` |
+| `external_publish_enabled` → true | 同上 `3/4` |
+| `business_services_deployed` → true | 同上 `3/4` |
+| `real_credential_values_present` → true | 同上 `3/4` |
+| 把 `external_publish_enabled` 改名成 `publish_live`（值仍是 false） | 同上 `3/4`——**改名也算缺**，不是只有改值才算 |
+| provider `kling` 的 `enabled` → true | `FAIL safety 1` / `7/8 provider(s) explicitly disabled` |
+| provider `kling` 删掉 `enabled` 键 | `FAIL safety 2` / `7/8 provider(s) explicitly disabled` |
+| `financial_authority` → `S99` | `FAIL safety 1` / `4/5 authorities name a catalog service` |
+| `shared_database_writes` → true | `FAIL safety 1` / `0/1 shared_database_writes false` |
+| 把 `{enabled: true}` 的 provider 追加到 **`providers` 块外面** | `FAIL safety 1` / `0/1 no provider entry outside \`providers\`` |
+| 在 `providers` 里加第 9 个（disabled） | `safety` 绿、`readme` 红：`README says 8 for safety provider, safety says 9` |
+| README 把 8 改成 9 | `FAIL readme` / `README says 9 for safety provider, safety says 8` |
+| 全部还原 | 17 项注册、16 通过、1 跳过 |
+
+最后那个「块外面」的探针是**真找出来的洞**。第一版按 `providers` 遍历，
+`{enabled: true}` 落在 `enterprise_defaults` 下就完全不看——`safety` 和 `readme`
+双双是绿的。现在按**形状**而不是按名字兜：`enterprise_defaults` 下任何带
+`enabled` 键的 mapping 都是「放错位置的 provider」。
+
+**note 同一个毛病，第五次。** 第一版 note 三句话全是写死的字面量：
+9 个探针里有 6 个（4 个 gate、改名、`shared_database_writes`）失败时，
+note 里一个字都不变。现在每个子句都是 `N/M`，探针一一对应到上表。
+这已经是同一个缺陷的第五次复现，而每次都是在「检查本身是对的、只是它说的话
+不对」这个形状上——`feedback-note-must-not-read-green.md` 那条记忆应该改成
+「凡是 note 里出现的**任何**数字，都必须能因为这次运行而变化」。
