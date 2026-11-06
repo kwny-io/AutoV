@@ -148,7 +148,14 @@ def check_catalog(name):
     for t in topics:
         for field in ("producer",):
             owner = t.get(field)
-            if owner and owner not in known:
+            # A topic with no producer at all used to pass silently: the `if
+            # owner and ...` guard skipped both the ownership test and any
+            # complaint about the missing field. Every topic has one today, so
+            # this never fired, but a topic added without one would have gone
+            # green. `event_type` has the same shape and the same guard.
+            if not owner:
+                r.fail(f"topic {t.get('topic')}: no {field}")
+            elif owner not in known:
                 r.fail(f"topic {t.get('topic')}: {field} {owner!r} is not a catalog service_id")
         consumers = t.get("consumers")
         if consumers:
@@ -157,9 +164,11 @@ def check_catalog(name):
                 if c not in known:
                     r.fail(f"topic {t.get('topic')}: consumer {c!r} is not a catalog service_id")
         et = t.get("event_type")
-        if et:
-            if et in seen_types:
-                r.fail(f"event_type {et!r} registered twice")
+        if not et:
+            r.fail(f"topic {t.get('topic')}: no event_type")
+        elif et in seen_types:
+            r.fail(f"event_type {et!r} registered twice")
+        else:
             seen_types[et] = t.get("topic")
 
     # No topic declares `consumers`, so the loop above has never had an entry to
@@ -598,6 +607,29 @@ KNOWN_BAD_CHECK_IDS = {
     "TECH.FLASH_FRAME",
 }
 
+# Ids cited by a QC plan that its owner's registry does not define. Each is a
+# plan edit waiting on that plan's owner, not a defect this tool may fix: two are
+# the same missing `SUB.LAYOUT.CPS_EXCEEDED` (S38 §4 step 3 and S35's validator
+# note), one is `SUB.CUE.VERSION` in S35 -- S38 has no `CUE` group at all.
+# Logged in delivery/acceptance/check-registry-missing-fields-2026-11-05.md
+# §5.2. Suppressing them keeps the suite readable for everything else; the
+# staleness test below forces the entry out once the plan is corrected.
+KNOWN_DANGLING_REFS = {
+    "SUB.CUE.VERSION",
+    "SUB.LAYOUT.CPS_EXCEEDED",
+    "SUB.TIMING.CPS",
+}
+
+# The plans that own a check_id prefix, and the prefix each owns. A cited id is
+# resolved against its prefix's registry no matter which plan cites it -- S35
+# legitimately cites SUB.* ids when describing S38's behaviour.
+QC_PLANS = (
+    ("S35-technical-qc", "TECH"),
+    ("S36-semantic-qc", "VIS"),
+    ("S37-audio-alignment", "AUD"),
+    ("S38-subtitles", "SUB"),
+)
+
 
 def check_payload_refs(name):
     """Every data_schema_ref / schema_ref a topic names must be a real file.
@@ -639,17 +671,13 @@ def check_check_ids(name):
     pattern = re.compile(r"^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$")
     total = 0
     seen_bad = set()
-    for fname, prefix in (
-        ("S35-technical-qc", "TECH"),
-        ("S36-semantic-qc", "VIS"),
-        ("S37-audio-alignment", "AUD"),
-        ("S38-subtitles", "SUB"),
-    ):
+    texts = {}
+    for fname, prefix in QC_PLANS:
         path = os.path.join(ROOT, "plans", fname + ".md")
         if not os.path.exists(path):
             r.fail(f"plans/{fname}.md is missing")
             continue
-        text = _utf8(path)
+        text = texts[fname] = _utf8(path)
         ids = set(re.findall(r"\|\s*`(" + prefix + r"\.[A-Z0-9_]+(?:\.[A-Z0-9_]+)*)`\s*\|", text))
         total += len(ids)
         for i in sorted(ids):
@@ -669,8 +697,42 @@ def check_check_ids(name):
     for i in sorted(KNOWN_BAD_CHECK_IDS - seen_bad):
         r.fail(f"{i} is in KNOWN_BAD_CHECK_IDS but no longer appears un-conforming; "
                f"remove the entry")
+
+    # Every full id a plan cites must exist in the registry of the plan that owns
+    # its prefix. The id-pattern test above cannot see this: `SUB.LAYOUT.CPS_
+    # EXCEEDED` is perfectly well shaped, it just is not registered anywhere, so
+    # a plan that emits it disagrees with the table that is supposed to be its
+    # authority. Only 3+-segment mentions count -- `VIS.SAFE_AREA` is a group
+    # reference and `SUB.TIMING.CPS` is prose shorthand, neither claims to be an id.
+    registered = {}
+    for fname, prefix in QC_PLANS:
+        if fname in texts:
+            registered[prefix] = set(re.findall(
+                r"\|\s*`(" + prefix + r"\.[A-Z0-9_]+(?:\.[A-Z0-9_]+)*)`\s*\|", texts[fname]))
+        else:
+            registered[prefix] = set()
+    owner_of = {prefix: fname for fname, prefix in QC_PLANS}
+    dangling_seen = set()
+    full_refs = 0
+    cite = re.compile(r"`((TECH|VIS|AUD|SUB)(?:\.[A-Z0-9_]+){2,})`")
+    for fname, _ in QC_PLANS:
+        for ident, prefix in cite.findall(texts.get(fname, "")):
+            full_refs += 1
+            if ident in registered[prefix]:
+                continue
+            if ident in KNOWN_DANGLING_REFS:
+                dangling_seen.add(ident)
+                continue
+            r.fail(f"plans/{fname}.md cites {ident}, but "
+                   f"plans/{owner_of[prefix]}.md does not register it")
+    for i in sorted(KNOWN_DANGLING_REFS - dangling_seen):
+        r.fail(f"{i} is in KNOWN_DANGLING_REFS but no plan cites it unregistered "
+               f"any more; remove the entry")
+
     r.note = (f"{total} check_id(s), {len(seen_bad)} known non-conforming "
-              f"(owner decision, see contracts/README.md gap 4)")
+              f"(owner decision, see contracts/README.md gap 4); "
+              f"{full_refs} citation(s), {len(dangling_seen)} unresolved "
+              f"(owner decision, see check-registry-missing-fields §5.2)")
     return r
 
 

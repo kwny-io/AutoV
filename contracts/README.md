@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
 schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity` 与 `services/*/src/`
@@ -1514,8 +1514,22 @@ stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格�
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
 另外还测了段落锚点消失（改节标题、删掉「N 项检查：」开头）两种，各自报自己的错。
 
+`checkids` 这一格做两件事。一是上面说的：四份 QC 方案的**表格行**里的 id 必须符合三段命名。
+二是**正文引用**：任何 3 段及以上的 id 被引用了，就必须登记在它所前缀的那份方案的注册表里。
+第二件事是后补的，因为第一件只看形状——`SUB.LAYOUT.CPS_EXCEEDED` 形状完全合法，只是
+S38 的 §5 表里没有这一行，`SUB.CUE.VERSION` 更是连 `CUE` 组都不存在。这两处加上
+S38:241 的正文缩写，是三处已知悬空引用，列在 `KNOWN_DANGLING_REFS` 里，等对应 owner 决定
+是改文案还是补注册表。**这不是替任何人选边**：三处正文一个字没改，改的是「一旦有人改了，
+这一格必须提醒把条目删掉」——owner 按两种修法里任何一种修好，陈化测试都会 FAIL 要求删条目，
+否则条目就陈了，将来同一个 id 再被误引用反而抓不到。
+
+两段式的提及**不算**引用，有意为之：`VIS.SAFE_AREA` 是组引用（S36 有
+`VIS.SAFE_AREA.TEXT_OVERLAP` 等），`SUB.TIMING.CPS` 是同一句后半截就点了完整 id 的缩写。
+按这个口径，四份方案里 3 段及以上的提及共 146 处，其中 3 处悬空。
+
 刻意不 pin 的：`families` 的「4 of 5」里那个 4（是语义判断，不是计数）、
 `checkids` 的不合规条数（白名单本来就该缩短，写死等于要求它别缩短）、
+`checkids` 的悬空引用条数（同上，`KNOWN_DANGLING_REFS` 本来就该缩短）、
 passed/skipped 的拆分（数据文件一落地就变）。
 
 十一项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：

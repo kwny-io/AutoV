@@ -2874,3 +2874,114 @@ restored identical: True
 
 全量仍是 10 项通过、1 项 skip（`registry`），exit 0。
 
+---
+
+### 16.21 把「正文引用的 `check_id` 必须在注册表里存在」也变成一项检查——它当场抓到第三处
+
+§16.19 和 §16.20 钉的是「文件里手敲的数字」。这一节钉的是**名字**：一份计划正文里
+引用的 `check_id`，有没有登记在同一服务 §5 那张表里。
+
+#### 错在哪
+
+`check_check_ids` 原来只做一件事：把四份 QC 计划表格行里的 id 拿去匹配
+`^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$`。**它只看形状，不看有没有登记。**
+形状合法的瞎编 id 一样过。
+
+于是这类引用一直是盲区——它们在正文里，不在表里，形状也对，所以既没进检查，也不影响
+任何一格的 `note`：
+
+```
+('S35-technical-qc', 1056, 'SUB.CUE.VERSION')          <- 新发现，S38 连 CUE 组都没有
+('S38-subtitles',     241, 'SUB.TIMING.CPS')           <- 两段缩写，见下
+('S38-subtitles',     278, 'SUB.LAYOUT.CPS_EXCEEDED')  <- S38 §4.3 第 3 步
+```
+
+第三条是 `check-registry-missing-fields-2026-11-05.md` §5.2 已经记过的老问题
+（S38:278 的 `SUB.LAYOUT.` vs 注册表 §5.1 的 `SUB.TIMING.CPS_EXCEEDED`）。
+**第一条是这一轮新发现的**，之前没人记过：S35 第 1056 行写「把 `SUB.CUE.VERSION` 的
+`default_action` 写成 `regenerate_video`」，用这个 id 当校验器的实测样例，而 S38 的
+注册表里 24 条 id 中一个 `CUE` 组的都没有。
+
+#### 口径：只认完整 id
+
+`VIS.SAFE_AREA`（S35:65）和 `SUB.TIMING.CPS`（S38:241）也是悬空的，但它们**不在这项检查
+的范围里**，有意为之：
+
+- `VIS.SAFE_AREA` 是**组引用**——S36 有 `VIS.SAFE_AREA.TEXT_OVERLAP` 等。写组名是在说
+  「这一类里某一个」，不是引用某条 id。
+- `SUB.TIMING.CPS` 是**正文缩写**——同一句话后半截就点了 `SUB.TIMING.OVERLAP`。
+
+schema 要求 id 至少三段（`PREFIX.<GROUP>.<NAME>`），所以只有 **3 段及以上**的反引号提及
+才算「声称有一条 id」。按这个口径量：
+
+```
+registered per prefix: {'TECH': 23, 'VIS': 32, 'AUD': 20, 'SUB': 24}
+3+-segment id mentions across the four plans: 146
+dangling: 3
+```
+
+146 处完整引用里 3 处悬空，漏网面很小，而且是已知的两处加新发现的一处。
+
+#### 改法：沿用同一份文件既有的 allowlist 模式
+
+`KNOWN_BAD_CHECK_IDS` 已经是这个形状——把 owner 待决项列出来，让套件对**其他所有**东西
+保持绿，同时用一条陈化测试逼它在修好之后消失。新加的 `KNOWN_DANGLING_REFS` 照抄：
+
+```python
+for i in sorted(KNOWN_DANGLING_REFS - dangling_seen):
+    r.fail(f"{i} is in KNOWN_DANGLING_REFS but no plan cites it unregistered "
+           f"any more; remove the entry")
+```
+
+**这不是把冲突判给任何一方。**三处正文一个字没改；改的是「一旦有人改了，套件必须提醒」。
+按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」，S38:278 是改 §4.3 的文案
+还是给 §5.1 加一行，由 S38 的 owner 定；S35:1056 是换成真 id 还是给 S38 补 `CUE` 组，
+由 S35 / S38 的 owner 定。这一节只保证：**这个悬而未决的状态不会再因为没人记得而静默。**
+无论 owner 选哪边，陈化测试都会抓到并提示删掉对应条目。
+
+#### 反向测试
+
+六个方向，包括把 owner 可能选的每一种修法都试出来：
+
+```
+baseline                                   MISSED  []
+unknown id disclosed (no allowlist)        CAUGHT  ['plans/S38-subtitles.md cites SUB.LAYOUT.CPS_OVERFLOW, but plans/S38-subtitles.md does not register it', 'SUB.LAYOUT.CPS_EXCEEDED is in KNOWN_DANGLING_REFS but no plan cites it unregistered any more; remove the entry']
+§4 fixed to the registered name            CAUGHT  ['SUB.LAYOUT.CPS_EXCEEDED is in KNOWN_DANGLING_REFS but no plan cites it unregistered any more; remove the entry']
+registry gains the LAYOUT row              CAUGHT  ['SUB.LAYOUT.CPS_EXCEEDED is in KNOWN_DANGLING_REFS but no plan cites it unregistered any more; remove the entry']
+S35 citation points at a real id           CAUGHT  ['SUB.CUE.VERSION is in KNOWN_DANGLING_REFS but no plan cites it unregistered any more; remove the entry']
+registered id misspelled in prose          CAUGHT  ['plans/S38-subtitles.md cites SUB.TIMING.OVERLAPS, but plans/S38-subtitles.md does not register it']
+restored identical: True
+```
+
+第 2、3、4 条很重要：**owner 按两种修法里任何一种修好，套件都会要求删掉那条 allowlist。**
+如果不删，条目就是陈的，将来同一个 id 再被误引用就抓不到了。
+
+#### 同时也量了两格的覆盖面
+
+同一轮里核实了另外两格是不是也「看着绿、其实没看」：
+
+- `links`：1041 个 `.md`、3903 条行内链接里，带 `#` 片段 0 条、图片 0 条、
+  reference 式定义 0 条、HTML `<a href>` 0 条。`split("#")[0]` 和「只认 `](...)`」这两种
+  写法今天确实没藏住任何东西——但这个结论是**量出来的**，不是假定的。
+- `maturity`：48 个服务在 `src/` 之外共有 384 个文件，全是生成的 `service.md` /
+  `service.yaml` 和空 `.gitkeep`，**真实代码文件 0 个**。所以「`src/` 之外没有代码要看」
+  这个前提成立，该格的口径够用。
+
+#### 一次自我更正
+
+本轮中间记录里我写过「99 行 id 对 109 处提及，多出的 10 处是跨服务交叉引用，所以按表格行
+计数是对的」。重数后是 **99 对 101，只多 2 处**，而且两处都在 S38、正是上面那个 CPS 命名
+问题本身——没有任何跨服务交叉引用。错误的 109 / 10 没有写进任何文件（写本节时才发现），
+但结论「按表格行计数是对的」恰好仍然成立，理由则完全不同：正文提及按定义就不是 id 声明，
+这一轮干脆把它们单独做成了一项检查。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | 中间记录（未落盘） | 99 表格行 id 对 109 处提及，多出 10 处是跨服务交叉引用 | **99 对 101，多 2 处，都在 S38，是 CPS 命名冲突本身** | **凭上一轮的印象报数，没重数。**而且「多出的是跨服务交叉引用」本身就是错的：那 2 处不在任何表格里，是正文提及（S38:278 的 §4 步骤、S38:241 的缩写），跟「哪个服务引用谁」无关 |
+| 2 | `check_check_ids` 的覆盖面 | 只校验 id 形状，`note` 只报「N 个 check_id」 | 加第二项：正文 3+ 段 id 引用必须在所属前缀的注册表里 | **把「形状对」当成「存在」。**同一个函数里做两件事最省事，但一字不提地只做一半，读起来像全做了 |
+| 3 | §16.20 的 `checkids` 口径描述 | 未说明表格行与正文提及的区别 | 正文提及按 3+ 段单独成项，两段是组引用/缩写 | 写 §16.20 时还没意识到正文提及是另一类问题，所以只描述了表格行 |
+| 4 | 本节更正表第 1 行初稿 | 「它们各自只引用本前缀的 id，不存在跨服务交叉引用」 | 删掉这句，改为说明那 2 处是正文提及 | **同一次凭印象。**S35:65 引 `VIS.SAFE_AREA`、S35:1056 引 `SUB.CUE.VERSION`，跨前缀引用是有的；只是它们要么是组引用、要么本来就在 allowlist 里 |
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。`checkids` 的 `note` 现在是
+`99 check_id(s), 3 known non-conforming ...; 146 citation(s), 3 unresolved ...`。
+
