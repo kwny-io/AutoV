@@ -3795,7 +3795,7 @@ producers affected: ['S04', 'S06', 'S11', 'S12', 'S13', 'S14', 'S15', 'S20', 'S4
 | 2 | 本节初稿按 `topic` 名把 `service.yaml` 连回 `event-topics.v2.json`，得到「7 行对不上」 | `topic` **不是唯一键**：3 个 topic 名被 10 个事件共用（`drama.delivery.v2` 一个挂了 4 个）。换 `event_type` 连接，55/55 全中 | 拿"看起来像主键"的字段去 join，没先查它是否唯一。这正是 `check_all.py:240-252` 注释里记过的同一个坑（作者当时也是先按 topic 比错的） |
 | 3 | 本节初稿称 docs/16:25 的「发布版本」在 `service.yaml` 里不存在，是缺陷 | 不报：那是 `docs/16 §2`「**建议**仓库与交付结构」里的条目，指未来交付仓的形态，不是本仓现状 | 把「建议结构」当成「当前产物规格」来验收 |
 
-## 16.32 `contracts/*.schema.json` 有 8 个不挂在任何 topic 上，说明文字却把 64 个一律叫「单 topic 的 payload schema」
+## 16.32 `contracts/*.schema.json` 有 8 个不挂在任何 topic 上——它们是接口的请求/响应体，也是 `openapi.v2.yaml` 里 11 条从没人核过的 `$ref`
 
 `contracts/README.md:17` 的布局块是这么描述这一类文件的：
 
@@ -3855,30 +3855,47 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 （`admission-record` / `automation-policy` / `generation-command` / `memory-claim`），
 这是**跨字段不变量的写法**，事件 payload 用不着。
 
-它们是**被别的 schema 内联复用的领域对象**，不是 REST 请求/响应体。判据是字段：
-`execution-context` 带 `node_epoch` / `execution_fence` / `command_id` / `request_hash`，
-`episode-manifest` 带 `revision` / `parent_manifest_ref` / `content_hash`，
-`memory-claim` 带 `revision` / `supersedes_claim_refs` / `commit_sequence`——
-这是会被嵌进别处文档的持久化对象，不是某个接口的入参出参。
+它们是**接口的请求/响应体**，主要出处是 `contracts/openapi.v2.yaml`：11 处 `$ref` 里
+**5 处是整个 body**（`schema: $ref:` 直接挂在这个文件上）、**3 处嵌在别的 body 里**
+（`context:` / `policy:` / `generation_command:` 这种属性级引用）。对照组是另外 55 个
+payload schema——它们只被 `event-topics` 的 `data_schema_ref` 指到，`openapi.v2.yaml` 一个都不指。
 
-**跨文件 `$ref` 一共有 6 处，落在 5 组（引用文件 → 目标文件）上，涉及 2 个目标文件。**
-三个口径必须分开说，混用就会得出不同的数（解析 JSON 取 `$ref` 值，不是数文件名出现次数）：
+字段形状也支持这个读法：`execution-context` 带 `node_epoch` / `execution_fence` /
+`command_id` / `request_hash`，`episode-manifest` 带 `revision` / `parent_manifest_ref` /
+`content_hash`，`memory-claim` 带 `revision` / `supersedes_claim_refs` / `commit_sequence`——
+都是可以单独做一次读/写的持久对象，所以会出现在接口上。
 
-| 文件 | `$ref` 出现次数 | 引用它的文件 |
+**引用边必须把 `.yaml` 算进去。** 上一版这一节只遍历 `contracts/**/*.json`，
+把 `openapi.v2.yaml` 的 11 条引用整个漏掉了，才得出"6 个一条 `$ref` 都没有"。
+两种来源分开数：
+
+| 来源 | 外部 `$ref` 处数 | 指向的孤儿 |
 |---|---|---|
-| `execution-context` | **5** | **4** 个（`admission-record` / `enterprise-change-plan` / `generation-command` / `mcp-tools.v2.design.json`），其中 `mcp-tools.v2.design.json` 引了两次 |
-| `automation-policy` | **1** | **1** 个（`mcp-tools.v2.design.json`） |
-| `episode-manifest` / `generation-command` / `context-pack` / `enterprise-change-plan` / `admission-record` / `memory-claim` | **0** | **0** |
+| `contracts/**/*.json` | **6** | `execution-context` 5（4 个文件）、`automation-policy` 1 |
+| `contracts/openapi.v2.yaml` | **11** | 8 个全有，见下表 |
+| **合计** | **17** | **8 个全部被引用** |
 
-合计：**6 处 `$ref`**、**4 个引用文件**、**2 个被引文件**。
+YAML 那 11 处逐条：
 
-六条一条 `$ref` 都没有。它们在别处被提到，但都是 `description` 里的散文对照
-（例如 `post.master-rendered` 写「与 `episode-manifest.v2.schema.json` 的
-`accepted_artifact_ref` 完全相同」），不是引用边。`memory-claim` 更彻底：
-只在 `plans/S16-story-memory.md` 和一个 example 里出现。
+| 行 | 目标 | 位置 | 整个 body? |
+|---|---|---|---|
+| 37 | `execution-context` | `POST /episodes/{id}/runs` 请求体 `context:` | 否（嵌套） |
+| 159 | `enterprise-change-plan` | `POST /change-plans` 响应体 | **是** |
+| 243 | `automation-policy` | `GET /projects/{id}/effective-policy` 响应体 | **是** |
+| 281 | `automation-policy` | `POST /policies/{id}/revisions` 请求体 `policy:` | 否（嵌套） |
+| 315 | `memory-claim` | `POST /series/{id}/memory/query` 响应体 `items:` | 否（数组项） |
+| 414 | `context-pack` | `POST /context-packs` 响应体 | **是** |
+| 469 | `episode-manifest` | `POST /manifests/{id}/commits` 请求体 `candidate_manifest:` | 否（嵌套） |
+| 498 | `episode-manifest` | `GET /manifests/{id}/revisions/{rev}` 响应体 | **是** |
+| 552 | `generation-command` | `POST /route-decisions` 请求体 `generation_command:` | 否（嵌套） |
+| 585 | `generation-command` | `POST /generation-jobs` 请求体 `generation_command:` | 否（嵌套） |
+| 608 | `admission-record` | `GET /admissions/{id}` 响应体 | **是** |
 
-**这不是缺陷**——这六个是 S16 记忆、S07 变更、S20 提示词编译这些**还没实现**的服务的领域对象，
-所以既没有事件挂它，也没有别的 schema `$ref` 它。**这也不是漏挂。**
+所以"6 条一条 `$ref` 都没有"是错的：**8 个全部被 `$ref` 到，一处不缺**，
+只是其中 6 个的唯一入口在 YAML 里。
+
+**这不是缺陷。** 这 8 个是 S07 变更、S16 记忆、S18 上下文、S22 准入这些服务在接口上
+读写的对象，本来就不该有事件挂它。**问题只在那一行说明文字。**
 
 **问题只在那一行说明文字。** 它把 64 个文件说成同一类（"单 topic 的 payload schema"），
 而实际是三类：
@@ -3886,13 +3903,19 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 | 类别 | 个数 | 谁引用 |
 |---|---|---|
 | envelope | 1 | 55 个 topic 的 `schema_ref` 全指它 |
-| 单 topic 的 payload schema | 55 | 各一个 `data_schema_ref` |
-| 无事件、无 `$ref` 的领域对象 | 8 | 其中 2 个被别的 schema `$ref`，6 个只被方案散文提到 |
+| 单 topic 的 payload schema | 55 | 各一个 `data_schema_ref`，`openapi.v2.yaml` 不指 |
+| 接口的请求/响应体 | 8 | `openapi.v2.yaml` 11 处 + 别的 schema 6 处，全部被引用 |
 
 **`check_payload_refs` 只查正向，查不出这个。** 它遍历 55 个 topic、把 `schema_ref` /
 `data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:763-772`），
 从不反向问「contracts/ 下有没有哪个 schema 没被任何 topic 指到」。两个方向里缺了反向那一个，
 所以上面那个 8 从来没人报过，它也就一直被那行说明文字盖着。
+
+**`openapi.v2.yaml` 的 `$ref` 更是完全没人核。** 全仓对这个文件只做了两件事：
+`readme` 检查用正则数它有几个 `get:` / `post:`（`tools/check_all.py:666`），
+缺口 5 记过它一个 `:verb` 都不用。**没有任何检查解析它的 `$ref`**——
+把 11 条里任意一条改成不存在的文件名，十项检查照样全绿。这是本轮真正测到的空洞，
+比那 8 个文件怎么归类重要得多。
 
 **没有改那行说明文字。** 改它意味着替 owner 决定这 8 个算第几类、是不是该挪到
 `contracts/quality/` 之类的子目录——`contracts/README.md:733` 已经记过「payload schema 一律平铺在
@@ -3902,13 +3925,14 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
-| 1 | 本节初稿「`contracts/*.schema.json` 有 63 个 payload schema，而 README 说 55 个，差 8 个」 | 63 里 55 个是 payload、8 个是无事件的领域对象；被引用的共 56 个（多出的 1 个是 envelope）。两个数都没错，错的是把 64 个归成一类 | 先数了「文件数减 envelope」，再拿它直接和「payload schema 数」比。**两个口径的数相减之前，要先确认它们是不是同一类东西** |
+| 1 | 本节初稿「`contracts/*.schema.json` 有 63 个 payload schema，而 README 说 55 个，差 8 个」 | 63 里 55 个是 payload、8 个是接口的请求/响应体；被 topic 引用的共 56 个（多出的 1 个是 envelope）。两个数都没错，错的是把 64 个归成一类 | 先数了「文件数减 envelope」，再拿它直接和「payload schema 数」比。**两个口径的数相减之前，要先确认它们是不是同一类东西** |
 | 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:752`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
 | 3 | 本节初稿「`execution-context` 被 13 个 JSON 引用、`episode-manifest` 被 16 个引用」 | 文件名被提到的次数是 **11** 和 **6**；`memory-claim` 是 **0**（只被 S16 方案与一个 example 用到）。但这仍是「提到」，不是「`$ref`」，见第 5 行 | 13 / 16 是上一轮 `grep -rl` 的**文件命中数**（含 md 与自引用），不是 `contracts/**/*.json` 里的引用数。两个口径混用了一次 |
 | 4 | 本节初稿「55 个 payload schema 全是过去分词或事件名词」 | 末段分布里 `ready` 有 8 个（形容词），`prompt.compiled` 的末段还带点号；只能说"绝大多数是过去分词" | 先下了"全是"这个强判断，再去找例子印证。**枚举类判断必须先数分布再写程度词** |
 | 5 | 上一轮修正后写「被别的 schema 用 `$ref` 挂着」并给出 11 / 6 / 3 / 3 / 2 / 2 / 1 / 0 | **真正 `$ref` 进去的只有 2 个目标文件**：`execution-context` 与 `automation-policy`，其余 6 个一条都没有。那 11/6/3… 是「文件正文里提到该文件名的次数」，多数是 `description` 里写「与 `episode-manifest` 的 `accepted_artifact_ref` 完全相同」这类散文对照 | **数引用边必须解析 JSON 取 `$ref` 的值，不能在原文里搜文件名。** 上一轮的更正已经指出过「两个口径混用」，我却把同一类错误又犯了一次：换成"数引用"这个动作，用的还是字符串搜索 |
-| 6 | 上一轮写「8 个是 REST 请求/响应体的形状」 | 是**领域对象**（带 `revision` / `content_hash` / `parent_manifest_ref` / `supersedes_claim_refs`），会被内联进别的 schema，不是接口入参出参 | 从"不挂事件"直接推到"那就是 REST 的"。中间那步「它们为什么存在」没有证据，靠名字猜的 |
+| 6 | 上一轮写「8 个是 REST 请求/响应体的形状」 | **这一条当时判成错误，其实是对的**——见第 8 行。它们确实出现在 HTTP 接口上，只是当时的理由是猜的（从"不挂事件"推"那就是 REST 的"），**结论对而论证不对** | 从"不挂事件"直接推到"那就是 REST 的"。中间那步「它们为什么存在」没有证据，靠名字猜的。**结论对不等于论证成立；也不能因为论证是猜的就把结论一起推翻** |
 | 7 | 上一轮修正后写「真正的 `$ref` 边只有 5 条」 | 按 `$ref` 出现次数是 **6 处**、按（引用文件→目标）去重是 **5 组**、被引目标文件是 **2 个**。`mcp-tools.v2.design.json` 一个文件里引了 `execution-context` 两次，所以「边」和「文件对」对不上 | 数出来的 5 是按文件对去重的结果，写成了「边」。**报引用数时三个口径（出现次数 / 引用文件数 / 目标文件数）必须同时列出**，只报一个就是在等下一次被当成另一个意思 |
+| 8 | 上一轮把第 6 行"改"成「它们不是 REST 请求/响应体，是被内联复用的领域对象」，并据此写「6 个一条 `$ref` 都没有，只被方案散文提到」 | **反了。这 8 个就是接口的请求/响应体**：`contracts/openapi.v2.yaml` 用 `$ref` 指着全部 8 个，共 **11 处**（5 处是整个 body、3 处嵌在别的 body 里）。加上 JSON 里的 6 处，合计 **17 处**，**没有任何一个目标文件是零引用**。原来的说法基本是对的 | **遍历只写了 `contracts/**/*.json`，`.yaml` 从头到尾没进过搜索范围。** 一个 glob 的扩展名决定了整节的结论，而我没检查"我数的那类文件是不是全部文件"。第 6 行本来是对的，被这条错误的穷举推翻了——**"我没找到"不能当成"不存在"，除非先说清找的范围** |
 
 ### 补记：让 `payloads` 的绿说出这个数
 
@@ -3945,3 +3969,34 @@ payload topic  -> True
 ```
 
 两条都是 `re.search`，新 note 是把额外的数**追加在分号后面**，前面那截一个字没动。
+
+### 补记二：加第十二项检查 `openapi`
+
+上一版这一节断言"6 个一条 `$ref` 都没有"，原因是只扫了 `*.json`。真正的空洞不是那 8 个
+文件怎么归类，而是**`openapi.v2.yaml` 里的 `$ref` 从来没有被任何检查解析过**。全仓对它
+只做了两件事：`readme` 用正则数 `get:` / `post:` 的行数、缺口 5 记过它不用 `:verb`。
+把 11 条 `$ref` 里任意一条改成不存在的文件名，十项检查照样全绿。
+
+现在有 `check_openapi_refs`（`tools/check_all.py`，注册名 `openapi`）：
+
+```
+ok  openapi    43 $ref occurrence(s), 11 naming a file, 32 local pointer(s)
+```
+
+- 43 处 `$ref` 里 11 处是文件名、32 处是 `#/components/...` 本地指针
+- 只核文件名那 11 处：目标必须 `os.path.exists`
+- 本地指针不核文件系统（它们指向本文件自己的 `components`）
+
+**第一版写错了，探针当场抓住。** 正则原本是 `[^'\"\s#]+`——把 `#` 排除在字符类外，
+而 `$ref: '#/components/...'` 是这个文件里最常见的形式，结果 43 处只认出 11 处，
+note 报「0 local pointer(s)」。改成 `[^'\"\s]+` 后才是 32。
+
+探针（改一条 `$ref` → 跑 → 还原）：
+
+| 状态 | 输出 |
+|---|---|
+| 把 `automation-policy` 改成 `zz-does-not-exist` | `FAIL openapi 1 problem(s)` / `$ref -> zz-does-not-exist.v2.schema.json does not exist`，exit 1 |
+| 还原 | `ok openapi 43 $ref occurrence(s), 11 naming a file, 32 local pointer(s)`，byte-identical |
+
+同时 `README_CLAIMS` 加了第 10 条（`openapi file ref`），README 开头的「十一项检查」
+改「十二项检查」，检查段落里 10 个手敲数字里多一个 11。

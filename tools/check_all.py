@@ -559,6 +559,7 @@ README_CLAIMS = [
     ("JSON 解析", r"`json`（(\d+) 个 JSON 解析）", "json", r"(\d+) file"),
     ("schema_ref", r"`payloads`（(\d+) 条 `schema_ref`", "payloads", r"(\d+) schema ref"),
     ("payload topic", r"其中 (\d+) 个 topic 带 payload schema", "payloads", r"(\d+) topic\(s\) with a payload"),
+    ("openapi file ref", r"(\d+) 处指向真实文件", "openapi", r"(\d+) naming a file"),
     ("check_id", r"(\d+) 个\s*\n?`check_id` 是否符合", "checkids", r"(\d+) check_id"),
     ("links", r"`links`（(\d+) 条相对链接", "links", r"(\d+) local link"),
     ("stated invariant", r"自己声明的\s*\n?(\d+) 条 invariant", "families", r"(\d+) stated invariant"),
@@ -757,11 +758,12 @@ def check_payload_refs(name):
     cannot load it, so the failure lands at read time in someone else's service.
 
     This walks topics forward only. The other direction -- a `contracts/*.schema.json`
-    that no topic names -- is not a failure: 8 of the 64 are persistent domain objects
-    with no event of their own (revision / content_hash / execution_fence and the like),
-    meant to be inlined by whoever needs them. Only 2 of the 8 are reached by a `$ref`
-    today. The count goes in the note because nothing else reports it, and the layout
-    block that describes this directory used to call all 64 "single-topic payload schema".
+    that no topic names -- is not a failure: 8 of the 64 are request/response bodies,
+    reached from `contracts/openapi.v2.yaml` (11 `$ref`, 5 of them a whole body) and
+    from sibling schemas (6 `$ref`). Every one of the 8 has at least one inbound
+    `$ref`, so "named by no topic" is not the same as "unused". The count goes in the
+    note because nothing else reports it, and the layout block that describes this
+    directory used to call all 64 "single-topic payload schema".
     """
     r = Result(name)
     topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
@@ -785,6 +787,42 @@ def check_payload_refs(name):
     r.note = (f"{refs} schema ref(s), {with_payload} topic(s) with a payload schema; "
               f"{len(on_disk)} top-level schema file(s), "
               f"{len(orphaned)} of them named by no topic")
+    return r
+
+
+def check_openapi_refs(name):
+    """Every $ref in contracts/openapi.v2.yaml that names a file resolves.
+
+    Nothing else parsed this file. `readme` counts its `get:`/`post:` lines to
+    keep the layout block honest and gap 5 reports that none of its paths use
+    `:verb`, but both work on the raw text. The 11 external `$ref` values were
+    never looked at, so renaming any one of the 8 target schemas would have left
+    every check green while the API document pointed at nothing.
+
+    YAML is parsed with a line scan rather than a YAML library: this repo has no
+    PyYAML dependency and the only thing needed is `$ref: <value>` occurrences.
+    A `$ref` whose value starts with `#` is a local pointer into this same file
+    and is not checked against the filesystem.
+    """
+    r = Result(name)
+    path = os.path.join(CONTRACTS, "openapi.v2.yaml")
+    if not os.path.exists(path):
+        r.fail("contracts/openapi.v2.yaml is missing")
+        return r
+    text = _utf8(path)
+    # `#` must stay inside the character class: `$ref: '#/components/...'` is the
+    # most common form in this file, and excluding `#` makes those match nothing.
+    refs = re.findall(r"\$ref:\s*['\"]?([^'\"\s]+)", text)
+    external = [v for v in refs if not v.startswith("#")]
+    for v in external:
+        target = os.path.join(os.path.dirname(path), v.split("#")[0])
+        if not os.path.exists(target):
+            r.fail(f"$ref -> {v} does not exist")
+    # An operation with a request body or a 200 response but no schema at all is
+    # not this check's business; count only what was resolved, so the note cannot
+    # be read as "N operations verified".
+    r.note = (f"{len(refs)} $ref occurrence(s), {len(external)} naming a file, "
+              f"{len(refs) - len(external)} local pointer(s)")
     return r
 
 
@@ -871,6 +909,7 @@ def check_check_ids(name):
 CHECKS = [
     ("json", check_json, "every contracts/**.json parses"),
     ("payloads", check_payload_refs, "every topic schema_ref/data_schema_ref names a real file"),
+    ("openapi", check_openapi_refs, "every $ref in openapi.v2.yaml that names a file resolves"),
     ("checkids", check_check_ids, "check_id values in the QC plans match the schema pattern"),
     ("links", check_links, "every relative markdown link resolves"),
     ("catalog", check_catalog, "service/topic ids agree across catalog, docs/02, topics"),
