@@ -79,7 +79,7 @@
     "expires_at": {
       "type": "string",
       "format": "date-time",
-      "description": "§4.3 行 462（`\"2026-11-06T08:10:00Z\"`，距示例 `time` 正好 24 小时）+ §5.6 行 726（`expires_at timestamptz`——**可为 NULL**，而示例给了值，事件层收非空）。§3.6 行 310 的 `READY ──(expires_at 到)──► EXPIRED` 说明它是状态迁移的触发条件：**过期后导出物取不到，而这个迁移不发事件**（AEX-2）。消费方若在 `expires_at` 之后才处理这条事件，`data_ref` 已经无效——而事件 `normal_retention_days` 是 14（registry），比这里示例的 24 小时长得多，所以**事件还在、导出物已经没了**是常态而非边缘情况。**`format: date-time` 在本仓库只是注解**：`tools/validate/validate_examples.py` 用 `Draft202012Validator(target, registry=reg)` 且不传 `format_checker`，所以 `tomorrow` 这种值也能过——这一点与全仓其余带 `format` 的字段一致，写在这里是为了不让人误以为它是强约束。"
+      "description": "§4.3 行 462（`\"2026-11-06T08:10:00Z\"`，距示例 `time` 正好 24 小时）+ §5.6 行 726（`expires_at timestamptz`——**可为 NULL**，而示例给了值，事件层收非空）。§3.6 行 310 的 `READY ──(expires_at 到)──► EXPIRED` 说明它是状态迁移的触发条件：**过期后导出物取不到，而这个迁移不发事件**（AEX-2）。消费方若在 `expires_at` 之后才处理这条事件，`data_ref` 已经无效——而事件 `normal_retention_days` 是 14（registry），比这里示例的 24 小时长得多，所以**事件还在、导出物已经没了**是常态而非边缘情况。**`format: date-time` 在本仓库只是注解**：`tools/validate/validate_examples.py` 用 `Draft202012Validator(target, registry=reg)` 且不传 `format_checker`，所以 `tomorrow` 这种值也能过。**而且即使传了也不管用**——`jsonschema` 把 `date-time` 检查器包在 `with suppress(ImportError)` 里，只有装了可选的 `rfc3339_validator` 才注册。这一点与全仓其余带 `format` 的字段一致，写在这里是为了不让人误以为它是强约束。"
     }
   },
   "required": [

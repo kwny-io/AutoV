@@ -936,6 +936,18 @@ AEX-5 是示例层的适配：计划示例的 `data_ref` 写裸字符串 `"audit
 `format_checker`。这个行为与全仓其余带 `format` 的字段一致，已在 schema 描述里写明，免得
 被当成强约束。
 
+这里有两层原因，别只记住第一层。**即使传了 `format_checker`，`date-time` 仍然不校验**：
+`jsonschema` 把这个检查器包在 `with suppress(ImportError)` 里，只有装了可选的
+`rfc3339_validator` 才会注册。所以「本机没装那个包」与「`date-time` 只是注解」这两件事
+会同时成立，也同时会同时失效——`validate_examples.py` 里加一行 `format_checker=` 并不能
+把 `tomorrow` 拦下来。真正会生效的格式检查只有 `date` / `time` / `email` / `uuid` /
+`regex` / `ipv4` / `ipv6` / `idn-*` 这些不依赖第三方包的内置项。
+
+全仓 30 处 `format: date-time`（分布在 71 个 schema 文件中的 27 个）因此全是注解；
+88 个示例里的时间值本身都是合法 RFC3339，所以现在启不启用都看不到差别——**差别只在下一次
+有人写坏的时候**。要不要为此加一个依赖、或改用 `pattern` 强约束，是 owner 决定（`pattern`
+是硬校验，`format` 不是）；本仓现在不改语义，只把这两层原因写清楚。
+
 ### `integration.command-accepted.v2.schema.json`：事件是受理那一刻的快照，可唯一的消费方要的是流水
 
 这是当时剩下 16 个 envelope-only topic 里字段证据最全的一条（今天已是 0 个）：§4.5 行 369–392 给了九个字段加完整示例，

@@ -1942,3 +1942,53 @@ grep -rn "README 行 [0-9]\|README L[0-9]" contracts/ docs/ plans/ delivery/ too
 ```
 
 预期只剩这一条（外加本报告里引它当证据的两行）。
+
+### 16.12 `format: date-time` 不生效有两层原因，README 只写了一层
+
+§16.11 那条教训练「立完规矩当轮就扫自己写的字」。这次照做了，扫到的不是行号，是**一句只说了
+一半的解释**。
+
+`contracts/README.md` 行 934–937 说 `expires_at: "tomorrow"` 能过是因为
+`validate_examples.py` 不传 `format_checker`。这话不假，但不完整。`FormatChecker()` 在
+这台机器上注册的检查器是：
+
+```
+['date', 'email', 'idn-email', 'idn-hostname', 'ipv4', 'ipv6', 'regex', 'time', 'uuid']
+```
+
+**没有 `date-time`。**`jsonschema/_format.py` 把它包在 `with suppress(ImportError)` 里，
+只有装了可选的 `rfc3339_validator` 才注册；本机没装。实测：
+
+| 值 | 不传 `format_checker` | 传 `format_checker` |
+|---|---|---|
+| `2026-11-06T12:00:00Z` | 0 err | 0 err |
+| `tomorrow` | 0 err | **0 err** ← |
+| `2026-13-45T99:99:99Z` | 0 err | 0 err |
+
+所以「在 `validate_examples.py` 里加一行 `format_checker=fc`」并不能把 `tomorrow` 拦住。
+两层原因（调用方不传 / 依赖没装）同时成立，也同时会让那句解释失效。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` 行 934–937 | 「`format: date-time` 在本仓库只是注解，`validate_examples.py` …不传 `format_checker`」（把原因归给调用方一处） | 两层原因：调用方不传 **且** `jsonschema` 的 `date-time` 检查器依赖可选的 `rfc3339_validator`，未安装即未注册。只有 `date`/`time`/`email`/`uuid`/`regex`/`ipv4`/`ipv6`/`idn-*` 这些内置项会生效 | **把「我知道的那个原因」当成「全部原因」。**`format_checker` 是我在 `validate_examples.py` 里亲眼见过的字眼，而 `rfc3339_validator` 从没进过视线——查一次 `FormatChecker().checkers` 就能看见它不在列表里 |
+| 2 | `contracts/audit.export-ready.v2.schema.json` / `expires_at` 的描述 | 同 #1 的一句话（「不传 `format_checker`，所以 `tomorrow` 也能过」） | 同上，补一句「即使传了也不管用」并点出 `suppress(ImportError)` | 同 #1，这处是那句解释的原始出处 |
+
+**这次新写的数字也错了一个。**初稿写「分布在 71 个 schema 文件中的 22 个」，回源一数：
+
+```
+schema files total            = 71
+format: date-time occurrences = 30
+files declaring at least one  = 27
+time-ish example strings      = 88
+  valid RFC3339               = 88
+```
+
+**22 是从早先那份 30 条的打印列表里数的**——而那份列表按文件名排序、同一个文件出现多次，
+我数的是「看上去不同的前缀行数」。真值 **27**。已改。这是本报告反复记录的那个模式：
+**分母/归属数必须脚本算，眼睛数列表一定错。**
+
+顺带确认：全仓 30 处 `format: date-time` 一行未改语义，88 个示例的时间值全是合法 RFC3339。
+所以现在启不启用都看不出差别——**差别只在下一次有人写坏的时候**。要不要加依赖、或改用
+`pattern` 硬约束，是 owner 决定（`pattern` 是硬校验，`format` 不是），这一轮不改。
+
+九项仍全过。
