@@ -3195,7 +3195,7 @@ no filters         69
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
 
-## 16.24 `docs/02` 的镜像只核了「ID 出现过」，五行内容全没核
+## 16.24 `docs/02` 的镜像只核了「ID 出现过」，四列内容全没核
 
 **问题。** `check_catalog` 里管 docs/02 的那段原本是：
 
@@ -3209,7 +3209,7 @@ no filters         69
 
 `i not in doc02` 是在**整个文件文本**里找子串。于是只要 `S01` 在文件任何地方出现过——正文里一句提及、一个示例、一处顺带的名字——这一项就通过。真实后果是：删掉 `S01` 的一整行表格、或者把它的名称/域/schema/团队改成任何别的东西，检查依然全绿。注释写的是「must not drift」，代码做的是「字符串里出现过」。
 
-docs/02 镜像的是五行：
+docs/02 的表格是五列，但 `ID` 是键，承载内容的只有四列：
 
 ```
 | ID | 服务 | 域 | 数据所有者schema | 负责团队 |
@@ -3217,18 +3217,18 @@ docs/02 镜像的是五行：
 | S01 | [租户与访问](../services/tenant-access/service.md) | enterprise | `tenant_access` | platform |
 ```
 
-对应 catalog 的 `name`、`slug`（拼进链接）、`domain`、`schema_owner`、`runtime_owner_team`。
+「服务」这一列同时装了名称和链接，所以一个服务行拆成 **5 项**比对（`name` / `link` / `domain` / `schema_owner` / `runtime_owner_team`），48 × 5 = 240 项。catalog 还有 10 个字段（`acceptance`、`command_api`、`data_owner`、`depends_on`、`deployment_unit`、`maturity`、`published_events`、`query_api`、`recovery`、`scaling`）在 docs/02 里没有对应列，这属于镜像的设计范围之外，不是遗漏。
 
-**现状测量（改成按行比对之前）。** 48 个服务、48 行，双向无缺漏，五行内容 0 处不一致：
+**现状测量（改成按行比对之前）。** 48 个服务、48 行，双向无缺漏，240 项比对 0 处不一致：
 
 ```
-catalog services: 48   docs/02 rows: 48
-
-in catalog but no docs/02 row: []
-docs/02 rows with no catalog entry: []
-
-field disagreements: 0
+docs/02 header columns: 5 ['ID', '服务', '域', '数据所有者schema', '负责团队']
+catalog services: 48  docs/02 table rows: 48
+comparisons per service: 5  total: 240  disagreements: 0
+content columns carrying catalog data: 4
 ```
+
+（最后一行是这项检查的边界：4 列内容、拆成 5 项，catalog 其余 10 个字段不在镜像里。）
 
 也就是说**今天这份镜像是对的**；这项改动不让任何现存问题暴露出来，它只是让「以后改坏了会被发现」成立。
 
@@ -3296,6 +3296,7 @@ field disagreements: 0
 
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
-| 1 | 代码注释「docs/02 is the human-readable mirror … must not drift」，实现为 `if i not in doc02` | 按表格行解析后逐列比对五列 | **注释承诺的和代码做的不是一件事。**子串检查在整份文件里找 ID，任何一处提及都算通过，「不漂移」实际上只保证「ID 这个字符串还在文件里」。这类差距不会报错，只会让人以为已经覆盖了 |
+| 1 | 代码注释「docs/02 is the human-readable mirror … must not drift」，实现为 `if i not in doc02` | 按表格行解析后逐项比对 5 项 | **注释承诺的和代码做的不是一件事。**子串检查在整份文件里找 ID，任何一处提及都算通过，「不漂移」实际上只保证「ID 这个字符串还在文件里」。这类差距不会报错，只会让人以为已经覆盖了 |
+| 2 | 本节标题与正文「**五行**内容」 | **四列**内容（ID 是键），拆成 5 项比对、共 240 项 | 把表头列数当成了受检项数。表头 5 列里 `ID` 是查找键不是被比对的内容；而「服务」一列同时装名称与链接，拆成两个字段。**列数 ≠ 比对项数**，两者写成同一个数是概念没分清 |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
