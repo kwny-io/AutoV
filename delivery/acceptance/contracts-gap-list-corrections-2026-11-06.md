@@ -3692,3 +3692,105 @@ plans with ':verb' path literals: 35 | distinct literals total: 116
 |---|---|---|---|
 | 1 | 本节初稿「35 份方案共 116 处路径字面量」当成接口数 | **116 是含参数名的字符串数，归一到 100 个不同接口** | 参数名不统一：`{id}` / `{plan_id}` / `{manifest_id}` / `{rev}` / `{revision}` 都在用。同一接口写两遍就被数成两个。**数「有多少个接口」必须先归一化参数名**，数「有多少处写法」才不归 |
 | 2 | 本节初稿「catalog 与 openapi 重合 10 个」用含参数名的路径直接比 | 先比出 4 个重合，归一化参数名后才是 **10** 个 | 第一次比的是 `/manifests/{id}/revisions/{revision}` 对 `{manifest_id}`，参数名不同就判为不重合，漏掉 6 对。与第 1 条是同一个坑的两面 |
+
+## 16.31 `service.yaml` 把 topic 的 10 个属性只带出 3 个，丢掉的那个恰好推不出来
+
+`tools/scaffold/README.md` 写生成器的源是**两个**文件：
+
+```
+| `generate_services.py` | `contracts/service-catalog.v2.json` + `contracts/event-topics.v2.json` | `services/*/service.yaml`、`services/*/service.md` |
+```
+
+`generate_services.py:153` 也确实把 topics 读进来建了索引：
+
+```python
+topic_by_type = {t['event_type']: t for t in topics}
+```
+
+但 `render_yaml(s, topic_by_type)` 只从每个 topic 里取三个字段
+（`generate_services.py:67-71`）：
+
+```python
+for et in s['published_events']:
+    t = topic_by_type.get(et, {})
+    events.append((et, t.get('topic', ''), str(t.get('normal_retention_days', ''))))
+```
+
+所以 48 份 `service.yaml` 的 `publishes[]` 全仓只出现三个键：
+
+```
+keys emitted under publishes[]:
+   event_type             55
+   topic                  55
+   retention_days         55
+```
+
+而 `event-topics.v2.json` 每条带 10 个字段（`55/55` 条条齐全）。逐字段对照：
+
+| topic 字段 | 进 `service.yaml` 了吗 | 全仓取值 |
+|---|---|---|
+| `event_type` | 是 | 55 个不同值 |
+| `topic` | 是 | 48 个不同值（3 个 topic 名被多个事件共用） |
+| `normal_retention_days` | 是，改名成 `retention_days` | **恒为 14** |
+| `producer` | 否 | 48 个不同值 = 所在目录的 `service_id` |
+| `data_schema_ref` | 否 | 55 个不同值 |
+| `schema_ref` | 否 | **恒为** `event-envelope.v2.schema.json` |
+| `partition_key` | 否 | **恒为** `tenant_id:aggregate_id` |
+| `delivery` | 否 | **恒为** `at_least_once` |
+| `replay_side_effects` | 否 | **恒为** `false` |
+| `pii_payload` | 否 | **恒为** `references_only_by_default` |
+
+**先说清楚不成立的几条，免得把这条当成数据丢失：**
+
+- **不是拆分丢失。** 按 `event_type` 连回去，55 行 55 命中，两个方向都没有落单
+  （`event-topics entries unreachable from service.yaml: []`）。
+- **`producer` 不用带。** 55 行里 `producer != 所在 service.yaml 的 service_id` 的有 **0** 行
+  ——它就是目录身份，重复写一遍只会多一处能写错的地方。
+- **6 个字段全仓同值，`service.yaml` 是机器人读的交接物，一个转述都嫌多。**
+  真正会变的只有 `data_schema_ref` 和已经在带的三个。
+
+**剩下这一个才是缺口：`data_schema_ref` 推不出来。**
+
+envelope 不约束 payload（`contracts/README.md:41-45`：`data` 只写了 `{"type": "object"}`），
+所以消费方要知道 `data` 里是什么形状，只有 `data_schema_ref` 一条线索。而它不在 `service.yaml` 里，
+`event_type` 也不足以机械还原——试了两种拼接规则（末段用 `-` 连、全段用 `-` 连）：
+
+```
+derivable by mechanical rule: 44/55
+```
+
+反例 11 条，分布在这 10 个服务：
+
+```
+producers affected: ['S04', 'S06', 'S11', 'S12', 'S13', 'S14', 'S15', 'S20', 'S41', 'S44']
+```
+
+形状是「哪个点换成连字符」没有规律，逐条读才看得出：
+
+| `event_type` | 实际 `data_schema_ref` |
+|---|---|
+| `narrative.script.revision.created` | `narrative.script-revision-created.v2.schema.json` |
+| `asset.character.revision.accepted` | `asset.character-revision-accepted.v2.schema.json` |
+| `prompt.compiled` | `prompt.compiled.v2.schema.json`（**这一个连一个都没换**） |
+
+前两个是「最后两个点之前全保留、最后两段合成一段」，`prompt.compiled` 又整个不换。
+同一批 55 条里三种拼法并存，任何一条规则都会猜错 11 个。
+
+**为什么这还算不上"生成的错"。** `service.yaml` 的头注释写「由 catalog 生成」，而 catalog 的
+`published_events` 本来就只是一串 `event_type` 字符串（`distinct shapes: {'str'}`），
+它压根没打算承载 payload 契约。`contracts/README.md:1476` 也说得很清楚：改元数据改 catalog。
+把 `data_schema_ref` 补进 `service.yaml` 意味着改 `render_yaml` 的输出形状——那是所有下游读者
+（含 `plans/README.md:35` 里"以 `service.yaml` 为准"的实现者）都会看到的一次变更，
+不是检查该替 owner 拍的决定。
+
+**这一轮没有改生成器。** 只把事实记在这里：站在 `service.yaml` 这一个入口上，
+55 个事件里有 **11 个**（10 个服务）无法得知 payload 该按哪个 schema 校验，
+而其余 44 个也只是"凑巧能按规则拼出来"。
+
+### 更正表
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 本节初稿把 `contracts/README.md:1469` 那张关系图读成「`service.yaml` 引用 topic 的 `schema_ref`」，据此打算报「图说有、实物没有」 | 图读错了：`──schema_ref──▶` 那条箭头**从 `event-topics.v2.json` 出发**指向 payload schema，跟 `service.yaml` 无关；`schema_ref` 在 48 个 yaml 里出现 0 次是设计如此 | 三层图里箭头起点在行尾、终点在下一行，我把「上一行末尾的对象」当成了起点。**读 ASCII 图要先定位每段箭头两端的文件名，再判方向** |
+| 2 | 本节初稿按 `topic` 名把 `service.yaml` 连回 `event-topics.v2.json`，得到「7 行对不上」 | `topic` **不是唯一键**：3 个 topic 名被 10 个事件共用（`drama.delivery.v2` 一个挂了 4 个）。换 `event_type` 连接，55/55 全中 | 拿"看起来像主键"的字段去 join，没先查它是否唯一。这正是 `check_all.py:240-252` 注释里记过的同一个坑（作者当时也是先按 topic 比错的） |
+| 3 | 本节初稿称 docs/16:25 的「发布版本」在 `service.yaml` 里不存在，是缺陷 | 不报：那是 `docs/16 §2`「**建议**仓库与交付结构」里的条目，指未来交付仓的形态，不是本仓现状 | 把「建议结构」当成「当前产物规格」来验收 |

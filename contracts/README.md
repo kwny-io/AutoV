@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1327 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1328 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
@@ -1503,7 +1503,7 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1327、
+那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1328、
 stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
@@ -1695,6 +1695,31 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `contracts/README.md:13` 自己写的是「21 个**核心**操作」，没有声称完整覆盖——
    真正的问题是**两套约定并存**，不是数量差。
    逐数字见 [§16.30](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
+
+6. **`service.yaml` 的 `publishes[]` 只带 topic 的 3 个属性，而 `data_schema_ref` 推不出来。**
+   生成器的源是两个文件（`tools/scaffold/README.md` 的表也这么写），`render_yaml`
+   确实按 `event_type` 查了 topics 表，但只取 `topic` / `normal_retention_days` 两个值，
+   加上 `event_type` 本身，产出就只有三个键：
+
+   | topic 字段 | 进 `service.yaml` | 全仓取值 |
+   |---|---|---|
+   | `event_type` / `topic` / `normal_retention_days` | 是（最后一个改名 `retention_days`） | 55 / 48 / 恒 14 |
+   | `producer` | 否 | 48 个值，**恒等于**所在目录的 `service_id`（0 处不符） |
+   | `schema_ref` / `partition_key` / `delivery` / `replay_side_effects` / `pii_payload` | 否 | 各自**全仓 1 个值** |
+   | `data_schema_ref` | 否 | 55 个不同值 |
+
+   前面几条都不是损失：`producer` 是目录身份，五个常量带过去只是抄一遍。**只有
+   `data_schema_ref` 真的丢信息**——envelope 不约束 payload（见上一节），它是消费方
+   唯一能知道 `data` 形状的线索，而 `event_type` 换不回来：按「末段用 `-` 连」或
+   「全段用 `-` 连」两种规则，55 条里**只对得上 44 条**，
+   反例 11 条分布在 S04 / S06 / S11 / S12 / S13 / S14 / S15 / S20 / S41 / S44。
+   拼法没有规律——`asset.character.revision.accepted` 是
+   `asset.character-revision-accepted.v2.schema.json`（保留倒数第二个点），
+   `prompt.compiled` 却整个不换。
+
+   **没有改 `render_yaml`。** 补这个字段会改变所有下游读者（含
+   `plans/README.md:35` 里"以 `service.yaml` 为准"的实现者）看到的输出形状，属于 owner 决定。
+   逐数字见 [§16.31](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
 
 ## schema 管不到什么
 
