@@ -2628,10 +2628,15 @@ skip  registry   no check-registry.v2.json yet; nothing to validate
 
 B 关键：文件一存在，`skip` 就变成会计数的 `ok`，说明这个标志是**状态**不是**豁免**。
 
-（探针自己前两版不合法，被 schema 拒掉：`check_id` 写成三段 `TECH.PROBE_OK`，
-pattern 要求 `^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$`，即至少三段；
-`window_scope` 写成了对象，schema 里是 7 个枚举字符串之一，`window_max_frames` 是同级
-的另一个 required 字段。改对之后才有上面 B。这两次失败恰好说明 schema 层在真干活。）
+（探针自己前几版不合法，被 schema 拒掉：`check_id` 写成 `TECH.PROBE_OK`，而 pattern
+`^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$` 要求**至少三段**（`TECH.A` 不匹配，
+`TECH.A.B.C` 匹配）；`window_scope` 写成了对象，schema 里它是 `type: string` 加 5 个枚举
+（`frame` / `window` / `shot` / `track` / `all`）；`window_max_frames` 不是无条件的 required
+字段，而是一条**条件**约束——`allOf` 里 `if window_scope ∈ {frame, window} then required
+["window_max_frames"]`，我第一版把 `window_scope` 给了 `"window"` 却没给这个字段，才被拒。
+改对之后才有上面 B。这几次失败恰好说明 schema 层在真干活。）
+
+两处数字是我写错的，见下方更正表第 3、4 行。
 
 #### 由此带来的变化
 
@@ -2643,5 +2648,7 @@ pattern 要求 `^(TECH|VIS|AUD|SUB)\.[A-Z0-9_]+(\.[A-Z0-9_]+)+$`，即至少三�
 |---|---|---|---|---|
 | 1 | §16.16 结尾、§16.17 结尾 | 「十项全过」 | **9 过 1 跳过**：`registry` 没有数据文件，一格都没校验 | **把「这个检查没报错」当成「这个检查通过了」。**`check_all` 的三态里原本只区分了「失败」和「没跑成」，`main()` 的 `else` 分支把「没东西可跑」也收进了 `ok`；我读的是那行绿字，没看它在检查什么 |
 | 2 | `tools/check_all.py` / `check_registry` docstring | 「reports "not present" rather than failing」 | 保留这半句，并说明它现在通过 `skip()` 表达、不计入 passed | 原 docstring 描述的是行为，但没提这个行为会让摘要行多算一票 |
+| 3 | 本节的探针注「`window_scope` … schema 里是 7 个枚举字符串之一」 | 7 | **5**（`frame` / `window` / `shot` / `track` / `all`） | 把同一份 schema 里 `recheck_scope` 的 7 个枚举数串到了 `window_scope` 头上。两个字段相邻、都是 `type: string` + `enum`，我数了后者的长度写给前者 |
+| 4 | 本节的探针注「`window_max_frames` 是同级另一个 required 字段」 | 无条件 required | **条件** required：`allOf` 里 `if window_scope ∈ {frame, window} then required ["window_max_frames"]` | 看到 `required` 三个字就当成无条件。它出现在 `then` 分支里，条件没写进句子；这也解释了为什么我第一版给 `"window"` 时被拒、给 `"shot"` 时其实不会被拒 |
 
 十项里 9 项真跑过、1 项没有。
