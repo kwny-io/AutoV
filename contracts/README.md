@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 40 个 topic 带**（15 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 41 个 topic 带**（14 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -104,6 +104,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `adaptation.training.completed` | `adaptation.training-completed.v2.schema.json` | S48 §4.3 / §11 C48-4 |
 | `project.episode.created` | `project.episode-created.v2.schema.json` | S03 §5.3 |
 | `audit.export.ready` | `audit.export-ready.v2.schema.json` | S45 §4.3 |
+| `projection.cursor.advanced` | `projection.cursor-advanced.v2.schema.json` | S47 §4.4 |
 | `integration.command.accepted` | `integration.command-accepted.v2.schema.json` | S46 §4.5 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
@@ -997,6 +998,69 @@ DDL 有十三个 `NOT NULL` 无默认值的列（ICA-3），而 `operation_id` �
 `aggregate_sequence: 0`）全部被拒；正向 2 例通过，且**确认了两件本来就想确认的事**：
 `source` 不被信封钉死在某个服务 id 上，`data_ref` 收四键对象（本例没用到，因为拼不出来）。
 
+### `projection.cursor-advanced.v2.schema.json`：一条事件既是监控数据又是序号源，而两件事互相拆台
+
+这是 S47 唯一一条发布事件，也是全仓唯一一个「事件本身就是可观测数据」的 topic：SSE 推送不进 Kafka
+（§10.7 行 1054「**不写**『推送了一条 SSE』。那是海量、低价值的」），流上只留节流后的水位。
+所以 `data` 的五个字段不是业务事实，是**投影健康度的一帧读数**。字段清单在 §4.4 行 443–449，
+示例完整、五个值全有，DDL 支撑在 §5.1 行 483–513（投影表，`projection_state` 的 `CHECK` 在行 491）
+与 §5.3 行 550–576（`sse_cursor` / `subscription_registration`）。这一条能先做，理由和 S46 一样：
+**有完整示例，不是只有散文**。
+
+**最要紧的一处是序号语义被节流拆掉了。** §4.4 行 456 规定 `aggregate_sequence = watermark`
+并写明理由「与 S21 的语义一致，便于下游做缺号检测」；而行 454 又规定「每订阅每秒最多 1 条」。
+在 §3.4 行 226 描述的实际速率下（`node.state-changed` 「可能每秒几十条」），节流后相邻两条本事件的
+`watermark` 之差通常是几十到几百，不会是 1。一个照 §2.2 行 96 写缺号检测的下游（收到 seq 17、当前 15
+→ 判缺 16 并标 `GAPPED`）会在**每一条**本事件上误报。这不是实现者的错——计划给了两个各自自洽的规则，
+合起来把一个字段的既定用途取消了。PCA-1 记这件事，并给了两条修法（换一个每订阅 +1 的计数器，
+或保留 watermark 但改掉行 456 给的理由）。
+
+**第二处是 `lag_ms` 没有算式。** 这个字段在整份方案里只出现一次，就是行 447 那个 `2100`。
+§8.1 行 838 的 `s47_projection_lag_seconds` 看起来像它的定义，其实不是：那是按 `event_class`
+打标签的直方图、单位秒，本字段是无维度单帧读数、单位毫秒。两种自洽读法（投影处理延迟 vs 端到端延迟）
+在 `GAPPED` 时差几个数量级，而 SLO 的 P95 ≤ 5s 只对得上其中一种——**选错的那一种会让「投影滞后监控」
+监控到一个恒等于推送耗时的数**，永远绿灯。而 §9.1/§9.2 的测试清单里没有一条断言它的取值语义，
+所以这个错不会被测试抓住。见 PCA-2。
+
+**状态值三处口径不一致**（PCA-3）。§3.2 行 172–189 的状态机有五个（`ABSENT`/`LIVE`/`GAPPED`/
+`TERMINAL`/`EVICTED`），DDL 的 `CHECK` 有四个（没有 `ABSENT`），示例用了 `LIVE`。本 schema 收**五个**
+并说明 `ABSENT` 不是 CHECK 值而是「没有这一行」的表达——因为那正是 UI 必须回源、最该被上报的一帧。
+只收四个的话，实现者会遇到「无值可发」，然后静默改用默认值 `LIVE`，于是「没有投影」被伪装成
+「投影可信」——与 §3.2 行 191「**禁止**在缺号时『用上一个值继续显示成 LIVE』」是同一类伪装，换了个入口。
+
+**还有一处是信封与 DDL 对不上，本 schema 修不了**（PCA-4）。DDL 行 492 是
+`applied_watermark bigint NOT NULL DEFAULT 0`，而 §4.4 行 456 让 `aggregate_sequence = watermark`，
+信封的 `aggregate_sequence` 却是 `minimum: 1`。于是**水位 0 的那一帧发不出去**。本 schema 把
+`data.watermark` 收成 `minimum: 0` 照 DDL（不是照信封），信封不动——它是全仓共享的一份，为 55 个
+topic 放宽下界不是这个文件能决定的事。
+
+`run_id` 这一条我在登记时写错过两次，PCA-5 留的是第二次的结论。第一次写「`sse_cursor` 没有 `run_id`」，
+回读 §5.3 行 554 发现它有（`run_id text NOT NULL`）。改成「两张表各存一遍同一事实、没有约束让它们相等」
+之后又错了第二次——`subscription_registration` **根本没有 `run_id` 列**，它用 `scope_kind IN ('run','tenant')`
+加可空的 `scope_id`（行 568–569）表达范围。真正的冲突比我先写的两版都硬：**DDL 承认租户级订阅，
+而 `sse_cursor.run_id` 是 `NOT NULL`、本事件的 `run_id` 也是必需项——租户级订阅在这两处都无处安放**，
+且一个租户级订阅要同时跟 N 个 run 的水位，而 `last_sent_watermark` 只有一个值。
+两次错因是同一个：我凭印象推断表里有什么，没回读 DDL 就写进了结论。第一次改的时候也只回读了一半。
+
+`subscription_id` 在两张表里都是裸主键（PCA-6）。它与 S46 的 `receipt_id` 同类，但暴露面小：
+§4.3 行 424 的 `Last-Event-ID` 是 watermark 不是订阅 id。留白在另一处——§4.5 行 464 给
+`RUN_NOT_FOUND` 注明「**含跨租户**（E28）」，行 466 的 `SUBSCRIPTION_NOT_FOUND` 没有这句注解。
+裸主键 + 无注解，正是 E28 需要先定「一律 404」还是「先判租户」的地方。
+
+示例的信封这次是完整且自洽的，`correlation_id` **必须**有值（PCA-8）：计划示例行 441 写的是 `null`，
+而信封要求非空字符串。本事件的因果链天然有值（`causation_id` 指向上游那条推进水位的事件），
+但 `correlation_id` 在发布路径上**没有来源**——outbox（§5.5 行 653–665）与三张表都没有这一列，
+所以示例里填的是与 `causation_id` 相同的值，并在 PCA-8 标明这是「暂按同值」，不是定义。
+
+负向探针：payload 层 17 例全部符合预期——六个必填键缺一各拒、多一个未声明键拒、
+`watermark` 收 `-1` 与字符串各拒、`lag_ms` 收 `-1` 与浮点各拒（`integer` 不是 `number`）、
+`state` 收 `LIVE2` / 小写 `live` / `null` 各拒、`subscription_id` 与 `run_id` 收空串各拒、
+`schema_version` 收 `2.1` 拒。正向 8 例通过：五个 `state` 值全过（`ABSENT` 也在内，这是本 schema
+有意收的第五个）、`watermark: 0` 与 `lag_ms: 0` 过。信封层 4 例负向全拒——`correlation_id: null`
+（就是计划示例那一行）、`aggregate_sequence: 0`（PCA-4 的那一帧）、裸字符串 `data_ref`、空 `source`。
+信封层正向 2 例通过，其中一例确认 `aggregate_id` 与 `data.subscription_id` **没有**被钉成相等——
+本仓信封不对任何 topic 做这种跨层一致性校验，所以 PCA-1 的恒等式只能靠生产者自觉。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -1093,8 +1157,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 40 个 payload schema
-                                                              （见上表；其余 15 个 envelope-only）
+                                        └──data_schema_ref──▶ 41 个 payload schema
+                                                              （见上表；其余 14 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1107,11 +1171,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（118 个 JSON 解析）、`payloads`（95 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 40 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（120 个 JSON 解析）、`payloads`（96 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 41 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（56 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（57 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

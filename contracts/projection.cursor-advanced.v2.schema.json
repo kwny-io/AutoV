@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/projection.cursor-advanced.v2.schema.json",
+  "title": "projection.cursor.advanced payload v2",
+  "description": "event `projection.cursor.advanced` 的 data 部分。定义在 plans/S47-realtime-projection.md §4.4 行 429–456（计划给了完整示例，五个字段全部有值），topic 是 `drama.realtime-projection.v2`，`partition_key = tenant_id:aggregate_id`，`aggregate_id = subscription_id`，`aggregate_sequence = watermark`（§4.4 行 456）。\n\n**这是 S47 唯一一条发布事件**，也是唯一一个「事件本身就是监控数据」的 topic：SSE 推送本身不进 Kafka（§10.7 行 1054「**不写**『推送了一条 SSE』。那是海量、低价值的」），Kafka 上只留节流后的水位。所以五个字段不是业务事实，是**投影健康度的一帧读数**。\n\n**两处计划自相矛盾的地方，本 schema 按「示例 + DDL」收，不按「散文」收。**\n（一）§4.4 行 456 说「`aggregate_sequence = watermark`，与 S21 的语义一致，便于下游做缺号检测」，而行 454 又规定「每订阅每秒最多 1 条」。节流会让 `watermark` 跳过 1000 多个值才发一条，**下游按缺口会导致每一条都判 GAPPED**。见 PCA-1。\n（二）§4.4 行 447 的 `lag_ms` 在整个方案里只出现过这一次（§8.1 行 838 的 `s47_projection_lag_seconds` 是另一个量，按 `event_class` 打的观测直方图，不是本字段的来源）。它有两个可能的算据而计划没有指定是哪个——按 `time − last_event_time` 算的是**投影陈旧度**，按 `now − last_sent_watermark 对应时刻` 算的是**送达延迟**，两者在 GAPPED 时会差几个数量级。见 PCA-2。\n\n**`state` 的五个有效值得弄清楚「谁能发哪个」。** DDL §5.1 行 491 的 `CHECK` 有四个值（`LIVE` / `GAPPED` / `TERMINAL` / `EVICTED`），§4.4 行 448 的示例用的是 `LIVE`，但 §3.2 行 172–189 的状态机有**五个**状态（多了 `ABSENT`），而 `ABSENT` 不在 `CHECK` 里、也不可能有行。本 schema 收五个值：四个 DDL 值照抄（house style：DDL 有 `CHECK` 才收 enum，且收全），另加 `ABSENT`——因为 §3.2 行 185 明写它「没有投影，UI 必须回源」，而「投影行不存在」正是一种该被发出来的健康读数。见 PCA-3。\n\n**`run_id` 是本文件里最站不住的一个必需项**：它只在示例里出现（行 445），`sse_cursor` 有它（§5.3 行 554 `run_id text NOT NULL`），但 `subscription_registration` **没有**——那张表用 `scope_kind IN ('run','tenant')` + 可空的 `scope_id`（行 568–569）表达范围。于是租户级订阅既进不了 `run_id NOT NULL` 的游标表，也填不出本字段。见 PCA-5。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "信封与 payload 各有一份 `schema_version`，两者都是 `\"2.0\"`（与 `contracts/examples/` 下既有示例一致）。这里是 payload 那份。"
+    },
+    "subscription_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "订阅 id，`sub_01J...` 形态。出处：§4.4 行 444；DDL §5.3 行 551（`sse_cursor`）与行 565（`subscription_registration`）都是 `subscription_id text PRIMARY KEY`。**它同时是信封的 `aggregate_id`**（§4.4 行 431「`aggregate_id = subscription_id`」），所以发了两遍——顶层 `aggregate_id` 与 `data.subscription_id` 恒等，与 S46 的 `operation_id` 是同一类冗余，照示例收、不消除。**两张表都以它为裸主键**：不带 `tenant_id`，全局唯一，而它出现在 SSE 的 `id`/`Last-Event-ID` 交互里（§4.3 行 424），即客户端拿得到。见本文件 `x-needs-owner` 第三条。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "被订阅的 run，`run_01H...` 形态。出处：§4.4 行 445。**本字段是必需的，而「必需」这件事本身有冲突**：`sse_cursor.run_id` 是 `text NOT NULL`（§5.3 行 554），但 `subscription_registration` 允许 `scope_kind IN ('run','tenant')`（行 568）且 `scope_id` 可空（行 569）——**租户级订阅没有单个 `run_id`**，而它按行 554 存不进游标表。见 PCA-5。"
+    },
+    "watermark": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "已经投影到（并且已经推送出去）的投影水位。出处：§4.4 行 446。**上界是 `0` 而不是信封用的 `1`**：DDL §5.1 行 492 `applied_watermark bigint NOT NULL DEFAULT 0`——默认值就是 0，一个新投影行在收到首条事件之前水位就是 0，而 §4.4 行 456 规定 `aggregate_sequence = watermark`。若这里写 `minimum: 1`，就会出现 `watermark = 0` 而 `aggregate_sequence = 0` 的组合，后者过不了信封的 `minimum: 1`——也就是说**水位 0 的那一帧根本无法被发布**。这不是本 schema 能修的（信封不在本文件范围内），所以这里按 DDL 收 0，并在 PCA-4 登记信封与 DDL 的这个冲突。"
+    },
+    "lag_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "投影滞后，毫秒。出处：§4.4 行 447（示例值 `2100`）。**这是全篇唯一一次出现 `lag_ms`**：§8.1 行 838 的 `s47_projection_lag_seconds` 是按 `event_class` 打标签的观测直方图，不是这个字段的来源，也不是同一个量（一个带 `event_class` 维度、一个不带；一个是直方图观测、一个是单帧读数）。计划没有定义它相对哪个时刻算，两种读法都自洽：`time − projection_change_log.created_at`（投影处理延迟）或 `now − 该 watermark 对应事件的 time`（端到端延迟）。**GAPPED 时两者能差几个数量级**——前者很小（事件刚处理完就推），后者很大（缺的那段一直没补）。见 PCA-2。"
+    },
+    "state": {
+      "enum": [
+        "LIVE",
+        "GAPPED",
+        "TERMINAL",
+        "EVICTED",
+        "ABSENT"
+      ],
+      "description": "发布这一刻该订阅所属 run 的投影行状态。**四个值照抄 DDL §5.1 行 490–491 的 `CHECK (projection_state IN ('LIVE','GAPPED','TERMINAL','EVICTED'))`，一个不删；第五个 `ABSENT` 是 §3.2 状态机里有的、DDL 里没有的**（见 PCA-3）。注意本字段与信封不是一件事：`EVICTED` 行在 §3.2 行 189 明写「否（重建时全量拉）」——已清理的行不再收事件，所以「发布一条 `state = \"EVICTED\"` 的事件」这件事本身要求发布前该行还在。`TERMINAL` 同理（行 188「只收迟到事件的诊断，不更新展示」）。两个终态值在枚举里可达，但在「游标前进时才发」的规则下（§4.4 行 454）出现的时机是**行被清理/终结的那一刻**，不是之后。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "subscription_id",
+    "run_id",
+    "watermark",
+    "lag_ms",
+    "state"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`aggregate_sequence` 与节流共用一套语义：按 §4.4 行 456 它是 watermark（可跳号），按 §2.2 行 96 下游拿它做缺号检测",
+      "demanded_by": "订阅 `drama.realtime-projection.v2` 的任何缺号检测方（S44 的成本投影、S45 的审计游标）——它们读到的是 watermark 序列，而不是 1,2,3",
+      "s47_status": "未决。本 schema 照 §4.4 行 456 与 §5.5 行 657（`aggregate_sequence bigint NOT NULL, -- = watermark`）收，`minimum: 0`；但这意味着这个字段**不能**按信封 `aggregate_sequence` 的通常含义（每聚合单调 +1 无洞）消费。要么改节日流里的值，要么除本文件外再给一个单调计数器，需要 owner 定。见 PCA-1。"
+    },
+    {
+      "field": "`lag_ms` 的定义：相对哪个时刻算",
+      "demanded_by": "S47 自己的投影滞后监控（§4.4 行 454「用来做投影滞后监控与审计游标位置」）、以及任何拿它做 SLO 判定的方（§8.1 行 838 docs/03 的 P95 ≤ 5s）",
+      "s47_status": "未决。§4.4 行 447 只给了示例值 `2100`，没有算式。两种读法在 GAPPED 下差几个数量级，而 SLO 的 5s 阈值只能对上其中一种。见 PCA-2。"
+    },
+    {
+      "field": "`subscription_id` 在两张表里都是裸主键，且经 SSE `Last-Event-ID` 暴露给客户端",
+      "demanded_by": "E28（跨租户不得探测存在性）；`GET /runs/{run_id}/events` 的 `Last-Event-ID` 交互（§4.3 行 424）",
+      "s47_status": "见 PCA-6 的 E28 讨论：订阅创建走 `tenant_id + command_id`（§6.1 行 691），读路径的 `subscription_id` 是否带租户校验，方案只在 §4.5 行 466 的 `SUBSCRIPTION_NOT_FOUND` 一处暗示，没有明说它含跨租户。裸主键本身是历史事实，不是本 schema 引入的。"
+    },
+    {
+      "field": "`state` 里的 `EVICTED` / `TERMINAL` 在「游标前进时才发」的规则下何时可达",
+      "demanded_by": "任何按 `state` 判「这个 run 还能不能继续看」的消费方",
+      "s47_status": "未决。§3.2 行 188–189 说这两个状态不再更新展示、不再收事件；而 §4.4 行 454 说本事件只在游标前进时发。两者相交只剩「进入该状态的那一帧」，而那一帧是否算「游标前进」方案没写。见 PCA-3。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PCA-1",
+      "summary": "`aggregate_sequence = watermark` 加「每订阅每秒 ≤1」= 每条事件的序号都跳号，任何缺号检测都会 100% 误报",
+      "s47_event": "§4.4 行 456：「`aggregate_sequence = watermark`，与 S21 的语义一致，便于下游做缺号检测。」",
+      "s47_throttle": "§4.4 行 454：「**只在游标前进时发，且必须节流**：每订阅每秒最多 1 条。」outbox 侧同一条纪律写在 §5.5 行 669：「同一订阅同 watermark 只写一条（`UNIQUE` 保证）」。",
+      "s47_seq_semantics": "§2.2 行 90–99 定义了两类序号：A 类是「每个 run 单调递增、**无洞**」的 S21 `projection_watermark`，S47 拿它做缺号检测（行 96）与乱序拒绝（行 97）；B 类不保证无洞，只按 `time` 排序、**不做缺号检测**（行 99）。",
+      "why_it_matters": "本事件把 A 类语义借给了 B 类场景。`watermark` 确实每 run 单调递增，但在每个 run 每秒几十到几百条事件的实际速率下（§3.4 行 226「可能每秒几十条」），节流到每订阅每秒 1 条意味着相邻两条本事件的 `watermark` 之差通常是**几十到几百**，而不是 1。一个照 §2.2 行 96 写缺号检测的下游（收到 seq 17 当前 15 → 标记缺 16）会在**每一条**本事件上判缺号，于是要么全部标 GAPPED，要么完全忽略这个字段。计划明确说这个字段是为了缺号检测才设成 watermark 的，而节流恰好把它废掉了。",
+      "consequence": "下游只有两条路，都是坏的：(a) 照 §2.2 实现 → 恒定误报；(b) 特例化本 topic 为「序号可跳」→ 那么 §2.2 行 99 那句「必须按 topic 配置，不能一套逻辑通吃」反而是唯一正确读法，可 §4.4 行 456 给的理由（「便于下游做缺号检测」）就不成立了。",
+      "fix_shape": "二选一，需 owner 定：(1) 让 outbox 写一个**每订阅单调 +1** 的计数器到 `aggregate_sequence`，watermark 留在 `data.watermark`——这样信封语义恢复，缺号检测对 SSE 事件本身成立（「该发的都发了」），而对上游水位不成立（那本来就不该在这里判）；(2) 保留 watermark 进 `aggregate_sequence`，但把 §4.4 行 456 的理由改掉，并在 §2.2 行 99 的 B 类里显式点名本 topic。**本 schema 不改信封、不猜哪一种**，只把 `data.watermark` 收成 `minimum: 0` 并在此登记。"
+    },
+    {
+      "id": "PCA-2",
+      "summary": "`lag_ms` 全篇只出现在示例里一次，没有算式；两种自洽读法在 GAPPED 时差几个数量级，而 SLO 阈值只对得上其中一种",
+      "s47_example": "§4.4 行 447：`\"lag_ms\": 2100,`。这是 `lag_ms` 在 plans/S47-realtime-projection.md 里**唯一一次出现**。",
+      "s47_metric": "§8.1 行 838：`s47_projection_lag_seconds | histogram | event_class | **核心 SLO**：事件到投影的延迟（docs/03: P95 ≤ 5s）`。注意它是 histogram，带 `event_class` 维度，单位是秒；本字段是单帧读数、无维度、毫秒。**两者同名不同物**，不能拿前者当后者的定义。",
+      "s47_resync": "§3.8 行 305–318 的回源路径会「覆盖（这是一次全量刷新，不是合并）」并「清除 gap 标记，state = 'LIVE'」——即 GAPPED 期间投影可能是**旧值**，而在回源成功的那一帧跳到**新值**。",
+      "why_it_matters": "按 `time − 投影处理完成的时刻` 算，滞后永远是毫秒级（事件刚处理完就推），SLO 的 5s 几乎不会破；按 `now − data.watermark 对应事件的 time` 算，GAPPED 期间滞后会一路涨到回源成功那一刻前的整段 gap 时长（秒到分钟级），SLO 会正常告警。**同一份数据配两种算式，一个永远绿灯一个会红灯**，而计划没说用哪个。§4.4 行 454 给本事件的用途是「做投影滞后监控」，所以选错的那个会让监控彻底失效——这不是精度问题，是「有没有监控」的问题。",
+      "consequence": "实现者会挑好写的那一种（前者，直接 `now − created_at`），于是产出的是一个恒等于「推送处理耗时」的数，与它自称监控的「投影滞后」无关。而 §9.1/§9.2 的测试清单里没有一条断言 `lag_ms` 的取值语义，所以这个错不会被测试抓住。",
+      "fix_shape": "在 §4.4 或 §8.1 补一行算式，并说明 GAPPED 期间的期望取值（例如「回源成功前 `lag_ms` 单调上升，回源那一帧归零」）——后者同时给了 §9.2 一个可断言的形状。本 schema 只收 `integer, minimum: 0`，不替计划选算式。"
+    },
+    {
+      "id": "PCA-3",
+      "summary": "状态机有五个状态，DDL 的 `CHECK` 只有四个，示例用的是其中一个——三处口径不一致",
+      "s47_machine": "§3.2 行 172–181 的画与行 183–189 的表，都是**五个**：`ABSENT` / `LIVE` / `GAPPED` / `TERMINAL` / `EVICTED`。行 185 明写 `ABSENT`「没有投影，UI 必须回源」；行 173 的转移图起点就是 `ABSENT ──(首次事件)──► LIVE`。",
+      "s47_ddl": "§5.1 行 490–491：`projection_state text NOT NULL DEFAULT 'LIVE' CHECK (projection_state IN ('LIVE','GAPPED','TERMINAL','EVICTED'))`——**四个值，没有 `ABSENT`**。这是对的，`ABSENT` 就是「没有这一行」，不可能是一条 CHECK 约束的取值。",
+      "s47_example": "§4.4 行 448：`\"state\": \"LIVE\"`——只用到了四个 DDL 值里的第一个。",
+      "why_it_matters": "三处口径各自都自洽，合起来却让人无法判断本字段到底收几个值：按 DDL 收四个，就表达不了「这个订阅指向的 run 还没有投影」（而这恰恰是要回源的时刻，是健康度最需要上报的一帧）；按状态机收五个，就与 DDL 的 `CHECK` 不符，实现者写库时会撞约束。**house style 是「DDL 有 `CHECK` 才收 enum，且收全」**，这里的特殊之处在于第五个值不是「DDL 漏了」而是「DDL 表达不了」——没有行就没有列值。",
+      "consequence": "若只收四个，本事件在最该发的时候（首条事件之前、UI 必须回源时）无值可发，实现者会静默改用 `LIVE`（默认值），于是「没有投影」被伪装成「投影可信」——这正是 §3.2 行 191 那句「**禁止**在缺号时『用上一个值继续显示成 LIVE』」要防的同一类伪装，只是换了个入口。",
+      "fix_shape": "本 schema 收**五个**并在此说明 `ABSENT` 不是 `CHECK` 值、而是「没有行」的表达。需 owner 确认的是另一件事：`ABSENT` 时 `lag_ms` 与 `watermark` 填什么（没有行就没有 `applied_watermark`，`minimum: 0` 允许填 0，但那与「真的投影到 0」不可区分）——这条与 PCA-4 是同一个洞。"
+    },
+    {
+      "id": "PCA-4",
+      "summary": "水位 0 的那一帧发不出去：DDL 允许 `applied_watermark = 0`，信封的 `aggregate_sequence` 最小是 1",
+      "s47_ddl": "§5.1 行 492：`applied_watermark bigint NOT NULL DEFAULT 0,`——默认值 0，且没有 `CHECK` 排除 0。新建的投影行在下一条事件到来之前水位就是 0。",
+      "s47_rule": "§4.4 行 456：「`aggregate_sequence = watermark`」；§5.5 行 657 同一条纪律写进了 DDL：`aggregate_sequence bigint NOT NULL,   -- = watermark`。",
+      "envelope": "`contracts/event-envelope.v2.schema.json` 的 `properties.aggregate_sequence` 是 `{\"type\": \"integer\", \"minimum\": 1}`。仓里没有任何 topic 为 `aggregate_sequence` 放宽过下界（信封是全局一份）。",
+      "why_it_matters": "把三处合起来：一个刚建好、水位为 0 的投影行若要发本事件，`aggregate_sequence` 必须是 0，而信封拒绝 0。所以**「水位 0」这个状态在节日流里不可表达**。实际影响取决于「游标前进时才发」怎么解释——如果 0 不算「前进」，那永远不会有 0 帧，本条无害；如果首次订阅建立就算一次前进（`since_watermark` 缺省时，§2.3 行 109），那发出来的第一帧就是 0。方案没有澄清「前进」是否包含从无到 0。",
+      "consequence": "实现者最可能的处理是「跳过 0，等第一条真事件」，于是**一个新订阅在收到第一条上游事件之前不会出现在任何下游的滞后监控里**——恰恰是这段空窗期最需要监控。或者更糟：实现者为了让第一帧发得出去，把 0 写成 1，于是 watermark 与 `data.watermark` 不一致，PCA-1 的恒等式当场破。",
+      "fix_shape": "本 schema 把 `data.watermark` 收成 `minimum: 0`（照 DDL），**不**对信封动手——信封属于全仓共享契约，改它的下界会影响 55 个 topic。需 owner 定的是：`watermark = 0` 时是否发事件；若发，`aggregate_sequence` 填什么。"
+    },
+    {
+      "id": "PCA-5",
+      "summary": "`subscription_registration` 允许 `scope_kind='tenant'`，而 `sse_cursor.run_id` 是 `NOT NULL`、本事件的 `run_id` 也是必需的——租户级订阅在这两处都无处安放",
+      "s47_event": "§4.4 行 445：示例里 `\"run_id\": \"run_01H...\"` 是 `data` 的一个字段；本 schema 把它收成必需项（照示例）。",
+      "s47_cursor_ddl": "§5.3 行 550–560 `sse_cursor` 的列：`subscription_id`（PK）/ `tenant_id` / `principal_id` / `run_id text NOT NULL`（行 554）/ `channel` / `last_sent_watermark bigint NOT NULL` / `created_at` / `last_activity_at` / `expires_at`。**没有 `scope_kind`，没有 `scope_id`**；唯一表达范围的是 `run_id`，而它是 `NOT NULL`。",
+      "why_it_matters": "三处放一起，租户级订阅在结构上走不通：(1) `subscription_registration` 收 `scope_kind='tenant'`，此时 `scope_id` 可空，**没有一个 run 可写**；(2) 而同一个订阅要进 `sse_cursor` 才能有游标，那张表的 `run_id` 是 `NOT NULL`，写不进去；(3) 就算硬塞一个 run_id 进去，`last_sent_watermark` 也只有一个，而 §2.2 行 92 说 watermark 是**按 run** 单调的——一个租户级订阅要同时跟 N 个 run 的水位，单值游标表达不了。所以「订阅租户下所有 run」这个范围写在 DDL 里了，但没有任何一条数据路径能承载它。",
+      "consequence": "实现者只有三条路，都超出「照计划收字段」：(a) 禁掉 `scope_kind='tenant'`——那要改 DDL 的 CHECK，而它是本服务自己的表，属于本服务能决定的范围，但计划没说要禁；(b) 按 run 拆成 N 个内部游标——那就与 `subscription_id` 是 `sse_cursor` 的裸主键冲突（一个订阅只能有一行）；(c) 让 `run_id` 可空并在租户级时填一个哨兵值——那本事件的 `data.run_id` 就承载了一个假值，下游按 run 聚合滞后时会把它算成一个不存在的 run。**本 schema 照示例把 `run_id` 收成必需**，因此它只对 run 级订阅成立；租户级订阅该发什么，需 owner 定。",
+      "fix_shape": "需 owner 在 S47 方案里定一件事：租户级订阅是否支持。若不支持，把 §5.3 行 568 的 CHECK 收成 `IN ('run')` 并在 §2.3 行 107 说明；若支持，`sse_cursor` 要改成按 `(subscription_id, run_id)` 存游标，而本事件的 `run_id` 在租户级订阅下一次前进可能有多条（一 run 一条），`aggregate_sequence = watermark` 的跨 run 单调性也就同时没了（与 PCA-1 是同一个洞的另一面）。",
+      "s47_scope": "§2.3 行 107：`POST /subscriptions` 的请求体里是 `\"scope\": { \"kind\": \"run\", \"id\": \"run_01H...\" }`；DDL §5.3 行 568：`scope_kind text NOT NULL CHECK (scope_kind IN ('run','tenant'))`，行 569：`scope_id text,`（**可空**）。所以 `tenant` 是一个被 DDL 承认、被请求体格式允许的订阅范围。",
+      "s47_watermark": "§2.2 行 92：「S21 的 `projection_watermark` 对 `orchestration.run.state-changed` 是**每个 run** 单调递增、无洞的」。"
+    },
+    {
+      "id": "PCA-6",
+      "summary": "`subscription_id` 两张表都是裸主键，还经 SSE 的 `Last-Event-ID` 暴露；读路径是否带租户校验方案没说",
+      "s47_ddl": "§5.3 行 551 与行 565：`subscription_id  text PRIMARY KEY`，两处都没有 `tenant_id` 在键里（`tenant_id` 是各自的普通列）。",
+      "s47_exposure": "§4.3 行 424：「`id` 就是 `projection_watermark`。客户端把它作为 `Last-Event-ID` 回来。」——`Last-Event-ID` 是 watermark 不是 `subscription_id`，所以暴露面比 S46 的 202 响应小。但 §4.1 行 357 的 `DELETE /subscriptions/{id}` 与 §2.3 行 113 的 `stream_url`（`/runs/run_01H.../events?subscription_id=sub_01J...`）都会带出它，而 §4.5 行 465 只为它登记了 `SUBSCRIPTION_NOT_FOUND`，没有为它登记 `TENANT_SCOPE_DENIED`。",
+      "s47_e28": "§9.5 行 949 有 E28 的测试小节；`RUN_NOT_FOUND` 在 §4.5 行 464 明注「**含跨租户**（E28）」。同一张错误码表里 `SUBSCRIPTION_NOT_FOUND`（行 465）没有这句注释，而 `TENANT_SCOPE_DENIED`（行 463）的说明只提「header 与认证租户不符」，没说订阅路径上用它还是用 404。",
+      "why_it_matters": "跨租户不可探测的要求对 `run_id` 是明确的（行 464），对 `subscription_id` 是**留白**。因为 `subscription_id` 是裸主键（§5.3 行 551、行 565 两处），一个租户 B 拿租户 A 的 `subscription_id` 去 `DELETE /subscriptions/{id}` 或去拼 `stream_url`，若返回 404 是「不存在」、返回 403 是「存在但无权」——两者之差泄漏了跨租户存在性。这不是本 schema 引入的问题，但本 schema 是第一个把这个 id 写成契约的地方，该一并登记。",
+      "consequence": "实现者会照 `RUN_NOT_FOUND` 的样式给 `SUBSCRIPTION_NOT_FOUND` 补「含跨租户」，但那是**取消**了 `TENANT_SCOPE_DENIED`（行 463）在订阅上的用途，而方案没有说订阅路径上用哪个。两种选择都能过 E28，语义不同（一个是「一律 404」，一个是「先判租户再判存在」），测试写法也不同。",
+      "fix_shape": "在 §4.5 表里给 `SUBSCRIPTION_NOT_FOUND` 补一句与行 464 同形的注解，明确它在跨租户时的行为。本 schema 只声明字段形状。"
+    },
+    {
+      "id": "PCA-7",
+      "summary": "`state` 的 `TERMINAL`/`EVICTED` 与「游标前进时才发」相交只剩一帧，而那一帧是否算「前进」没写",
+      "s47_machine": "§3.2 行 188：`TERMINAL`「终态，不再变更（但仍是投影，不是权威）| 只收迟到事件的诊断，不更新展示」；行 189：`EVICTED`「已清理，下次访问时重建 | **否（重建时全量拉）**」——已清理的行不再收事件。",
+      "s47_rule": "§4.4 行 454：「**只在游标前进时发**，且必须节流：每订阅每秒最多 1 条。」",
+      "why_it_matters": "两个终态的语义都是「之后不再有水位变化」。所以 `state = \"TERMINAL\"` 或 `\"EVICTED\"` 的事件只可能出现在**进入该状态的那一帧**——而那一帧的 watermark 通常并不前进（run 进入终态本身不推高投影水位，除非伴随一条事件）。若严格按「游标前进才发」实现，这两个值永远不会出现在节日流里，`enum` 里有它们但不可达；若为了发它们而放宽规则，就违反了节流的初衷（行 454 那句「若每条 SSE 事件都发一条 Kafka 事件，就形成了一个比原流更大的流」）。",
+      "consequence": "下游若按 IPC 里「`state` 可能取五个值」来写「run 已终结，停止轮询」的逻辑，那段代码是死的；而 `EVICTED` 真正发生时，下游**收不到任何东西**，会一直以为该 run 还在跑（因为它最后收到的 `state` 仍是 `LIVE`）。§7.6 的失败矩阵里 `投影陈旧（回源失败）` 一条（行 827）给了 UI 侧的处理，但没有给下游一个信号。",
+      "fix_shape": "要么在 §4.4 明确「进入终态/被清理时强制发一条，不受前进与节流约束（这类事件量级是每订阅一次）」，要么在 §3.2 的表里说明这两个状态不进节日流、下游只能靠 `run.state` 事件知道终结。需 owner 定；本 schema 收全五个值（house style），并在此标注可达性存疑。"
+    },
+    {
+      "id": "PCA-8",
+      "summary": "示例里的 `correlation_id: null` 过不了信封（信封要求 `string, minLength 1`），而这个字段在发出的每一帧上都会是 null",
+      "s47_example": "§4.4 行 441：`\"correlation_id\": null, \"causation_id\": \"evt_kafka_...\",`。",
+      "envelope": "`contracts/event-envelope.v2.schema.json` 的 `properties.correlation_id` 是 `{\"type\": \"string\", \"minLength\": 1}`——**没有 null 分支**。16 个必需键里 `correlation_id` 在内。",
+      "why_it_matters": "本事件的因果链是「某条上游事件推进了水位 → 本事件」，所以 `causation_id` 天然有值（示例给的 `evt_kafka_...`），而 `correlation_id`（同一条业务流的相关 id）在本服务的发布路径上**没有来源**：outbox 的列（§5.5 行 653–665）里没有 `correlation_id`，`sse_cursor` / `subscription_registration` / `run_dashboard_projection` 三张表也都没有（§5.1 行 483–513、§5.3 行 550–576）。骨架代码若照示例写 `null`，`contracts/examples/` 的校验会当场失败（本仓的 `tools/validate/validate_examples.py` 就是这么跑的）。",
+      "consequence": "照抄示例的实现会发出一批不合格的事件；而修正它需要决定：是从 `causation_id` 复制（语义上不成立，相关≠因果），还是补一个固定值（等于伪造），还是落一条反引流的 id。三者都超出「照计划收字段」的范围。",
+      "fix_shape": "示例应改成有值（例如与 `causation_id` 同值，或改用订阅创建时的 `command_id`），并说明来源；这就同时要求 outbox 或某张表存这个值。本仓的示例文件（`contracts/examples/projection-cursor-advanced.json`）**必须**给非空值——信封是硬约束，不因计划示例的笔误而放宽。"
+    }
+  ]
+}

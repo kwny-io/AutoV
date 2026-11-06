@@ -275,3 +275,59 @@ for c in nn:
 第 6 节末尾那段说「`json` 的 116 与 `schema files` 的 48 相差很大」。那两句里的两个数都是**当时**的值：
 本轮加了 1 个 schema、1 个示例，于是变成 118 / 49。**差值仍是 69，不是恒等式，仍然不能互相校验**——
 这正说明第 6 节那句「只能靠每轮重跑 `check_all` 时顺手回填」是对的，因为它会随文件增减漂，而没有任何机制替它回填。
+
+## 8. S47 这一轮：同一个字段我连错两版，两次都是没回读 DDL
+
+写 `projection.cursor-advanced.v2.schema.json` 时，`data.run_id` 这一条我先后写成两个错误结论，
+都被自己的行号复核抓回来了。第三次才对。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | schema `x-conflicts[PCA-5]` 初版 | 「`sse_cursor` 没有 `run_id` 列（§5.3 行 550–560）」 | 有，§5.3 行 554：`run_id text NOT NULL` | 凭「游标表只需要游标」的印象下结论，没打开 DDL |
+| 2 | 同上，第二版 | 「`subscription_registration` 也有 `run_id`（行 566），两表各存一遍同一事实、没有约束让它们相等」 | `subscription_registration` **没有 `run_id` 列**；行 566 是 `tenant_id`。范围由 `scope_kind IN ('run','tenant')`（行 568）+ 可空 `scope_id`（行 569）表达 | 第一版错后只回读了 `sse_cursor` 一半，把「另一张表应该有」当成了「另一张表有」 |
+| 3 | §4.5 错误码引用（PCA-6） | `SUBSCRIPTION_NOT_FOUND` 在行 466 | 行 465；行 466 是 `IDEMPOTENCY_KEY_REUSED` | 表里连续三行都以 `| 4` 开头（404/404/409），数行时按内容猜没按行号核 |
+| 4 | 本节「复核口径」末段 | 「`118 − 49 = 69`，本轮变成 120 / 50，**差值仍是 70**」 | 差值从 69 变成 **70**，不是「仍是」 | 心算了两个两位数减法；前三条是没回读文档，这一条是没让脚本算 |
+
+**第 2 条把结论改反了，改出来的是一个比原结论更硬的冲突**：DDL 承认租户级订阅（`scope_kind='tenant'`，
+`scope_id` 可空），而 `sse_cursor.run_id` 是 `NOT NULL`、本事件的 `run_id` 又是必需项——
+**租户级订阅在游标表和本事件两处都无处安放**；且租户级订阅要同时跟 N 个 run 的水位，
+而 `last_sent_watermark` 只有一个值，`aggregate_sequence = watermark` 的跨 run 单调性同时消失
+（与 PCA-1 是同一个洞的另一面）。
+
+三处错因是同一个：**凭印象推断表里有什么**。第一次只改了一半，第二次改得比第一次更远。
+所以我在这轮之后加了一条自查动作：**凡是 schema 里写「某表有/没有某列」，先用脚本按行号取出那一行、**
+**把整段 DDL 的列名打出来对一遍**，不靠记忆。上面 33 处引用就是这么做过的（0 处不符）。
+
+复核口径（本节数字回这张表数）：
+
+```python
+import json, glob
+reg = json.load(open('contracts/event-topics.v2.json', encoding='utf-8'))
+def walk(o):
+    if isinstance(o, dict):
+        if 'event_type' in o: yield o
+        for v in o.values(): yield from walk(v)
+    elif isinstance(o, list):
+        for v in o: yield from walk(v)
+t = list(walk(reg))
+s = sum(1 for x in t if 'schema_ref' in x)
+d = sum(1 for x in t if 'data_schema_ref' in x)
+print('topics', len(t), 'schema_ref', s, 'data_schema_ref', d,
+      'payloads', s + d, 'envelope-only', len(t) - d)
+print('schema files', len(glob.glob('contracts/*.schema.json')))
+print('example json', len(glob.glob('contracts/examples/*.json')))
+```
+
+写这份更正时输出 `topics 55 schema_ref 55 data_schema_ref 41 payloads 96 envelope-only 14`、
+`schema files 50`、`example json 58`；`python tools/check_all.py` 打印
+`ok json 120 file(s)`、`ok payloads 96 schema ref(s), 41 topic(s) with a payload schema`、
+`57 example(s) valid, 0 failing, 1 without a schema`、`9 check(s) passed`。
+
+第 7 节末尾那段说「`json` 的 118 与 `schema files` 的 49」（那处原文写的差值是 69，`118 − 49 = 69`，对）。
+本轮又加了 1 个 schema、1 个示例，于是变成 120 / 50，差值是 **70**——不是「仍是 69」。
+这不影响第 6 节那句结论（差值不是恒等式、两个数不能互相校验），但它说明**连差值本身也不是常量**：
+每轮都在两个数上各加 1，所以差值每轮也加 1。想拿差值当校验和的话，同样得每轮回填。
+
+写这一段时我先写成「差值仍是 70」——把 `118 − 49 = 69` 当成了 70。这是本节第 4 个错，
+错因与上面三条不同：前三条是没回读文档，这一条是**心算了两个两位数的减法**。
+规矩同样记下：**写进报告的每一个差、和、比值，都用脚本算一遍贴输出，不写在正文里现算**。

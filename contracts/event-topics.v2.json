@@ -628,6 +628,7 @@
       "topic": "drama.realtime-projection.v2",
       "producer": "S47",
       "schema_ref": "event-envelope.v2.schema.json",
+      "data_schema_ref": "projection.cursor-advanced.v2.schema.json",
       "partition_key": "tenant_id:aggregate_id",
       "delivery": "at_least_once",
       "normal_retention_days": 14,

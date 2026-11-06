@@ -1,0 +1,25 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCHR4M2P6T8V0X2Z4B6D8F0H2",
+  "source": "S47",
+  "type": "projection.cursor.advanced",
+  "subject": "subscription/sub_01JCHQ9B5N3K1M7P5R3T1V0W9Y8",
+  "time": "2026-10-30T08:05:15Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "sub_01JCHQ9B5N3K1M7P5R3T1V0W9Y8",
+  "aggregate_sequence": 88215,
+  "correlation_id": "evt_01JCHR4K9M2P0T8V6X4Z2B1D9F7",
+  "causation_id": "evt_01JCHR4K9M2P0T8V6X4Z2B1D9F7",
+  "traceparent": "00-3a91c7f24e6b8d0a1c5f3e9b7d2a4c68-9f1b3d5c7a2e4f60-01",
+  "data": {
+    "schema_version": "2.0",
+    "subscription_id": "sub_01JCHQ9B5N3K1M7P5R3T1V0W9Y8",
+    "run_id": "run_01JCHM3D7F5H9K1N3P5R7T9V0X2",
+    "watermark": 88215,
+    "lag_ms": 2100,
+    "state": "LIVE"
+  },
+  "data_ref": null
+}
