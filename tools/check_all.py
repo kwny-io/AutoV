@@ -560,6 +560,7 @@ README_CLAIMS = [
     ("schema_ref", r"`payloads`（(\d+) 条 `schema_ref`", "payloads", r"(\d+) schema ref"),
     ("payload topic", r"其中 (\d+) 个 topic 带 payload schema", "payloads", r"(\d+) topic\(s\) with a payload"),
     ("openapi file ref", r"(\d+) 处指向真实文件", "openapi", r"(\d+) naming a file"),
+    ("topic field", r"55 个 topic 必须各带 (\d+) 个字段", "topics", r"(\d+) required field"),
     ("check_id", r"(\d+) 个\s*\n?`check_id` 是否符合", "checkids", r"(\d+) check_id"),
     ("links", r"`links`（(\d+) 条相对链接", "links", r"(\d+) local link"),
     ("stated invariant", r"自己声明的\s*\n?(\d+) 条 invariant", "families", r"(\d+) stated invariant"),
@@ -790,6 +791,46 @@ def check_payload_refs(name):
     return r
 
 
+def check_topic_fields(name):
+    """Every topic in event-topics.v2.json carries the ten fields its readers use.
+
+    This file has no schema -- `contracts/*.schema.json` covers payloads, not the
+    topic registry itself -- so nothing has ever validated its shape. The readers
+    use `t.get(...)`, which means a missing key becomes `None` or `""` instead of
+    an error: `render_yaml` would emit a `service.yaml` row whose `topic` is the
+    empty string and every check would stay green.
+
+    Missing fields fail. A field whose value stops matching the rest is not a
+    failure: five of these are all the same value across all 55 topics today
+    (`schema_ref` / `partition_key` / `delivery` / `replay_side_effects` /
+    `pii_payload`), and `contracts/README.md` §16.31 uses that fact to argue they
+    need not be copied into `service.yaml`. Deciding to make one differ is a
+    design call, not a bug -- but it invalidates that argument, so the distinct
+    count goes in the note and `readme` couples the prose to it.
+    """
+    r = Result(name)
+    topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
+    required = ("event_type", "topic", "producer", "schema_ref", "data_schema_ref",
+                "partition_key", "delivery", "normal_retention_days",
+                "replay_side_effects", "pii_payload")
+    for t in topics:
+        missing = [k for k in required if k not in t]
+        if missing:
+            r.fail(f"topic {t.get('event_type')!r} is missing {missing}")
+
+    # A missing key is already a failure above; counting its absence as a second
+    # "value" would make this note say 2 distinct where the real story is one
+    # field gone, so only present values are compared.
+    constant_claimed = ("schema_ref", "partition_key", "delivery",
+                        "replay_side_effects", "pii_payload")
+    worst = max((len({json.dumps(t[k]) for t in topics if k in t}) for k in constant_claimed),
+                default=0)
+    r.note = (f"{len(topics)} topic(s), {len(required)} required field(s); "
+              f"{len(constant_claimed)} field(s) README calls constant, "
+              f"max {worst} distinct value(s)")
+    return r
+
+
 def check_openapi_refs(name):
     """Every $ref in contracts/openapi.v2.yaml that names a file resolves.
 
@@ -964,6 +1005,7 @@ CHECKS = [
     ("json", check_json, "every contracts/**.json parses"),
     ("payloads", check_payload_refs, "every topic schema_ref/data_schema_ref names a real file"),
     ("openapi", check_openapi_refs, "every $ref in openapi.v2.yaml that names a file resolves"),
+    ("topics", check_topic_fields, "every event topic carries the fields its readers use"),
     ("checkids", check_check_ids, "check_id values in the QC plans match the schema pattern"),
     ("links", check_links, "every relative markdown link resolves"),
     ("catalog", check_catalog, "service/topic ids agree across catalog, docs/02, topics"),

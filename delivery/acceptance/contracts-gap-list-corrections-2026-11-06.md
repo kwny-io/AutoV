@@ -4030,3 +4030,39 @@ note 报「0 local pointer(s)」。改成 `[^'\"\s]+` 后才是 32。
 "catalog service" 里了。数没错，标签错：它在失败状态下标了一个通过状态才成立的说法。
 现在 unresolvable 的从总数里减掉，失败时追加 `, 1 not in the catalog`。
 这正是本仓反复强调的那条：**没核过的东西不能读成绿的**，note 也一样。
+
+### 补记四：`event-topics.v2.json` 自己没有 schema，55×10 个字段一个都没核过
+
+补记二、三都是「某个字段没人读」，这条更靠前：**登记表本身没有形状约束**。
+`contracts/*.schema.json` 管的是 payload，`event-topics.v2.json` 不在其中，
+也没有任何 `$schema` 指回来。
+
+后果不是读错，是**读空**。`render_yaml` 用的是 `t.get('topic', '')`、`t.get('event_type')`，
+少一个键就是 `None` 或空串，然后一路写进 `service.yaml`，而 `json` 只验能不能 `load`。
+`scaffold` 比的是生成物和 catalog 是否一致——两边都由同一次缺字段得到，自然一致。
+
+**实测**：55 个 topic 目前共享同一套 10 个字段（`distinct key-sets: 1`），
+所以今天不会出错。但「今天不会」和「不会」是两回事，尤其这张表是 55 行手写的。
+
+新检查 `topics`（`check_topic_fields`）：
+
+```
+ok  topics    55 topic(s), 10 required field(s); 5 field(s) README calls constant, max 1 distinct value(s)
+```
+
+- 10 个字段缺任何一个 → FAIL
+- 另报 5 个「README 说全仓同值」的字段实测各有几种取值——这 5 个是 §16.31
+  用来论证「不必抄进 `service.yaml`」的依据，一旦有谁不是单值，那个论证就成了假前提。
+  但**变值不是错误**（是设计决定），所以只报数不改红绿
+
+| 探针 | 输出 |
+|---|---|
+| 删掉 `snapshot.manifest.committed` 的 `replay_side_effects` | `FAIL topics 1 problem(s)`，exit 1 |
+| README 把「10 个字段」改成 11 | `FAIL readme 1 problem(s)` / `README says 11 for topic field, topics says 10` |
+| 全部还原 | 两项 ok，`git diff` 为空 |
+
+**第一版 note 写错了，和补记三同一种错。** 删字段后 note 印的是
+`max 2 distinct value(s)`——把「键不存在」也当成一个取值，于是该字段在 55 行里出现
+1 种值 + 1 种 None。真实情况是「少了一个字段」，不是「这个字段有 2 种值」。
+函数已经为缺字段单独 FAIL 了，note 不该把它重复算进常量性统计。改成只比较在场的值后，
+失败状态下也印 `max 1`，和通过状态一致——**因为事实没变，变的只是错了什么**。
