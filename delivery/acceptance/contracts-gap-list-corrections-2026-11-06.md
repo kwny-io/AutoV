@@ -3379,7 +3379,7 @@ docs/02-service-catalog.md       inbox size=5426  (manifest 5426)  hash_ok=True
 
 **为什么查这个。** `check_catalog` 核了 `service_id` 去重、`docs/02` 镜像、topic 的 `producer` 与 `published_events`，唯独没碰 `depends_on`——`grep -n "depends_on" tools/check_all.py` 在改之前**零命中**。也就是说 48 份 catalog 条目里这 125 条边，唯一的「要求」是整个文件能被 `json.load`。
 
-**这个问题为什么是真的。** `depends_on` 不是注释，它被 `tools/scaffold/generate_services.py` 原样抄进 48 份 `services/*/service.yaml` 的 `depends_on:` 块。写错一个 id（退役服务、手误、把 slug 当 id 写），生成物会把错误一起放大，而整条链路上没有任何一格会红。
+**这个问题为什么是真的。** `depends_on` 不是注释，它被 `tools/scaffold/generate_services.py` 原样抄进生成物的 `depends_on:` 块——48 份 `services/*/service.yaml` 里有 47 份带这个块（S01 依赖为空，生成器不写空块）。写错一个 id（退役服务、手误、把 slug 当 id 写），生成物会把错误一起放大，而整条链路上没有任何一格会红。
 
 先量了一下现状：
 
@@ -3419,6 +3419,7 @@ FAIL  catalog    3 problem(s)  [48 service(s), 55 topic(s), 55 published_event(s
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
 | 1 | 「`S26 -> S27 -> S26` 是个环，应报缺陷」 | 不是缺陷：`plans/S26` §8 明写这个环由事件拆开，两个方向都是真实依赖 | **拿通用的图论常识代替了读该服务自己的方案。**依赖图有环通常是坏味道，但这里是有意设计。核对「这算不算错」之前必须先读被核对象的说明，不能只靠形状 |
+| 2 | 「原样抄进 **48 份** `services/*/service.yaml`」 | **47 份**带 `depends_on:` 块；S01 依赖为空，生成器不写空块 | **把「有 48 个服务」直接当成了「有 48 个生成块」。**空列表的字段在生成物里没有对应行，服务数与块数不是同一个数——写「N 份文件里有 X」之前要 `grep -l` 数一遍，不能用服务总数替代 |
 
 **顺带记一条操作教训（不算本节缺陷，是我这轮的返工）。** 上面那个负向测试用 `json.dumps(...)` 回写 catalog，缩进被我改成 2 空格、文件从 43573 涨到 44717 字节；`git diff --numstat` 显示 0/0 行变更（因为确实是同一份数据换排法），差点当成「干净」放过。**`--numstat` 全零不等于文件没变**——字节数变了、格式变了，它一样报 0。用 `git checkout --` 从 HEAD 恢复，现在 `contracts/service-catalog.v2.json` 与 HEAD 完全一致。以后改配置文件做负向测试，应该先复制到临时路径改副本，或者在 `finally` 里从 `git show HEAD:` 恢复，而不是自己 `dumps` 回去。
 
