@@ -143,7 +143,7 @@ S45 是**审计事实**的唯一写者。它持有的四类事实：
 |---|---|---|
 | S01 | 授权判定、撤权、kill switch 翻转 | docs/14 §1 |
 | S02 | 政策 revision 发布、`evaluate` 拒绝 | S02 方案 |
-| S07 | ChangePlan 提交与应用 | S07 §11 |
+| S07 | ChangePlan 提交与应用 | S07 §5.1–§5.2 |
 | S08 | `manifest.commit` / `accept` / `fence`，含 `REJECTED_*` | S08 §1.4 |
 | S16 | checkpoint 提交、正史合并 | S16 方案 |
 | S23 | `reserve` / `settle` / `release` / `grant_escrow` | S23 §7 |

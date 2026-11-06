@@ -404,7 +404,7 @@ def call_tool(task, defn, call):
 | `RUNNING→NEEDS_REVIEW` | 定义声明 `on_unresolved='review'` 且结果带硬冲突 | 必须携带 `unresolved_issues[]` |
 | `RUNNING→CANCELLING` | `:cancel` | — |
 | `CANCELLING→CANCELLED` | 在途 S26 调用到达终态 | 结算完成 |
-| `*→` 其他终态 | — | 不允许（终态不回归，与 [S08 §6.5](S08-revision-snapshot.md) 一致） |
+| `*→` 其他终态 | — | 不允许（终态不回归，与 [S08 §3.1](S08-revision-snapshot.md) 一致） |
 
 `NEEDS_REVIEW` 是 S19 的**终态**，不是等待态：S19 已经交出了它能交的东西，`unresolved_issues` 才是产物。S40 收到通知后建 `ReviewTask`。这条区分很重要——如果 `NEEDS_REVIEW` 是被 S19 阻塞的等待态，那么 S40 停机就会让 S19 的 worker 全部占满，进而拖垮其他角色。
 
