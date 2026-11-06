@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 44 个 topic 带**（11 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 45 个 topic 带**（10 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -109,6 +109,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `narrative.script.revision.created` | `narrative.script-revision-created.v2.schema.json` | S04 §5.3 |
 | `asset.scene.revision.accepted` | `asset.scene-revision-accepted.v2.schema.json` | S13 §5.3 |
 | `asset.prop.revision.accepted` | `asset.prop-revision-accepted.v2.schema.json` | S14 §5.3 |
+| `asset.character.revision.accepted` | `asset.character-revision-accepted.v2.schema.json` | S11 §5.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -795,7 +796,7 @@ schema 只是把它变得显眼：我们为一条无人订阅的事件写了 11 
 
 ### `project.episode-created.v2.schema.json`：唯一一条「有字段清单、没有出处」的事件
 
-在当时的 17 个 envelope-only topic 里（今天剩 11 个），这一条最该先做，理由很朴素：**§5.3 行 656 真的写出了字段清单**。
+在当时的 17 个 envelope-only topic 里（今天剩 10 个），这一条最该先做，理由很朴素：**§5.3 行 656 真的写出了字段清单**。
 `{episode_id, series_id, project_id, release_ordinal|null, shooting_ordinal|null, spec_hash}`——七个值，
 六个能在 DDL 里指到列，第七个指不到。这不是巧合，是本仓库写作顺序的反面：多数 topic 只有「何时发」，
 这条连「发什么」都有，于是它的缺陷一眼可见，而不是藏在散文里。
@@ -859,7 +860,7 @@ PEC-6 是这批里唯一需要往外补的：S03 §5.3 行 654–658 列了三�
 
 S45 只有一条发布事件（§4.3 行 443「只有一条」），而它的状态机有两条终点出口不产生任何信号。
 这份 schema 的每一个字段都有出处——七字段列表加完整示例（§4.3 行 445–466），是当时剩下 16 个
-envelope-only topic 里证据最全的一条（当时的口径；本段写完之后 S46 也补上了 payload schema，今天剩 11 个）——**问题不在字段，在字段背后的那台状态机**。
+envelope-only topic 里证据最全的一条（当时的口径；本段写完之后 S46 也补上了 payload schema，今天剩 10 个）——**问题不在字段，在字段背后的那台状态机**。
 
 §3.6 行 305–310 的六个态是 `REQUESTED → BUILDING → SEALED → READY`，另有 `FAILED`（不可重试
 错误直接终止，可恢复错误重试后仍失败）和 `EXPIRED`（`expires_at` 到点）。事件名是 `ready`，
@@ -916,7 +917,7 @@ AEX-5 是示例层的适配：计划示例的 `data_ref` 写裸字符串 `"audit
 
 ### `integration.command-accepted.v2.schema.json`：事件是受理那一刻的快照，可唯一的消费方要的是流水
 
-这是当时剩下 16 个 envelope-only topic 里字段证据最全的一条（今天剩 11 个）：§4.5 行 369–392 给了九个字段加完整示例，
+这是当时剩下 16 个 envelope-only topic 里字段证据最全的一条（今天剩 10 个）：§4.5 行 369–392 给了九个字段加完整示例，
 八个值能在 DDL 里指到列。**字段是全的，缺的是时间。**
 
 先说最锋利的一处。§10.6 行 1052 是全篇唯一一条对消费方的**硬性呈现要求**：
@@ -1195,6 +1196,67 @@ hash 给 `zz`、`impact_plan_ref` 给字符串/拓扑变更时为 `null`/多一�
 `source` 改成 `S14` 而载荷仍是场景事件时，两层校验都放行。本仓信封不对任何 topic 钉生产者与
 主题的对应关系，`catalog` 检查管的是 `event-topics.v2.json` 里的 `producer` 字段，不是实例数据。
 
+### `asset.character-revision-accepted.v2.schema.json`：说给订阅方加的那个键没有定义，点名的两个订阅方一个不订阅、一个不消费
+
+S11 这条事件只有 7 个 data 键（§5.3 行 553–559 的七行值，`"data":{` 本身在 552），而本服务的核心产出是两个 manifest：
+`view_manifest`（行 141 的注释列了 `front`/`side_left`/`back`/`three_quarter`）与
+`expression_manifest`（行 142）。两个都不进事件。占掉一个键位的是 `view_count`。
+
+**`view_count` 在整份方案里只出现一次**——就是事件示例里的那一行（行 558）。`git grep -F
+view_count plans/` 只命中它自己。`character_revision` 的 17 列（行 135–156）里没有这一列，
+`character` 的 12 列（行 98–109）里也没有，散文里没有一句说「计数要单独发出来」。行 141 说明
+视图的名字与构成存在 jsonb 里，但没说要另发一个数。所以事件里最专为订阅方准备的那个键，是
+示例里凭空写的。
+
+第二层在行 565：`became_canonical` 必须显式给出，「订阅方（S10 投影、S17 缓存）靠它区分
+『补图』和『换身份基准』」。**这两个订阅方都没有落点。** `plans/S17-continuity.md`
+全文对 `asset.character.revision.accepted`、`became_canonical`、`identity_feature_hash`、
+`character_revision` 的命中**全是 0**，且没有订阅表：§4.2 行 313「依赖读取（全部只读）」的
+五条全是同步 GET，行 323 还说「**S17 不缓存 S16 的事实。** 每次 check 实时查询」——它连事实
+都不缓存，「S17 缓存」无处落地。`plans/S10-asset-catalog.md` §5.3 行 625 确实登记了本事件，
+但处理是「**不消费内容**，只刷新检索投影的 `owner_revision` 引用」，而刷新 `owner_revision`
+（S10 行 221 的列）只需要 `character_ref.revision`。
+
+与 S14 的 PRP-2 完全同构：**「某某需要它」这类句子没有被下游方案回执过**。区别是这里更进一层
+——S17 连事件机制都没有。`became_canonical` 本身不是坏设计（把一次比较的结果显式化，省消费方
+一次读），问题在于**它存在的理由是浮的**：一条字段的理由如果指不到具体消费方，重构时就会被
+当作「没人用的字段」删掉，而那时代码里可能已经有人依赖它了。而且它回答的是「canonical 有没有
+动」，不是「身份有没有变」——行 565 把这两个问题说成了同一个。
+
+**收得紧的地方确实有真 DDL 依据，不留活口。** `character_ref.content_hash` 收
+`^[0-9a-f]{64}$`：行 139 的 `char(64)` 加行 154 的 `cr_hash_len CHECK` 是真约束；
+`source_kind` 收四值 `enum`：行 148 是真 CHECK；`rights_ref` 收成闭合四键：行 146 的行尾注释
+逐字写出了四个键名，行 477 的读响应给了同形实例，C11-5（行 740）明说「与 S10 的 `rights_ref`
+形态一致」。**这一点是 S11 与 S14 的关键差别**——S14 的 `rights_ref` 全文只有 `jsonb NOT NULL`
+与事件里的 `{...}`，键集从未写出，所以那份 schema 只能收成开放对象；S11 自己写出了那一行，
+所以这里能收四键。不是照抄 S10，是照抄 S11 自己的注释。
+
+`identity_feature_hash` 收同一个 pattern，但**这比 DDL 更严**：行 145 只有 `char(64)`，没有
+CHECK（唯一有长度 CHECK 的是 `content_hash` 的 `cr_hash_len`）。两个语义相同的 hash 约束不同等，
+是 CRC-5 记的那条。差别的另一半是**故意的**：`content_hash` 有唯一索引 `cr_hash_uniq`（行 157，
+防同一内容注册成两个 revision），`identity_feature_hash` 只有普通索引（行 158–159，因为同一角色
+的不同 revision 可以有相同身份 hash）。
+
+`canonical_revision` 收 `oneOf [null, integer ≥ 1]`：行 105 明写 NULL 是合法状态（「尚未接受」）。
+两条 `allOf` 只把「`became_canonical=true` 时不能是 `null`」这一条可表达的不变量写死；
+「等于 `character_ref.revision`」表达不了——Draft 2020-12 无法跨兄弟字段比较，所以探针里
+`became_canonical=true` 配 `canonical_revision=3`（而 revision 是 12）**放行**，这是刻意留的。
+
+本文件 `x-needs-owner` 六条、`x-conflicts` 六条（CRC-1..CRC-6）。探针实测 78 条、0 失败：
+payload 侧 56 条负例（8 个必填各缺一次；根、`character_ref`、`rights_ref` 各多一个键；
+`character_ref` 与 `rights_ref` 的子键各缺一次；`content_hash` 给 3 字符/63 位/65 位/大写/
+非 hex/`null` 六种，`identity_feature_hash` 给 1 字符/非 hex/`null`，`rights_hash` 给 4 字符；
+`revision` 给 0/负数/浮点/字符串/`true`，`view_count` 给 0/负数/浮点/字符串，`rights_revision`
+给 0/负数/浮点；`source_kind` 给七种非法值；`rights_ref` 给 `null`/`{}`/空 `rights_owner`；
+`became_canonical` 给字符串或 `0`；`true` 配 `canonical_revision=null` 或 `0`）全部被拒；
+envelope 侧 10 条负例全部被拒；正例 12 条（payload 11 + 信封 1）全过，其中关键
+的是四组「不选边」形态放行——`source_kind` 四个合法值、`became_canonical=false` 配
+`canonical_revision=null`、`rights_owner` 给 `S02` 或给任意服务编号、以及上面那条 `true` 配 3。
+
+一条**已知漏检**，与 S13 那条同源：信封对 `source`/`type`/`traceparent` 都只收非空字符串，
+所以把 `source` 改成 `S14`、把 `type` 改成任意主题名、把 `traceparent` 写成垃圾串，两层校验都
+放行。本仓信封不钉生产者与主题的对应关系。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -1291,8 +1353,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 44 个 payload schema
-                                                              （见上表；其余 11 个 envelope-only）
+                                        └──data_schema_ref──▶ 45 个 payload schema
+                                                              （见上表；其余 10 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1305,11 +1367,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（126 个 JSON 解析）、`payloads`（99 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 44 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（128 个 JSON 解析）、`payloads`（100 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 45 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（60 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（61 个示例对
 schema 校验，另 1 个刻意不映射）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

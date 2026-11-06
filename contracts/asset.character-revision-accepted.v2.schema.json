@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/asset.character-revision-accepted.v2.schema.json",
+  "title": "asset.character.revision.accepted 的 data 载荷",
+  "description": "S11 角色资产一版 revision 被接受时发布的载荷。来源是 plans/S11-character-assets.md §5.3 行 540–565 的事件块（7 个 data 键）+ §2.1 行 96–113 的 character DDL + §2.2 行 134–160 的 character_revision DDL + §2.5 行 224–239 的 canonical_pointer DDL + §4.3 行 411–446 的接受事务。\n\n**这个主题的设计目的是「让 S10 的检索投影刷新 owner_revision，并让 S17 的缓存区分补图与换身份基准」**（行 565）。本 schema 能校验的是：一个 payload 在结构上是否说得通。它校验不了的是三件事：`view_count` 在整份方案里没有定义（DDL 无此列、散文无此词，只在事件示例里出现一次，见 CRC-2）；`became_canonical` 与 `canonical_revision` 的组合没有任何 DDL 能核对（见 CRC-4）；以及 `rights_ref` 的键集在 S11 里只以行尾注释出现。\n\n三个键有真 DDL 依据，因此收得紧：`character_ref.content_hash` 收 `^[0-9a-f]{64}$`（行 139 的 `char(64)` 加行 154 的 `cr_hash_len` 是真 CHECK）、`identity_feature_hash` 同样（行 145 的 `char(64)`）、`source_kind` 收四值 enum（行 148 是真 CHECK）。`rights_ref` 收成四键闭合对象：行 146 的行尾注释逐字写出了四个键名，行 477 的读响应给了同一形状的实例，行 740 的 C11-5 明说「与 S10 的 `rights_ref` 形态一致」——这是本仓唯一一处「S11 自己写出了键集」的地方。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "载荷版本，与 envelope 的 `schema_version` 分开。全仓库统一为 `2.0`。"
+    },
+    "character_ref": {
+      "type": "object",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false,
+      "description": "四键引用。出处：§5.3 行 553 的事件块 `{\"service_id\":\"S11\",\"id\":\"chr_linlan\",\"revision\":12,\"content_hash\":\"…\"}`，与 §4.5 行 473 的读响应同形。`revision` 的最小值 1 来自 `character_revision` 行 138 `revision integer NOT NULL CHECK (revision >= 1)`；`content_hash` 的 hex 长度来自行 139 的 `char(64)` 与行 154 的 `cr_hash_len CHECK (content_hash ~ '^[0-9a-f]{64}$')`；主键 `(tenant_id, character_id, revision)`（行 153）说明三键合起来唯一确定一行。\n\n**与 envelope 的一致性本文件表达不了**：§5.3 行 542 定 `aggregate_sequence = revision`，而 envelope 的 `aggregate_sequence` 与本处的 `character_ref.revision` 是两个不同位置的同一个数。JSON Schema 无法跨 `data` 边界比较，所以「两个数必须相等」只能由生产者保证、由消费方另行校验。"
+    },
+    "identity_feature_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "身份特征结构（§2.3）的 JCS hash，身份漂移检测的锚。出处：§5.3 行 554；DDL 行 145 `identity_feature_hash char(64) NOT NULL`；行 145 的行尾注释 `sha256(JCS(identity_features))`。\n\n行 164 说明它的用途：「同一角色的任意两个 revision，如果 `identity_feature_hash` 不同，就意味着身份发生了变化。S17 与 S11 自己的门都用它做快速比对。」所以它是本事件里唯一能让下游**不读内容**就判「身份有没有变」的字段。\n\n**这里收 hex 有依据**：字段是 `char(64)`，且行 145 的注释写出了算法。但 DDL 里没有针对它的 CHECK（只有 `content_hash` 有 `cr_hash_len`），所以长度与字符集由 `char(64)` 的列宽加上 sha256 的语义共同确定，而不是由一条 CONSTRAINT 强制。这一点与 `content_hash` 不同，说明方案对两个 hash 的严格程度不一致——见 CRC-5。\n\n**消费方拿不到旧值**：本事件只带新的一个。行 164 说「任意两个 revision 比较」，而事件不带 `parent_revision`（那是 DDL 行 149 的列）。要从事件判断「这次身份变了没有」，消费方需要自己缓存这个角色的上一个 `identity_feature_hash`。见 CRC-4。"
+    },
+    "became_canonical": {
+      "type": "boolean",
+      "description": "本次接受是否同时把 canonical 指到了这一版。出处：§5.3 行 555；DDL 里**没有这一列**——它是 `set_canonical` 命令参数的结果，不是存储的字段。\n\n行 565：「`became_canonical` 必须显式给出。订阅方（S10 投影、S17 缓存）靠它区分『补图』和『换身份基准』，不能靠比较 `canonical_revision` 猜（那需要额外一次读）。」这句话是对的，也是本事件形状最好的地方之一：把一次比较的结果显式化，省掉消费方的一次读。\n\n**但它的两个「订阅方」都没有验证过。** `plans/S17-continuity.md` 全文没有订阅表，§4.2 行 313–321 的依赖读取「全部只读」且走 `GET /assets/{id}/resolve`，不订阅任何事件——所以「S17 缓存靠它区分」在 S17 侧无落点。`plans/S10-asset-catalog.md` §5.3 行 625 确实登记了本事件，但处理是「**不消费内容**，只刷新检索投影的 `owner_revision` 引用」——刷新 `owner_revision` 用 `character_ref.revision` 就够，不需要 `became_canonical`。见 CRC-2。"
+    },
+    "canonical_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ],
+      "description": "接受之后该角色当前 canonical 指向哪一版；`null` 表示这一版之后仍无 canonical。出处：§5.3 行 556；`character` 表行 105 `canonical_revision integer,  -- 指向 character_revision；NULL = 尚未接受`，行 112 的 `canonical_within_head CHECK (canonical_revision IS NULL OR canonical_revision <= current_revision)`。\n\n**收 `null` 有 DDL 依据**：行 105 明写 NULL 是合法状态（「尚未接受」）。但行 112 只是 `<= current_revision`，并不要求它指向一个存在的行——那个约束靠 `canonical_pointer` 的部分唯一索引 `canonical_one_current`（行 237–239）与实际写入顺序（事务第 5 步，行 437–440）来保证。本 schema 无法校验「这个值指向一个真实存在的 revision」，只能校验它是正整数或 null。\n\n**它可能与 `character_ref.revision` 不同**，而且是正常的：`set_canonical=false` 的接受（行 448：「补一张更清晰的背面图、换一个更好的表情，但身份不变」）会让 revision 前进而 canonical 不动。示例即此情形：revision 12、canonical 9。"
+    },
+    "rights_ref": {
+      "type": "object",
+      "properties": {
+        "rights_owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rights_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rights_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rights_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "rights_owner",
+        "rights_id",
+        "rights_revision",
+        "rights_hash"
+      ],
+      "additionalProperties": false,
+      "description": "角色级权利引用。四键形状的直接出处是 DDL 行 146 的行尾注释 `-- {rights_owner,rights_id,rights_revision,rights_hash}`，实例见 §4.5 行 477 的读响应 `{\"rights_owner\":\"S02\",\"rights_id\":\"rights_char_linlan\",\"rights_revision\":3,\"rights_hash\":\"…\"}`。\n\n**这是 S11 与 S14 的关键差别**：S14 的 `rights_ref` 全文只有 `rights_ref jsonb NOT NULL` 与事件里的 `{...}`，键集从未写出，所以那份 schema 只能收成开放对象。S11 自己的行尾注释写出了四个键，且 C11-5（行 740）明说「与 S10 的 `rights_ref` 形态一致」——所以这里可以收成闭合四键。**收四键不是照抄 S10**，是照抄 S11 自己写出来的那一行。\n\n**但 `rights_owner` 的取值没有依据收成 enum**：行 477 的实例是 `S02`，而 C11-5 说「本文假设 S02 的 `rights_*` 对象」，同时 §11.2 第 5 条（行 763）又把真人肖像权的处理留给企业保留合同。S10 的 C10-4（行 805）明确写了「音色指向 S15，其余指向 S02 政策」——所以对角色资产而言 `S02` 是唯一的候选，但那是 S10 的结论，不是 S11 的。本 schema 只收 `minLength: 1`，不写死服务编号。\n\n**事件里没有 `rights_recheck_required`**：行 488 说「`rights_recheck_required` 恒为 true」，但那是 §4.5 行 481 的**读响应**字段，不在 §5.3 行 545–562 的事件块里。只吃事件的消费方拿不到这条提示——与 S13 的 SCN-4、S14 的 PRP-4 是同一个结构缺口。见 CRC-3。"
+    },
+    "view_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "本版 revision 的视图数量。出处：§5.3 行 558 的事件块 `\"view_count\": 4,`——**这一处是全仓唯一出现**。\n\n`git grep -F view_count plans/` 只命中 S11 的这一行，即本事件自己的示例。`character_revision` 的 17 列（行 135–156）里没有它，`character` 的 12 列（行 98–109）里也没有；§2.2 行 141 的 `view_manifest jsonb NOT NULL, -- {front:{artifact_ref,...}, side_left:..., back:..., three_quarter:...}` 说明视图的**名字与构成**存在 jsonb 里，但没有任何地方说「计数要单独发出来」。\n\n所以这个键有两个问题：(1) 它没有存储依据，是示例里凭空出现的数；(2) 它与 `view_manifest` 重复——消费方能从 manifest 的键数算出来，而 manifest 本身不在事件里（见 CRC-1）。本 schema 收下它（`minimum: 1`，因为视图数不可能为 0，且 `front` 是行 401 的硬门），**但这只是收下示例里那个数，不是承认该字段该存在**。见 CRC-2。"
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "manual_upload",
+        "generated",
+        "imported",
+        "derived"
+      ],
+      "description": "本版 revision 的来源类别。出处：§5.3 行 559 `\"source_kind\":\"generated\"`；DDL 行 148 `source_kind text NOT NULL CHECK (source_kind IN ('manual_upload','generated','imported','derived'))`。\n\n**收四值 enum 有依据**：这是真 CHECK，不是注释。按本仓既定口径（enums only where the plan's DDL has an actual `CHECK (... IN (...))`），这是本文件里最硬的一个字段。\n\n四个值与 `parent_revision`（行 149）的配合在方案里没有说明：`derived` 意味着有一个派生来源，而行 155 的 `cr_parent_lt` 只要求 `parent_revision < revision`，**不要求 `derived` 必带 parent**、也不要求非 `derived` 不带。本事件两个字段都不带 `parent_revision`，所以这条关联在事件层完全不可见。见 CRC-4。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "character_ref",
+    "identity_feature_hash",
+    "became_canonical",
+    "canonical_revision",
+    "rights_ref",
+    "view_count",
+    "source_kind"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "became_canonical": {
+            "const": true
+          }
+        },
+        "required": [
+          "became_canonical"
+        ]
+      },
+      "then": {
+        "properties": {
+          "canonical_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "`became_canonical=true` 时这一版就是 canonical，所以 `canonical_revision` 必须非 null 且必须等于 `character_ref.revision`。\n\n**schema 只能校验前一半。** 「等于 `character_ref.revision`」需要跨两个属性比较，Draft 2020-12 的 `then` 里没有可引用兄弟属性的关键字（没有 `$data`，也没有算术）。所以这里只钉住「非 null」，相等关系写在描述里，由生产者与消费方各自校验。\n\n依据：事务第 5 步（行 437–440）在 `set_canonical=true` 时先 `UPDATE canonical_pointer SET superseded_at=now()`、再 `INSERT canonical_pointer (revision, ...)`、再 `UPDATE character SET canonical_revision=rev`——三步用的是同一个 `rev`，也就是本事件的 `character_ref.revision`。而 `canonical_one_current`（行 237–239）保证同一时刻只有一行 `superseded_at IS NULL`，所以「刚刚插入的那一行」就是当前 canonical。"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "became_canonical": {
+            "const": false
+          }
+        },
+        "required": [
+          "became_canonical"
+        ]
+      },
+      "then": {
+        "properties": {
+          "canonical_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "minimum": 1
+              }
+            ],
+            "description": "`became_canonical=false` 时 canonical 保持原样，可以是 null（从未接受过）也可以是更早的某一版。**schema 在这里不设任何额外约束**，因为行 448 明确说这条路径是正常且必要的（「补一张更清晰的背面图、换一个更好的表情，但身份不变……否则每次微调都会动全剧身份基准」）。\n\n唯一能说的关系是「若 `character_ref.revision` 是首版，则 `became_canonical=false` 时 `canonical_revision` 必须为 null」——但那个条件同样依赖跨属性比较，schema 表达不了。事务第 5 步只在 `set_canonical=true` 时动 canonical，所以首版且不设 canonical 的角色会停在行 105 的「NULL = 尚未接受」状态，且此时 `GET /characters/{id}/canonical` 返回 404 `CANONICAL_NOT_SET`（行 491）而不是 200 + null。"
+          }
+        }
+      }
+    }
+  ],
+  "x-needs-owner": [
+    {
+      "field": "`view_count` 该不该存在；若该存在，它是 `view_manifest` 的键数还是别的口径",
+      "demanded_by": "本事件示例（行 558）；任何想在不拉 `view_manifest` 的前提下判断「这套设定集完整不完整」的消费方",
+      "s11_status": "未决。`view_count` 在整份方案里只出现在 §5.3 的示例里，DDL 没有对应列，散文没有对应说法。`require_full_turnaround`（行 401、行 761 的未决第 3 条）决定 `side_left`/`back`/`three_quarter` 是否必需，但那是个开关，不是计数。见 CRC-2。"
+    },
+    {
+      "field": "`identity_features` 的字段集是否跨服务统一（S11 与 S48 各定义一套就会有两份「身份」）",
+      "demanded_by": "S48（LoRA 评测也用身份特征，见 §11.2 第 1 条行 759）；S17（`VISUAL_STATE_MISMATCH` 检查，见 §2.3 行 192）；S33/S34（§11.1 第 1 条行 750 说它是共同输入）",
+      "s11_status": "未决，且方案自己已经提出。§11.2 第 1 条（行 759）：「建议抽到 `contracts/assets/identity-features.v1`，但需要设计方确认。」本事件只带 hash 不带结构，所以这个未决**不影响本 schema 的形状**——但它决定了消费方能不能自己复算 `identity_feature_hash`。今天不能：结构不在事件里，也不在任何已发布的契约文件里。见 CRC-5。"
+    },
+    {
+      "field": "`rights_ref` 只在 `identity_kind IN ('actor_likeness','real_person')` 时必须非空——而 `identity_kind` 不在本事件里",
+      "demanded_by": "E30-B2（行 687）；§4.2 行 402 的校验第 3 条；§2.1 行 117 的「必须有 `rights_ref` 且不可为空」",
+      "s11_status": "未决。DDL 行 146 是 `rights_ref jsonb NOT NULL`——**表级是 NOT NULL，没有按 `identity_kind` 分档**。行 117 说真人角色「必须有 `rights_ref` 且不可为空」，可 `NOT NULL` 对虚构角色也成立，所以数据模型强制的是「所有角色都要有」，而散文说的是「真人角色必须有」。两者不冲突（强的蕴含弱的），但它意味着 `rights_ref` 的**内容**对虚构角色可能是一个占位对象——方案没说。而 `identity_kind`（行 103，真 CHECK 三值）不在事件里，消费方无法判断手里的 `rights_ref` 是真权利还是占位。见 CRC-3。"
+    },
+    {
+      "field": "`became_canonical` 与 `canonical_revision` 的组合是否真能表达「换身份基准」；`set-canonical` 是否该有独立事件",
+      "demanded_by": "本事件宣称的两个订阅方（行 565）；任何按 canonical 做 gate 的路径（E02-B3 行 661、E08-B2 行 669）",
+      "s11_status": "未决，且方案自己记录了退路。C11-3（行 738）：「`event-topics.v2.json` 只有 `asset.character.revision.accepted`，没有 canonical 变更事件」→「在同一事件里带 `became_canonical`，不新增 topic」。但 `POST /characters/{id}:set-canonical`（行 525）是**独立命令**，能重指向已有 revision 而不产生新 revision——那条路径上不发本事件，于是 canonical 动了而没有任何信号。行 529 说它「用于回退」，且必须带 `reason_text`；`canonical_pointer` 保存完整历史（行 224–239）。所以审计是有的，**信号没有**。与 S13 的 SCN-2、S14 的 PRP-4 同构。见 CRC-4。"
+    },
+    {
+      "field": "`identity_feature_hash` 与 `content_hash` 的严格程度不一致：只有后者有 CHECK",
+      "demanded_by": "任何要独立验证「这个 hash 是 sha256 且被正确计算」的审计路径（`rehash-revision` runbook，行 648）",
+      "s11_status": "未决。行 154 有 `cr_hash_len CHECK (content_hash ~ '^[0-9a-f]{64}$')`，而 `identity_feature_hash`（行 145）只有 `char(64)` 列宽与注释里的算法，**没有对应的 CONSTRAINT**。两者都是 `char(64)`、都是 sha256，严格程度却不同。本 schema 对两者都收 `^[0-9a-f]{64}$`（因为语义相同），但那是对 DDL 的**加强**，不是照搬——严格说，本 schema 比 S11 的 DDL 更严。见 CRC-5。"
+    },
+    {
+      "field": "`quality_gate_ref` 指向谁的什么对象（事件里没有它，但它是 `NOT NULL`）",
+      "demanded_by": "§4.1 行 401 的硬门；§4.6 的 F3/F7；E24-B1（行 692）",
+      "s11_status": "未决。DDL 行 150 `quality_gate_ref jsonb NOT NULL, -- 通过的质量门结果（S33/S34/S01）`——三个候选来源，没定。**且 `S33/S34` 在这里又一次被当成质检**，而它们是音效（S33）与音乐（S34）生产；真正的质检是 S35（媒体技术）与 S36（视觉语义）。这个错误在 S11/S12/S13/S14 反复出现（S14 七处、S11 五处、S12 六处、S13 两处）。本事件不带这个字段，所以不影响形状，但它是本服务「质量门由谁验」的唯一线索，而这条线索指向了错误的服务。见 CRC-6。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "CRC-1",
+      "summary": "事件只有 7 个键，而订阅方真正需要的东西三个都不在：`view_manifest`、`expression_manifest`、`parent_revision`；`view_count` 又是个没有任何定义的数字，占了一个键位",
+      "event_keys": "§5.3 行 553–559 的 7 个 data 键：`character_ref` / `identity_feature_hash` / `became_canonical` / `canonical_revision` / `rights_ref` / `view_count` / `source_kind`（外加本仓约定加的 `schema_version`）。",
+      "ddl_has_more": "`character_revision` 的 17 列（行 135–156）里，至少 `view_manifest`（行 141）、`expression_manifest`（行 142）、`body_profile`（行 143）、`identity_features`（行 144）、`lora_refs`（行 147）、`parent_revision`（行 149）、`quality_gate_ref`（行 150）、`accepted_at`（行 151）、`accepted_by`（行 152）都不进事件。",
+      "why_it_matters": "`view_manifest` 与 `expression_manifest` 是本服务**核心产出**的两个 manifest（§0 「多视图设定集：正面/侧面/背面/3/4 侧、表情表、体型表，各自是哪一版」），而事件只发一个 `view_count`。于是消费方若要知道「这一版有几张图、每张是什么」，必须回读 `GET /characters/{id}/revisions/{revision}` —— 那正好是本事件存在的理由所否定的做法（行 565 说 `became_canonical` 必须显式给出，就是为了「不能让消费方再读一次」）。同一个理由对 manifest 更强：manifest 是内容，不是状态。\n\n`parent_revision` 缺失的后果在 CRC-4 里：没有它，`identity_feature_hash` 的变化无法从事件判定。\n\n而 `view_count` 换掉其中任何一个都更划算：它是 `view_manifest` 的键数（行 141 的注释列了四个键名），消费方能自己算，且它今天在方案里没有定义。",
+      "consequence": "按今天的事件形状，S10 的「刷新 `owner_revision`」能用（只要 `character_ref.revision`），而任何需要「这套设定集在本版里包含什么」的消费方都必须回读。§11.1 第 3 条（行 752）说最小闭合要先验 E12/E28，这两个可测；而 E02-B2（行 660「第 2 集补一张背面图」）要断言「第 1、3 集仍指向旧 revision；三集身份 `identity_feature_hash` 相同」——这条能测，因为它只用事件里的字段。所以缺的字段不卡现有验收项，只卡未来消费方。这不是「错了」，是「事件比它该有的窄」。",
+      "fix_shape": "需 owner 定：(1) `view_count` 是否删掉换 `view_manifest`（建议换，前者无定义、后者是核心产出）；若不换，说明 `view_count` 的计数口径。(2) 是否补 `parent_revision`（DDL 已有该列，与 S13 的 SCN-5、S14 的 PRP-5 是同一个建议）。(3) `expression_manifest` 与 `body_profile` 是否该进事件——按 `view_count` 同样的逻辑，它们也是「本版里有什么」的一部分。本 schema 按行 553–559 原样收 7 键 + `schema_version`，**不擅自加任何键**。"
+    },
+    {
+      "id": "CRC-2",
+      "summary": "行 565 说两个订阅方靠 `became_canonical` 区分「补图」与「换身份基准」，可 S17 不订阅任何事件，S10 只刷新 `owner_revision`；而真正专为订阅方加的键 `view_count` 在方案里没有定义",
+      "s11_claim": "§5.3 行 565：「`became_canonical` 必须显式给出。订阅方（S10 投影、S17 缓存）靠它区分『补图』和『换身份基准』，不能靠比较 `canonical_revision` 猜（那需要额外一次读）。」",
+      "s17_reality": "`plans/S17-continuity.md`（532 行）全文对 `asset.character.revision.accepted` 的命中为 0，也**没有任何订阅表**：§4.2「依赖读取（全部只读）」行 317–321 的五条全是 `POST /memory-queries`、`GET /shots/...`、`GET /assets/{id}/resolve` 这类同步读，没有事件。行 323「S17 不缓存 S16 的事实。每次 check 实时查询」——它连事实都不缓存，「S17 缓存」这个说法在 S17 侧没有落点。",
+      "s10_reality": "`plans/S10-asset-catalog.md` §5.3 行 625 确实登记了：`| asset.character.revision.accepted 等 | S11–S15 | **不消费内容**，只刷新检索投影的 owner_revision 引用 | 重试；失败不影响解析 |`。这是一条真正的订阅，但它读的只有 `character_ref.revision`（写进 `owner_revision`，S10 行 221 的列）。`became_canonical` 与 `canonical_revision` 都不在「刷新 owner_revision」所需之列。",
+      "why_it_matters": "与 S14 的 PRP-2 是同一结构、同一族：**「某某需要它」这类句子没有被下游方案回执过**。S14 那处是「宣称的订阅方不订阅」，这里更进一步——S17 连事件机制都没有，而 S10 的那条订阅被自己限定为「不消费内容」。\n\n`became_canonical` 本身是个好设计（把比较结果显式化，省一次读），所以问题不在它，而在**它存在的理由是浮的**。一条字段的理由如果指不到具体消费方，它就会在重构时被当作「没人用的字段」删掉——而那时代码里可能已经有人依赖它了。\n\n`view_count` 是反面：它是唯一专为「订阅方」加的键（行 558 的示例里它跟着 `rights_ref` 一起出现），而它在方案里**没有任何定义**。一个没有理由的好字段，和一个没有定义的新字段，出现在同一条事件里。",
+      "consequence": "若按行 565 实现，`became_canonical` 会被当作「S10/S17 依赖」而不敢改。真实情况是：S10 不需要，S17 不订阅。而 S17 若将来真订阅（它在 §4.2 做了五次同步读，事件化是合理的优化方向），它需要的是「身份有没有变」，那要 `parent_revision` + 上一个 `identity_feature_hash`，不是 `became_canonical`。`became_canonical` 回答的是「canonical 有没有动」，与「身份有没有变」是两个不同的问题——行 565 把它们说成了同一个。",
+      "fix_shape": "需 owner 定：(1) 行 565 那句是否成立——若不成立，改成「S10 消费本事件刷新 `owner_revision`」，并说明 `became_canonical` 的真实消费者是谁（如果没有，考虑删掉，改由消费方比较 `canonical_revision`）；(2) 若要 S17 真的订阅，须在 S17 §4.2 补一行，并说明它如何用本事件——注意它现在连缓存都不做，这会是行为变更；(3) `view_count` 要么给定义（URI/列/计算式），要么删。本 schema 收下全部 7 键 + `schema_version`，不擅自删减。"
+    },
+    {
+      "id": "CRC-3",
+      "summary": "E30 的权利防线只在读响应里（`rights_recheck_required` 恒为 true），事件里没有；而 `rights_ref` 对虚构角色是不是占位对象，方案没说，`identity_kind` 又不在事件里",
+      "rights_read": "§4.5 行 481 的读响应带 `\"rights_recheck_required\": true`，行 488 说「**`rights_recheck_required` 恒为 true**」。",
+      "rights_event": "§5.3 行 545–562 的事件块**没有** `rights_recheck_required`。事件带 `rights_ref`，不带「要不要复查」。",
+      "e30": "E30-B1（行 686）：`| E30-B1 肖像权撤销后 S11 仍返回 revision | rights_recheck_required=true；S11 不判定 |` —— 验收项写的是**读路径**的行为。",
+      "not_null_scope": "§2.1 行 117：「`identity_kind='actor_likeness'` / `'real_person'` 时，**必须有 `rights_ref` 且不可为空**。」而 DDL 行 146 是 `rights_ref jsonb NOT NULL`——对所有角色都 `NOT NULL`。",
+      "why_it_matters": "两件事：\n\n**复查提示**：行 49「不判定权利。只存 `rights_ref` 指针；调用前由 S02 实时复查（E30）」是 S11 的核心不变量之一。读路径用 `rights_recheck_required: true` 把它显式化。事件不显式化。所以只订阅事件的路径（例如 S10 的投影刷新，若将来它开始缓存 rights 相关内容）拿到的是一个看起来自足的权利指针，没有任何提示说「这不作数」。这与 S13 的 SCN-4（`rights_recheck_required` 只在 `/topology`）、S14 的 PRP-4（同类字段只在读响应）**完全同构**——三个资产服务犯了同一个错：把「不要信任缓存」的提示放进了不需要它的地方（读响应本来就实时），而没放进真正会被人缓存的地方（事件）。\n\n**占位问题**：`rights_ref` 是 `NOT NULL`，所以虚构角色也有一个。行 117 的措辞是「真人角色必须有且不可为空」，这暗示虚构角色的 `rights_ref` 可以「为空」——但 DDL 不允许 NULL。于是虚构角色的 `rights_ref` 只能是某种占位（空对象？零 id？指向项目合同？），方案没有说。消费方拿到 `rights_ref` 无法区分「这是真肖像权」与「这是虚构角色的占位」，因为判断依据 `identity_kind`（行 103 的真三值 CHECK）不在事件里。",
+      "consequence": "按今天的设计，E30 的验收全部在读路径上（E30-B1/B2/B3 行 686–688 全是读或拒绝行为），事件侧没有对应用例。这意味着「某个服务订阅了本事件、缓存了 `rights_ref`、然后绕过 S02 直接用了资产」这条路径**不会被任何验收项发现**——而它恰好是 E30 要防的那件事（「撤销后仍返回 revision」的反面：撤销后仍用 revision）。",
+      "fix_shape": "需 owner 定：(1) 本事件是否带 `rights_recheck_required`（建议带且恒为 true，同行 488）；(2) `rights_ref` 对虚构角色是什么——占位空对象、还是指向项目合同、还是应当改成可空（那要改 DDL 行 146 与行 117 的措辞）；(3) 若要保持不可区分，是否至少把 `identity_kind` 放进事件——它是行 103 的真 CHECK 三值，且决定了 `rights_ref` 的语义。本 schema 收四键 `rights_ref` 与 `identity_kind` 都不加的现状：**不加 `identity_kind`，因为事件里没有**；也不把 `rights_ref` 收成可空，因为 DDL 是 `NOT NULL`。"
+    },
+    {
+      "id": "CRC-4",
+      "summary": "canonical 可以不经本事件就移动（`:set-canonical` 回退），而决定「谁定、凭什么定」的 `decision_kind` 从不进事件；`identity_feature_hash` 的变化也无法从事件单独判定",
+      "set_canonical": "§5.1 行 525：`| POST | /characters/{id}:set-canonical | 显式改 canonical（不产生 revision，仅重指向已有 revision） |`。行 529：「用于**回退**（发现第 9 版才是对的，把 canonical 从 12 指回 9）。回退必须留审计（`canonical_pointer` 有完整历史），且必须带 `reason_text`。」",
+      "canonical_pointer": "§2.5 行 224–239 的列：`revision` / `decided_at` / `decided_by` / `decision_kind` / `reason_text` / `prior_canonical` / `superseded_at`。行 231 的 CHECK：`decision_kind IN ('human_approved','policy_auto','initial_import')`。",
+      "decision_rule": "§2.5 行 244：「`decision_kind='policy_auto'` 只允许在以下条件同时满足时使用（否则必须人审）：`identity_drift.drift_class = 'none'`；与当前 canonical 的 `identity_feature_hash` 完全相同；只改了视图（例如补一张背面图）或分辨率。」",
+      "topics": "contracts/event-topics.v2.json 里 `producer: \"S11\"` 只有 `asset.character.revision.accepted` 一条；没有 canonical 变更主题。C11-3（行 738）记录了这个事实，并选择「在同一事件里带 `became_canonical`，不新增 topic」。",
+      "why_it_matters": "**canonical 的移动无信号**：`:set-canonical` 不产生 revision、不发事件。按本事件缓存「当前 canonical 是哪一版」的消费方会在回退之后永久陈旧。这与 S13 的 SCN-2、S14 的 PRP-4 同构，连「只有一个 topic」这个事实都一样。C11-3 的选择（带 `became_canonical`）只覆盖了 `:accept` 路径，没有覆盖 `:set-canonical`——所以那个选择解决了一半问题，而方案没有把这一点写出来。\n\n**`decision_kind` 缺席**：行 244 的 `policy_auto` 三条件是本服务最重要的一条自动放行规则。它的可审计证据是 `canonical_pointer.decision_kind`（行 231 的真三值 CHECK），而它不进事件。于是消费方拿到 `became_canonical=true` 却不知道「人审通过」还是「policy_auto 溜过去」。§7 行 641 的告警恰好需要这个组合：`s11_identity_drift_total{class=\"major\"}` > 0 且 `decision_kind=\"policy_auto\"` 被接受 → 门失效。**这条告警要读两个地方的数据**：漂移数值在候选表（行 206 的 `identity_drift`），`decision_kind` 在 `canonical_pointer`。而事件两个都不带。\n\n**身份变化不可判定**：行 164 说「同一角色的任意两个 revision，如果 `identity_feature_hash` 不同，就意味着身份发生了变化」。事件只带新的一个，且不带 `parent_revision`（DDL 行 149 有此列）。所以消费方要判「这次身份变了没有」，必须自己缓存该角色的上一个 hash——而「上一个」是 parent revision，不一定是 `revision - 1`（行 155 的 `cr_parent_lt` 只要求 `<`）。这与 S13 的 SCN-5（`topology_hash` 旧值拿不到）、S14 的 PRP-5（`text_changed` 不可复算）是同一个结构问题，第三次出现。",
+      "consequence": "本事件关于「这一版是否已成权威」「它是怎么成为权威的」「身份有没有变」这三个问题，都只能给出一半答案：`became_canonical` 说「成了」，不说「谁批的」；`canonical_revision` 说「当前是 9」，而 9 可能在回退之后就不对了；`identity_feature_hash` 说「现在是这个」，不说「和上一个比变没变」。\n\nC11-3 把「不新增 topic」记录成了一条已决事项，但它对 `:set-canonical` 这条路径没有回答。方案在这一点上是自洽的：它说「在同一事件里带 `became_canonical`」，而 `:set-canonical` 不产生事件——所以那句话只对 `:accept` 成立。问题是这个限定没有被写出来。",
+      "fix_shape": "需 owner 定三件：(1) 是否补一个 canonical 变更事件（带 `decision_kind`/`decided_by`/`prior_canonical`），让 `:accept` 与 `:set-canonical` 两条路径都有信号；若不补，至少在文档里把 `canonical_revision` 定义为「接受那一刻的快照」，并要求消费方按 `GET /characters/{id}/canonical` 复核。(2) `decision_kind` 是否该进本事件——建议进，因为行 244 的门是「不许 policy_auto 在漂移时放行」，而下游若需要验证这一点，没有它就无从验；§7 行 641 的告警也需要它。(3) 事件是否补 `parent_revision`（DDL 已有该列）。本 schema 不擅自加这三个键，只把缺口记在这里。"
+    },
+    {
+      "id": "CRC-5",
+      "summary": "`identity_feature_hash` 的算法与结构都在方案里，但两个 hash 的严格程度不一致（只有 `content_hash` 有 CHECK），且结构本身未成契约——消费方无法复算",
+      "two_hashes": "`character_revision` 行 139 `content_hash char(64) NOT NULL, -- sha256(JCS(payload))` + 行 154 `cr_hash_len CHECK (content_hash ~ '^[0-9a-f]{64}$')` + 行 157 `CREATE UNIQUE INDEX cr_hash_uniq`；行 145 `identity_feature_hash char(64) NOT NULL, -- sha256(JCS(identity_features))` + 行 159 的普通索引 `cr_identity_hash`。",
+      "structure": "§2.3 行 168–194 给了 `identity_features` 的完整形态：13 个字段，含 `face_shape`/`jaw`/`eye_shape`/`eye_distance_ratio`/`brow`/`nose_bridge`/`lip_fullness`/`skin_tone_band`/`hair`/`age_band`/`build`/`distinguishing_marks`/`height_cm_band`。行 190 的三条约束：`distinguishing_marks` 是身份锚、数值必须是区间/分档、新增字段必须可选。",
+      "not_a_contract": "`contracts/` 下**没有** `identity-features` 相关的 schema 文件。§11.1 第 1 条（行 750）把它列为实施顺序的第一步：「契约：`contracts/assets/character-revision.v1.schema.json`（含 `view_manifest`、`identity_features` 的 schema）。`identity_features` 必须**先定型**」——也就是说方案自己认为这一步还没做。§11.2 第 1 条（行 759）进一步说「S48 的 LoRA 评测也用身份特征。如果 S11 与 S48 各定义一套，就会有两份『身份』定义。建议抽到 `contracts/assets/identity-features.v1`，但需要设计方确认。」",
+      "why_it_matters": "两个 hash 在这一层是**不同等的**：`content_hash` 有 CHECK、有唯一索引（行 157 的 `cr_hash_uniq` 防止同一内容注册成两个 revision，行 162 说「否则『第 3 集用的是哪一版』会因重复注册而失去唯一答案」）；`identity_feature_hash` 只有 `char(64)` 与一个普通索引（行 158–159，用于查询而非唯一性——这是对的，同一角色的不同 revision 可以有相同身份 hash）。所以「严格程度不一致」在唯一性这一侧是**故意的**，不是疏漏。\n\n真正的缺口在**复算**：`content_hash` 的复算只需要 `payload`（行 140，DDL 里就有），行 166 说「两者必须在写入时来自同一份对象，且有测试断言 `sha256(JCS(payload)) == content_hash`」。`identity_feature_hash` 的复算需要 `identity_features`（行 144，DDL 里也有）。所以对**存储层**，两者都可复算。对**事件消费方**，两者都不可复算——`payload` 与 `identity_features` 都不在事件里。这正是 CRC-1 的一部分。\n\n而方案把 `identity_features` 的契约化列为「第一步」，意味着在它定型之前，任何人都无法写出「正确的」复算实现——因为 JCS 的规范形式取决于字段集与可选性。",
+      "consequence": "`rehash-revision` runbook（行 648）说「逐 revision 重算 `sha256(JCS(payload))` 与 `identity_feature_hash` 一致性检查」——这条 runbook 可以在 S11 内部执行（两个源都在库里），所以它不是空话。但它**无法跨服务复现**：S17 的 `VISUAL_STATE_MISMATCH` 检查、S48 的 LoRA 评测都需要「同一份身份特征」，而那个契约还不存在。§11.2 第 1 条把这个决定留给 owner，本 schema 不替它决定。",
+      "fix_shape": "需 owner 定：(1) `identity_features` 的契约文件是否就是 §11.1 第 1 条说的 `contracts/assets/character-revision.v1.schema.json` 内联，还是抽成独立的 `identity-features.v1`（按 §11.2 第 1 条，后者更好，因为 S48 也要用）；(2) 定下来之后 `identity_feature_hash` 才可跨服务复算，届时才谈得上「消费方能自己验证」；(3) 是否给 `identity_feature_hash` 补一条 `cr_identity_hash_len` CHECK，与 `cr_hash_len` 对齐——没有功能影响，但两个同形态的列该有同形态的约束。本 schema 对两者都收 `^[0-9a-f]{64}$`，**这比 DDL 对 `identity_feature_hash` 更严**，理由是两个字段语义相同、消费方需要同一个保证。"
+    },
+    {
+      "id": "CRC-6",
+      "summary": "S11 说的「QC 来源」是 `S33/S34`，而它们是音效与音乐生产；真正的质检是 S35/S36。同一个错误在 S12/S13/S14 也出现，是资产族共有的",
+      "s11_refs": "`git grep -F \"S33/S34\" plans/S11-character-assets.md` 命中 **5 处**，其中 **4 处把 S33/S34 当质检**：行 150 `quality_gate_ref jsonb NOT NULL, -- 通过的质量门结果（S33/S34/S01）`；行 205 `evaluation jsonb NOT NULL, -- S33/S34 结果 + 身份一致性分数`；行 373 `→ S33/S34 QC（身份一致性、多角度一致性）`；行 753 §11.1 第 4 条「接 S26 的生成完成事件（走 S33/S34 的 QC 结果）」。第 5 处行 750 是另一种误用（称 `identity_features` 是「S33/S34/S17/S48 的共同输入」），不是质检声明，但同样指向了错误的服务。行 164 说的是 S17、行 726 说的是 S26，两处都对。",
+      "what_s33_s34_are": "contracts/service-catalog.v2.json：`S33 音效生产`、`S34 BGM与音乐`。docs/design-package/DESIGN.md 行 159–160 同。它们的方案（plans/S33-sound-effects.md 1496 行、plans/S34-music.md 1635 行）全文对 `OCR`、`identity_feature_hash`、`view_manifest`、`identity_features` 的命中为 0。",
+      "what_qc_is": "DESIGN.md 行 161–162：`| S35 | 媒体技术质检 | quality | technical_qc |`、`| S36 | 视觉语义与时序质检 | quality | semantic_qc |`。",
+      "why_it_matters": "「身份一致性分数」是 S11 接受候选时最关键的判据（§2.5 行 244 的 `policy_auto` 三条件里就有一条是「与当前 canonical 的 `identity_feature_hash` 完全相同」，而 §4.3 行 429–431 的漂移门要用 `drift_class`）。这个分数由谁算、怎么算，方案指向了音效服务。\n\n同类错误在资产族里出现在四个服务：`git grep -F \"S33/S34\"` 的命中数 **S14 七处、S12 六处、S11 五处、S13 两处**。同一个错误出现在不同语境（DDL 注释、实施顺序、管道图、候选表注释），说明写的时候确实认为「S33/S34 就是质检」——这不是某处笔误，是一族共同的编号错误。",
+      "consequence": "`quality_gate_ref` 是 `NOT NULL`（行 150），所以每次接受都必须带一个值。但没有任何服务承诺产出「角色资产设定的质量门结果」——S35 做的是媒体技术质检（编码、分辨率、字幕烧录），S36 做的是视觉语义质检（`VIS.SPACE.PROP_STATE` 这类）。「这套多视图设定集身份一致、覆盖完整、可用于下游」属于哪一类，四份方案都没有说。\n\n于是 `quality_gate_ref` 在实现上会退化成「非空即可」，而 §4.2 行 401 的硬门（必需视图完整性）与行 402（权利引用形态）是 S11 自己校验的，不依赖它。也就是说：**这个 NOT NULL 外键指向的对象今天不存在**。",
+      "fix_shape": "需 owner 定：(1) 把 S11（及 S12/S13/S14）里 `S33/S34` 改成正确的质检服务编号，并确认「角色设定集质量门」归 S35 还是 S36；(2) 若两者都不合适，说明 `quality_gate_ref` 指向的到底是什么（可能是 S01 的审核？行 150 的注释列了三个候选 `S33/S34/S01`）；(3) 在 QC 方案登记对应的 check 之前，`quality_gate_ref` 的 `NOT NULL` 应标为「等 QC 登记后启用」。本 schema 不含 QC 字段（事件里没有），所以这条只是记录，不影响形状。"
+    }
+  ]
+}

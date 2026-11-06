@@ -1,0 +1,37 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCP7B2Q4R6S8T0V2W4X6Y8Z",
+  "source": "S11",
+  "type": "asset.character.revision.accepted",
+  "subject": "character/chr_linlan",
+  "time": "2026-11-06T09:00:00Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "chr_linlan",
+  "aggregate_sequence": 12,
+  "correlation_id": "cmd_01JCP7A0M2N4P6Q8R0S2T4U6V",
+  "causation_id": "cmd_01JCP7A0M2N4P6Q8R0S2T4U6V",
+  "traceparent": "00-9d4b1e7a3c5f8206b4d968e2a07c3f51-6a2e8c04d1f7b935-01",
+  "data": {
+    "schema_version": "2.0",
+    "character_ref": {
+      "service_id": "S11",
+      "id": "chr_linlan",
+      "revision": 12,
+      "content_hash": "88fe39f6c00ee39c6cb1846191161b840127639b7041551bb60226f142393f4f"
+    },
+    "identity_feature_hash": "d1004e3facc1a75ffc9df425e6402cfbe680dece97f7238b9a1b18a8196d2dc0",
+    "became_canonical": false,
+    "canonical_revision": 9,
+    "rights_ref": {
+      "rights_owner": "S02",
+      "rights_id": "rights_char_linlan",
+      "rights_revision": 3,
+      "rights_hash": "a061cb685fc1e0fdbb872c7c277e39f5f90f29513a1d63f981efda277e70c40b"
+    },
+    "view_count": 4,
+    "source_kind": "generated"
+  },
+  "data_ref": null
+}

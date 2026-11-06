@@ -510,3 +510,105 @@ README 里 `data_schema_ref` 的计数是 43，检查摘要是 `124 / 98 / 43 / 
 
 ---
 
+## 12. S11 这一轮：又一次凭记忆写行号，94 处引用里 8 处指错
+
+这是**连续第三轮**同一个毛病（S14 41 处、S13 若干、本轮 8 处）。根因不是不会数，是
+**写的时候从脑子里取行号，没有回读**。本轮改成：先写脚本把每一条要引用的行 dump 出来，
+再写正文；即便这样，仍有 8 处是在「写正文时顺手补的一句引用」上出的错——脚本只覆盖了
+事先列出的那些。教训是脚本要在**正文写完后再跑一遍全量扫描**，而不是只验事先想起来的。
+
+### 12.1 八个指错的行号
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `CRC-1` 的 `event_keys`、`CRC-1` 的 `fix_shape` | `§5.3 行 552–559` | **`行 553–559`** | 552 是 `"data":{` 这一行本身，不是键。7 个键在 553–559。**与第 11 节第 6 条是同一个错**（那次是 S14 的「12 个键」数成了 11），我记了更正表却没有把这条教训带过来 |
+| 2 | `CRC-3` 的 `rights_event` | `§5.3 行 546–560 的事件块` | **`行 545–562`** | 546 是 `"specversion"` 那一行（信封开始的第二行），不是 `{`。事件块从 545 的 `{` 到 562 的 `}` |
+| 3 | `x-needs-owner` 第 5 条、`CRC-5` 的 `consequence` | `rehash-revision` runbook `行 649` | **`行 648`** | 648 才是 `rehash-revision`；649 是 `drift-audit` |
+| 4 | `canonical_revision` 的 `description`、`CRC-4` 的 `fix_shape` / 相关处 | 事务第 5 步 `行 437–441`（后又改成 `438–441`） | **`行 437–440`** | 437 是 `-- 5) set_canonical:` 注释行，438–440 是那三条 `UPDATE`/`INSERT`，441 是空行。**我第一次改成了 438–441，把空行算了进去，是错上加错** |
+| 5 | `became_canonical` 的 `description`（`s17_reality`） | `§4.2 行 313–322` | **`行 313–321`** | 313 是 `### 4.2` 标题，314 空行，315 表头，316 分隔行，317–321 是五行依赖，322 空行 |
+| 6 | `CRC-2` 的 `s17_reality` | `§4.2 ... 行 323` 引作「依赖读取」范围之内 | 同上，**313–321** | 323 是「S17 不缓存 S16 的事实」那句，**不是**依赖表的一部分；引它做别的断言可以，但不能算进依赖读取的行范围 |
+| 7 | `CRC-6` 的 `s11_refs` | 「共 **3** 处 `S33/S34` 当质检」，并声称另外两处没问题 | **5 处命中、4 处误用** | `git grep -F "S33/S34"` 实测 5 行：150、205、373、750、753。我漏了 373（`→ S33/S34 QC（身份一致性、多角度一致性）`，判决书里最直白的一处），又把 750（`identity_features` 是「S33/S34/S17/S48 的共同输入」，另一种误用）判成了无关 |
+| 8 | 同上，`why_it_matters` | 「S14 七处、S11 **三处**、S12 六处、S13 两处」 | **S14 七、S12 六、S11 五、S13 二** | 沿用第 7 条的数错。四份方案的数字都是脚本 `git grep -F` 打出来的，只有 S11 那个是我手写的 |
+
+第 3 条和第 4 条都是「改一次、又错一次」：第 3 条我第一次把 648 写成了 649，回读时发现改对；
+第 4 条我把范围从 437–441 改成 438–441（以为要跳过注释行），结果又把 441 这个空行包了进去。
+**范围类引用要么首尾都落在真实内容行上，要么就别用范围。**
+
+### 12.2 两个我自己数错了的数字
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 9 | `view_count` 的 `description` | `character` 的 **14 列**（行 98–109） | **12 列** | 行 98–109 是 12 行数据列，我把 `PRIMARY KEY`（110）与 `UNIQUE`（111）也算成了列。`character_revision` 的 17 列同样是脚本数的（136–152），那一个是对的 |
+| 10 | `view_count` 的 `description`、README 同处 | `§2.3 行 168–196` | **`行 168–194`** | 195、196 已经是 `### 2.4` 的标题与空行。**与第 11 节第 7 条是同一类**：范围尾巴伸进了下一节 |
+
+### 12.3 一个我该早点承认的口径错误
+
+`CRC-2` 里为了证明「S17 不订阅任何事件」，我引了 S17 行 323「S17 不缓存 S16 的事实」。
+这句话**成立且有用**，但它是 S17 对 S16 的陈述，不是对 S11 的。真正的证据是
+`git grep -F` 的零命中（`asset.character.revision.accepted`、`became_canonical`、
+`identity_feature_hash`、`character_revision` 在 S17 里全为 0）加上 §4.2 那张只读依赖表。
+引用一句相邻但不同主语的句子，会让论证看起来比实际强——这正是本仓库反复记的那类问题
+（「某某需要它」的句子没人回执）。已把主证据与旁证分开写。
+
+### 12.4 本轮真实数字（脚本输出，不沿用第 11 节的中间结果）
+
+```
+topics total          = 55
+with data_schema_ref  = 45
+envelope-only         = 10
+payload refs (schema_ref + data_schema_ref) = 100
+
+contracts/**/*.json        = 128   （递归）
+contracts/*.schema.json    =  54   （根级，非递归）
+contracts/**/*.schema.json =  61   （递归）
+contracts/examples/*.json  =  62
+
+128 − 54 = 74,   62 + 12 = 74   ✓
+```
+
+12 个「既不是例子也不是根级 schema」的 JSON：`domain-v1/` 的 5 个 `.v1.schema.json`、
+`event-topics.v2.json`、`mcp-tools.v2.design.json`、`redaction-policy.v2.json`、
+`service-catalog.v2.json`、`quality/action-families.v2.json`、`quality/check-registry.v2.schema.json`、
+`quality/qc-report.v2.schema.json`。
+
+**第 11.3 节的恒等式这一轮换了数字，仍然成立**：上次是 `126 − 53 = 73 = 61 + 12`，加了 1 个
+payload schema、1 个例子、1 个 topic 之后是 `128 − 54 = 74 = 62 + 12`。两边各加 1，
+是因为新增的 schema 落在根级、新增的例子落在 `examples/`。**注意 `128` 与 `54` 必须一个递归
+一个根级**——拿递归的 61 去减就会差 7，第 11.3 节已经踩过一次。
+
+`python tools/check_all.py`：
+
+```
+ok    json       128 file(s)
+ok    payloads   100 schema ref(s), 45 topic(s) with a payload schema
+ok    checkids   99 check_id(s), 3 known non-conforming
+ok    links      1321 local link(s)
+ok    catalog    48 service(s), 55 topic(s)
+ok    families   14 family/families
+ok    scaffold   120 generated file(s)
+61 example(s) valid, 0 failing, 1 without a schema
+ok    examples   contracts/examples/
+ok    registry   no check-registry.v2.json yet; nothing to validate
+
+9 check(s) passed
+```
+
+探针（`tools/_tmp_probe11b.py`，78 条）：payload 负例 56/56、payload 正例 11/11、
+envelope 负例 10/10、envelope 正例 1/1，**FAILS = 0**。
+
+第一版探针报了 5 个 FAIL，全部是**我的期望值写错**，不是 schema 错：信封对
+`source`/`type`/`traceparent` 只收 `{"type":"string","minLength":1}`，所以「把 `source`
+改成 S14」「把 `type` 改成不存在的主题」「`traceparent` 写垃圾」三种都放行。读
+`event-envelope.v2.schema.json` 确认后，把这三条从「应拒」改成「已知漏检」，并在 README
+里与 S13 那条并列写明。**这是信封的已知限制，不是本 schema 的缺陷。**
+
+### 12.5 一条本该在第一次就查的事实
+
+`view_count` 我在 schema 里写成「全仓唯一出现」——这个结论是 `git grep -F view_count plans/`
+打出来的，只命中 S11 自己的 558 行。但同一句话我第一次是用「只出现在 §5.3 的示例里」这种
+描述写的，没有贴命令输出。本仓的规矩是「写进报告的每一个数都用脚本算一遍贴输出」，
+对「某个词在整份方案里只出现一次」这种断言同样适用——它是个可证伪的事实断言，不是修辞。
+**断言「唯一」「从不」「没有任何」时，必须先跑 grep 并留下输出。**
+
+---
+
