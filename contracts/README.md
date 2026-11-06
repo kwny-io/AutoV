@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1326 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1327 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
@@ -1503,7 +1503,7 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1326、
+那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1327、
 stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
@@ -1673,6 +1673,28 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `|actual − ShotSpec.duration| > 1 帧`，绝对值符号是裸 `|`；朴素 `split('|')`
    会把这行切成 9 列，动作列与复检列整体右移。须用 `(?<!\\)\|` 切分。
    本表此前的"3 处动作 / 11 处复检"就是切错列数出来的，实为 **2 处 / 10 处**。
+
+5. **全仓的路径写法与 `openapi.v2.yaml` 是两套约定，一处都不重合。**
+   48 份方案里共 **100 个不同接口**（35 份方案，按参数名归一化后）用 `:verb` 子动作写法——
+   `/change-plans/{id}:apply`、`/manifests/{id}:commit`、`/scripts/{id}/revisions/{rev}:seal`。
+   `service-catalog.v2.json` 的 96 个端点里有 4 个是这种写法（S02 `:evaluate` / S07 `:apply` /
+   S08 `:commit` / S22 `:acquire`），`service.yaml` 照抄，所以也是这种写法。
+
+   而 `openapi.v2.yaml` 的 21 个操作**没有一个是 `:verb`**，同样几个动作它写成
+   `/change-plans/{plan_id}/apply`、`/manifests/{manifest_id}/commits`。
+   S07 的 apply 两边都有，但是两个不同字符串；按字面量比对 0 重合，
+   归一化参数名后也只有 **10** 个能对上。
+
+   | 比什么 | 结果 |
+   |---|---|
+   | catalog 的 96 个端点在 openapi 里有同方法同形状定义 | **10** |
+   | catalog 有、openapi 无 | **86** |
+   | openapi 有、catalog 无 | **11** |
+
+   选哪一种写法是 API 设计决策，牵扯 100 个接口字面量，不在一份检查里替 owner 定。
+   `contracts/README.md:13` 自己写的是「21 个**核心**操作」，没有声称完整覆盖——
+   真正的问题是**两套约定并存**，不是数量差。
+   逐数字见 [§16.30](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
 
 ## schema 管不到什么
 

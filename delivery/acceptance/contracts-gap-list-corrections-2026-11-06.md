@@ -3615,3 +3615,80 @@ schema_owner service_id slug
 | 1 | 本节初稿「点名的渠道是 **10 类**」 | **12 个**：Volcengine、BytePlus、Kling、Wan官方API、Wan自托管、Veo、Sora历史、Vidu、MiniMax、图像、TTS、LLM/VLM | **10 是 `body.split("、")` 的碎片数，不是条目数。**首片 `Volcengine和BytePlus分开Deployment；Kling` 一个碎片里塞了两件事（Seedance 的两个 Deployment + Kling），按 `、` 切只数出一片。10 和 12 之差正好是首片没拆开的那两个。**按分隔符切之前先看清分隔符的语义**——这句里 `和`、`；`、`、` 三种都在用 |
 | 2 | 同上「仓库里是 **7 个 provider 目录、9 个 connector**」 | 两个数都对，但它们不是同一个缺口的两面：9 个 connector 分布在 7 个 provider 下（`seedance`、`wan` 各两个渠道）。写在一起容易被读成「7 对 9 差了 2」 | 没写清单位。按目录数和文件数分别说，或者直接给映射表 |
 | 3 | 本节初稿脚本「mapped dirs that do not exist: 9 个全缺」 | **假阳性，0 个缺** | 路径解析写成 `rsplit("/", 2)` 再拼第 1、2 段，把 `connectors/seedance/volcengine/connector.yaml` 解成了 `volcengine/connector.yaml`，丢掉了 provider 那一层。改成 `'/'.join(path.split('/')[1:3])` 后 9 个全部命中。**脚本报「全都不存在」时，先怀疑解析，不是先怀疑数据** |
+
+## 16.30 全仓 100 个接口用 `:verb` 子动作写法，唯一的 OpenAPI 文件一个都没用
+
+`contracts/openapi.v2.yaml` 是这份设计里唯一的机器可读 HTTP 契约，21 个操作。
+`contracts/service-catalog.v2.json` 给 48 个服务各写了一个 `command_api` 和一个 `query_api`，
+共 **96** 个端点。两边的路径写法**不是同一个约定**。
+
+先看 catalog 里少数用子动作的四个：
+
+```
+S02  POST /policy-decisions:evaluate
+S07  POST /change-plans/{id}:apply
+S08  POST /manifests/{id}:commit
+S22  POST /permits:acquire
+```
+
+`openapi.v2.yaml` 里以 `:` 结尾的路径 **0 个**。同样是这几个动作，它写成：
+
+```
+POST /change-plans/{plan_id}/apply     operationId=applyChange
+POST /manifests/{manifest_id}/commits  operationId=commitManifest
+```
+
+**S07 的 apply 两边都有，但是两个不同的字符串。** 一个是 `/change-plans/{id}:apply`，
+一个是 `/change-plans/{plan_id}/apply`；按路径字面量比对，它们不相交。S08 那对差得更远：
+catalog 是单数动词 `:commit`，openapi 是复数名词 `/commits`（同一个文件里
+`/series/{series_id}/memory/commits` 也是复数，而 catalog 的 S16 写的是
+`POST /memory-commits`，又换了一个形状）。
+
+### 这不是四个端点的事
+
+`:verb` 不是 catalog 里四个孤立写法，它是**全仓的主约定**。把 48 份方案里的路径字面量抽出来：
+
+```
+plans with ':verb' path literals: 35 | distinct literals total: 116
+```
+
+`116` 是含参数名的不同字符串数。把 `{id}` / `{plan_id}` / `{revision}` / `{rev}` 这类
+参数名归一化后是 **100** 个不同接口（差的那 7 个只换了参数名，例如
+`/manifests/{id}:commit` 与 `/manifests/{manifest_id}:commit` 各写了一遍）。
+
+也就是说：**100 个接口用 `:verb`，21 个 OpenAPI 操作里 0 个用。** 两种写法没有一处重合。
+覆盖面上，catalog 的 96 个端点里只有 **10** 个能在 `openapi.v2.yaml` 里找到同方法同形状的
+定义（忽略参数名），**86 个完全没有 OpenAPI 定义**；反过来 `openapi.v2.yaml` 有 **11** 个操作
+在 catalog 里不存在（`POST /episodes/{}/runs`、`POST /runs/{}/commands`、
+`POST /series/{}/memory/query`、`POST /series/{}/memory/commits`、`POST /manifests/{}/commits`、
+`POST /change-plans`、`POST /change-plans/{}/apply`、`POST /delivery-packages/{}/publish`、
+`GET /admissions/{}`、`GET /projects/{}/effective-policy`、`GET /series/{}/metrics`）。
+
+### 危害面
+
+1. **按 catalog 生成的客户端调不通。** `services/*/service.yaml` 是从 catalog 派生的，里面的
+   `api.command` / `api.query` 就是 `:verb` 那套。谁拿 `service.yaml` 去生成 HTTP 客户端，
+   再拿 `openapi.v2.yaml` 去校验或对 mock，两边路径永远对不上。
+2. **`scaffold` 的绿灯不含这一项。** `scaffold` 只证明 118 个生成物与各自的生成器一致；
+   catalog 与 `openapi.v2.yaml` 之间没有任何检查，因为 `openapi.v2.yaml` 不是生成物，
+   它是手写的。
+3. **这不是 schema 校验能发现的错误。** 两边各自都合法：`/x:y` 是合法 path segment，
+   `/x/{id}/y` 也是。只有把两份清单放在一起数才看得见。
+
+### 没做什么
+
+- **没有改任何一边。** 选 `:verb` 还是 `/path/verb` 是 API 设计决策，而且 `:verb` 这一侧
+  牵扯 35 份方案和 48 个 `service.yaml`，改成另一侧等于重写 100 个接口的字面量。
+  AGENTS.md 的「契约与文档冲突 → 停下，报告冲突，不要自行选边」直接适用。
+- **没有把 `:verb` 加进 `check_all.py`。** 该检查的是「catalog 的 96 个端点有没有 OpenAPI 定义」，
+  而这条检查在 `openapi.v2.yaml` 只有 21 个操作的前提下必然大面积失败——先要 owner
+  决定是补齐 openapi 还是承认它只是「核心操作」子集。
+- **没有把 86 / 11 当成缺陷。** `contracts/README.md:13` 自己写的是「21 个**核心**操作」，
+  没有声称完整覆盖。真正的问题是**两套路径约定并存**，不是数量差。
+
+### 更正表
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 本节初稿「35 份方案共 116 处路径字面量」当成接口数 | **116 是含参数名的字符串数，归一到 100 个不同接口** | 参数名不统一：`{id}` / `{plan_id}` / `{manifest_id}` / `{rev}` / `{revision}` 都在用。同一接口写两遍就被数成两个。**数「有多少个接口」必须先归一化参数名**，数「有多少处写法」才不归 |
+| 2 | 本节初稿「catalog 与 openapi 重合 10 个」用含参数名的路径直接比 | 先比出 4 个重合，归一化参数名后才是 **10** 个 | 第一次比的是 `/manifests/{id}/revisions/{revision}` 对 `{manifest_id}`，参数名不同就判为不重合，漏掉 6 对。与第 1 条是同一个坑的两面 |
