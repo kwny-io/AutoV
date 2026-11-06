@@ -1252,18 +1252,21 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 值之间的关系。本轮的示例靠人工保持一致（`aggregate_id` 与 `data.mix_job_id` 都写成
 `mj_01JCC4R2T6V8W0X2Y4Z6A8B0C2`），下一步做 codegen 校验器时应当把这类约束一起表达。
 
-## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十三处错
+## 16. S43 / S44 这一轮：六条「只有聚合键」或「只有事件名」的事件，以及引用核对暴露的十四处错
 
 第 15 轮把 S42 剩下两条补齐之后，`envelope-only` 归零的最后一格是 S43 与 S44 的六条事件。
 这一轮把六条都写成 payload schema，`event-topics.v2.json` 的 `data_schema_ref` 从 49 条涨到
 **55 条**，`envelope-only` 从 6 降到 **0**。六份 schema 各 3 条 `x-needs-owner`、各 3 条
 `x-conflicts`（前缀 PDC / PDS / PDF / AMS / AEC / ACP），共 36 条新编号。
 
-这一节的 §16.1 是**本轮自己写错的数**——十三处，其中四处在写完这一轮报告时才发现、属于
+这一节的 §16.1 是**本轮自己写错的数**——十四处，其中四处在写完这一轮报告时才发现、属于
 「引用了不存在的行」，另外三处是我在这一节的初稿里又写错的 ref 计数，第十二处（#12）与第十三处（#13）是后续定时自检回合才发现的：
-散文里的「本仓」没写分母，以及 `schema_ref + data_schema_ref` 那个 ref 数被当成了 topic 数。§16.2 起是把源表重新数一遍的脚本输出，不沿用 §15.2 的任何中间结果。
+散文里的「本仓」没写分母，以及 `schema_ref + data_schema_ref` 那个 ref 数被当成了 topic 数。
+第十四处（#14）是再下一轮自检发现的，且是我在 §16.9 里**新写**的——把「同一类漏检被提到 4 次」
+说成了「4 处都用了『已知漏检』这个标签、说同一句话」，实际是 3 处带标签。
+§16.2 起是把源表重新数一遍的脚本输出，不沿用 §15.2 的任何中间结果。
 
-### 16.1 修正本轮自己写错的十三条数
+### 16.1 修正本轮自己写错的十四处
 
 | # | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|---|
@@ -1280,6 +1283,7 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 | 11 | `post.mix-completed.v2` / `MIX-2` 的三条出路 (2) | 「与仓内其余 **54 处**不同形」 | 其余 **54 处**（严格 55 − 本文件 1；按递归 glob），若按顶层 glob 则是 52 | 与 #9 同源：分母口径没写死就减 |
 | 12 | §16.5 行 1591 的散文 | 「**本仓** 264 处 `"pattern"` 里 139 处是 `^[0-9a-f]{64}$`」 | 264 / 139 是按 `contracts/**/*.schema.json`（71 个文件）数出来的；放宽到 `contracts/**/*.json`（148 个文件）是 274 / 143，多出的 10 处来自 `redaction-policy.v2.json`（6 处，无一是 sha）与 `mcp-tools.v2.design.json`（4 处，全是 sha） | **「本仓」不是分母**。同一个报告的第 4 节括注了 glob，散文里却退回「本仓」——§16.2 刚立的口径规则，自己在 270 行后就违反了 |
 | 13 | §15.2、§16.2、§16.7 的 `schema_ref + data_schema_ref` 三行 | 「`schema_ref + data_schema_ref= 104`」「`= 110`」，与同一块里的 `topics total = 55` 排在同一个列表里 | 这两行是 **ref 数**，不是 topic 数：55 个 topic 每个都同时有 `schema_ref` 与（本轮之后）`data_schema_ref`，所以 55 × 2 = 110；本轮之前是 55 + 49 = 104 | **数对了，单位没写。**它紧跟在 `topics total = 55` 下面、又用同一个 `=` 对齐，读起来像「110 个 topic」。这正是本报告反复出事的那一类：分母/单位不写清楚，数本身再对也会被误读 |
+| 14 | §16.9 开头两句 | 「`contracts/README.md` 在**四处**把它记成『已知漏检』（S13 行 1215、S14 行 1277、S12 行 1349，以及 S47 行 1087 那条关于 `aggregate_id` 的）。四处都写着同一句话：信封的 `source` 与 `type` 只是……」 | **三处**是「已知漏检」（S13 / S14 / S12），三处写同一句话；**第四处**（S47 行 1087）说的是 `aggregate_id` 与主键不相等，措辞也不同 | `git show 0cccb50^:contracts/README.md` 数得「已知漏检」= 3、「本仓信封不钉生产者与主题的对应关系」= 2、「本仓信封不对任何 topic」= 2。我把「同一类漏检在 README 里被提到 4 次」与「4 次都用了同一个标签、说同一句话」混成一件事——**「同一类」不等于「同一句」**，而我改的正是被标签点名的那三处，第 4 处是顺带改措辞 |
 
 第 10 条值得单独一句：**「本文件贡献几处」这种归属计数必须把严格与可空分开数**。我第一版
 修完写成「本文件贡献 0 处严格、只贡献 2 处可空」，回读时发现 55 − (其余文件) 对不上，才
@@ -1433,8 +1437,8 @@ HEAD~3 strict=52 nullable=4 files=61  postmix(strict=0 nullable=0)
 | `contracts/analytics.cost-projection-updated.v2.schema.json` | 新增 | 10 / 10 / 3 / 3（ACP-1..3） |
 | `contracts/examples/*.json`（6 个） | 新增 | 每条事件一个完整信封示例，`aggregate_id` 与 `data` 里的主键逐一对齐（这 6 条现在由 §16.8 的检查守着） |
 | `contracts/event-topics.v2.json` | 改 | 6 条 topic 各加一个 `data_schema_ref`；`git diff --stat` 只 +6 行（其余键不动） |
-| `tools/validate/validate_examples.py` | 改 | `SCHEMA_OF` +6 行，全部指向 `event-envelope.v2.schema.json`（不是 payload schema）；另加 `aggregate_identity_problems()` 常驻检查（见 §16.8） |
-| `contracts/README.md` | 改 | 8 处计数勘误 + 6 行 payload 表新增（表从 49 行涨到 55 行） |
+| `tools/validate/validate_examples.py` | 改 | `SCHEMA_OF` +6 行，全部指向 `event-envelope.v2.schema.json`（不是 payload schema）；另加 `aggregate_identity_problems()`（见 §16.8）与 `envelope_identity_problems()`（见 §16.9）两个常驻检查 |
+| `contracts/README.md` | 改 | 8 处计数勘误 + 6 行 payload 表新增（表从 49 行涨到 55 行）；另把三处「已知漏检」与 S47 行 1087 一处改为指向 §16.8 / §16.9 的两个检查（见 §16.9） |
 | `contracts/delivery.package-published.v2.schema.json` | 改 | `x-needs-owner[1]` 的 `s43_status` 加一句：那三条「payload schema 仍缺」已由本轮补齐 |
 | `contracts/post.mix-completed.v2.schema.json` | 改 | 第 15 轮遗留的 ref 计数（`52 处` / `MIX-2`）按 §16.1 第 9–11 条改写 |
 
@@ -1745,9 +1749,11 @@ pattern entries (contracts/**/*.json, 148 files)       = 274 | sha = 143
 ### 16.9 把「示例的 `type` / `source` 对不对」也做成常驻检查
 
 §16.8 关掉的是「`aggregate_id` 追不到」那一类。同一批示例里还有另一类一直没人管，
-`contracts/README.md` 在**四处**把它记成「已知漏检」（S13 行 1215、S14 行 1277、
-S12 行 1349，以及 S47 行 1087 那条关于 `aggregate_id` 的）。四处都写着同一句话：
-信封的 `source` 与 `type` 只是 `{"type":"string","minLength":1}`，所以改坏了也没人拦。
+`contracts/README.md` 在**三处**把它记成「已知漏检」（S13 行 1215、S14 行 1277、
+S12 行 1349），三处写的是同一句话：信封的 `source` 与 `type` 只是
+`{"type":"string","minLength":1}`，所以改坏了也没人拦。**第四处**（S47 行 1087）说的是另一件事
+——信封也不把 `aggregate_id` 与 `data` 里的主键钉成相等——它已被 §16.8 的
+`aggregate_identity_problems()` 收掉，这一轮只顺带改了措辞。
 
 **先证实它不是空话。**把 `artifact-ingested.json` 的 `type` 改成 `artefact.ingested`
 （不存在的主题）、`source` 改成 `S99`（不存在的服务），跑 `python tools/check_all.py`：
@@ -1825,8 +1831,9 @@ exit code: 1
   FAIL  examples   1 problem(s)  [contracts/examples/]
 ```
 
-**`contracts/README.md` 那四处「已知漏检」现在是假话，一并改了。**四处都拆成「schema 层仍不管 /
+**`contracts/README.md` 那三处「已知漏检」现在是假话，一并改了。**三处都拆成「schema 层仍不管 /
 示例层已由 `envelope_identity_problems()` 管 / `traceparent` 仍无人管」三段，只保留仍然为真的部分。
-S47 行 1087 那处原本讲的是 `aggregate_id`，改成了指向 §16.8 的 `aggregate_identity_problems()`。
+另外 S47 行 1087 那处（讲 `aggregate_id` 的）也顺带改了措辞，指向 §16.8 的
+`aggregate_identity_problems()`。
 
 九项仍是全过，`examples` 一项输出不变（71 valid / 0 failing / 1 without a schema）。
