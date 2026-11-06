@@ -1487,8 +1487,15 @@ python tools/check_all.py --only links,examples
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（66 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（**71** 个示例对
 schema 校验，另 1 个刻意不映射）、`registry`（`check-registry.v2.json` 存在时才跑）。
+
+`examples` 这一格的数一直随加示例往上走，所以比别的格更容易过期：这里曾经写 63、写 66，
+而磁盘上已经是 71 校验 + 1 无 schema = 72 个文件。数法固定为校验器自己打印的那句
+`{ok} example(s) valid, {failing} failing, {skipped} without a schema`——`ok` 是要写进这一格的数，
+`skipped` 是那 1 个 `capacity-plan.json`（`SCHEMA_OF` 里显式映射成 `None`：它是容量测算输入，
+不是事件，没有对应 schema）。`ok + skipped` 必须等于 `contracts/examples/` 下的 `.json` 个数；
+不相等说明有文件没被映射到，校验器会另打 `UNMAPPED` 行并以 1 退出。
 
 `catalog` 里还有一条**从没执行过**的分支：它会校验 topic 的 `consumers` 是否都是真实
 服务 id，但 `event-topics.v2.json` 的 55 个 topic **没有一个带 `consumers` 键**，那条

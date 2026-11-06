@@ -2128,3 +2128,95 @@ ok    examples   contracts/examples/  [7 schema file(s) never loaded by the vali
 3. `local_registry()` 要不要改成 `recursive=True`？改之前得先定上面 1，否则 `examples` 会由绿转红。
 
 九项仍全过（`examples` 那条现在带上面那个提示）。
+
+### 16.14 `contracts/README.md` 里 `examples` 那格数从 63 起就没再跟过磁盘：63 → 66，实际 71
+
+§16.13 关掉「有文件但没加载」之后，顺带核 README 九项摘要里每一格的数。**其余七格都对**
+（148 / 110+55 / 99+3 / 1321 / 48+55 / 14+5 / 120；第九格 `registry` 报「还没有文件」，
+本来就没有数可对），只有 `examples` 那格不对：
+
+```
+README 原写：66 个示例对 schema 校验，另 1 个刻意不映射
+校验器实打：71 example(s) valid, 0 failing, 1 without a schema
+磁盘上的 .json：72
+```
+
+`71 + 1 = 72`，闭合。**66 那格少算的 5 个，是这轮之前陆续加进来的示例**——每加一次
+示例都改了 `SCHEMA_OF`，就是没人回头改 README 里那句数字。
+
+README 那行的历史（脚本逐 commit 取 `git show`，不是我记的）：
+
+```
+7895bba  57
+dae385e  58
+218b4b3  59
+5afb255  60
+72aa6f0  61
+758bf47  62
+785b180  63
+3aeeb22  66      <- 之后一直停在 66
+a172d89  66
+0cccb50  66
+ff99c4e  66
+b87f0e3  66
+```
+
+这正是本报告反复记录的那个模式，但换了张皮：前面几节都是「眼睛数列表数错」，
+这次是**「数字曾经对过，之后上游变了它没跟」**。前者靠脚本重数能防，后者不能——
+你重数的还是旧口径。要防它，得让这个数**没有地方可以单独存在**。
+
+顺着这个想法把 `capacity-plan.json`（唯一无 schema 的那个）也验了一遍：`docs/03` 里讲
+「Little 定律 / 每日生成秒数 / 存储」那几段散文明确说它「可调整后重新计算」，那就照那几段
+的公式重算 `derived` 块：
+
+```
+field                                     declared            recomputed  ok
+video_attempts_per_day                      900000                900000.0  ok
+average_requests_per_second        10.416666666666666    10.416666666666666  ok
+peak_requests_per_second            52.08333333333333      52.08333333333333  ok
+average_inflight                                3125.0                3125.0  ok
+peak_inflight                       15624.999999999998    15624.999999999998  ok
+planned_inflight_with_margin                     20313                 20313  ok
+video_generated_seconds_per_day              4500000              4500000.0  ok
+video_terabytes_per_day_decimal                    4.5                   4.5  ok
+video_retention_terabytes_decimal                135.0                 135.0  ok
+accepted_minutes_per_day            33333.333333333336    33333.333333333336  ok
+mismatches = 0
+```
+
+今天自洽。但**没有任何东西在跑这个重算**，所以明天有人把 `daily_shots` 改成 800000，
+`derived` 会静静留着旧值，而 README 那句「71 个示例全部通过各自 schema 校验」照样是绿的
+（`capacity-plan.json` 本来就不映射 schema）。这是同一个病：**一个可以单独存在的数字。**
+
+**做了一件小事，让它不能再单独存在：** `check_examples` 现在把三个数并排打出来，
+并把「磁盘上有但 `SCHEMA_OF` 里没有」当失败：
+
+```
+ok    examples   contracts/examples/  [7 schema file(s) never loaded …]  72 file(s) on disk, 64 stem(s), 64 mapped
+```
+
+三个数一摆，`71 + 1 = 72` 和 `64 stem = 64 mapped` 两个等式都能当场看出来是否成立；
+`ok` 那格该填 71 也就有了出处。反向验证过：往 `contracts/examples/` 塞一个
+`_probe-unmapped.json`，这行立刻变 `FAIL` 并指名 `['_probe-unmapped'] is on disk but
+missing from SCHEMA_OF`；删掉恢复绿。
+
+`72 个文件 / 64 个 stem` 会让人疑惑——9 个 `generation-command.*.json` 共享第一个点之前的
+stem `generation-command`，所以它只是一个 schema 下的 9 个实例，不是 9 个没映射的孤儿。
+这一点写进了 README 那段说明里，免得下次有人照 `stem` 数。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` 九项摘要里 `examples` 那格 | 「66 个示例对 schema 校验，另 1 个刻意不映射」 | **71** 个校验 + 1 个不映射 = 72 个文件 | **上游变了下游没跟。**数是从某次校验器输出里抄来的，抄完就再没回源；之后每加一个示例，这格就更错一格 |
+| 2 | 本节初稿：「按 `docs/03` 第 38–40 行散文里的公式」 | 裸行号 | 改成描述（讲 Little 定律 / 每日生成秒数 / 存储的那几段） | 本节上一句刚在讲「数字不能单独存在」，下一句就用了一个会腐的坐标 |
+| 3 | 本节初稿：「八格都对（148 / 110+55 / … / 120）」 | 八格，列了 7 组数 | **七格**都对，第九格 `registry` 报「还没有文件」、本来无值可对 | 把「九项检查」减「`examples` 那格」口算成 8，忘了 `registry` 那格没有数 |
+| 4 | 本节初稿：我怀疑 9 个 `generation-command.*` 共享 stem 会导致「1 without a schema」被算小 | 按 `basename.split(".")[0]` 推演，9 个文件会塌成 1 个，`skipped` 应该是 0 而不是 1 | 塌缩确实发生，但**方向相反**：9 个文件都映射到同一个 `generation-command.v2.schema.json` 并各自校验通过，所以 `ok` 吸收 9 个；`skipped` 的 1 是 `capacity-plan.json`。`71 + 1 = 72` 本来就闭合 | 看到「9 个文件 1 个 stem」就先下了「会漏」的结论，没先算 `ok + skipped` 是否等于磁盘文件数。**先验闭合性，再解释构成** |
+
+**owner 决定（新增一条）：**
+
+4. `capacity-plan.json` 的 `derived` 块要不要做成常驻检查？它需要一个「公式的单一出处」——
+   今天公式只在 `docs/03` 的散文里，脚本只能照着散文重写一遍，那样又造出第二个权威。
+   要么在 `docs/03` 里写成可执行片段并被引用，要么接受它永远不校验（那就得在 README
+   里明说「`capacity-plan.json` 的 `derived` 是某次人工计算的快照，不是实时值」）。
+   这一轮两样都没做，只把重算结果贴在这里。
+
+九项仍全过。

@@ -299,6 +299,22 @@ def check_examples(name):
         summary = ", ".join(f"{n} in {d}/" for d, n in sorted(by_dir.items()))
         r.note += (f"  [{len(unloaded)} schema file(s) never loaded by the validator: "
                    f"{summary}]")
+
+    # contracts/README.md quotes a count of examples in its nine-check summary,
+    # and that count went 57 -> 63 -> 66 while the directory kept growing to 72,
+    # because nothing tied the sentence to the files. The validator's own tally is
+    # the source of truth; check that it closes over the directory so the number
+    # can be copied from a green line instead of remembered.
+    on_disk = len(glob.glob(os.path.join(CONTRACTS, "examples", "*.json")))
+    stems = {os.path.basename(p).split(".")[0]
+             for p in glob.glob(os.path.join(CONTRACTS, "examples", "*.json"))}
+    mapped = {s for s in stems if s in mod.SCHEMA_OF}
+    r.note += (f"  {on_disk} file(s) on disk, {len(stems)} stem(s), "
+               f"{len(mapped)} mapped")
+    if len(mapped) < len(stems):
+        r.fail(f"{sorted(stems - mapped)} is on disk but missing from SCHEMA_OF; "
+               f"the validator prints UNMAPPED for it and the README's count "
+               f"cannot close")
     return r
 
 
