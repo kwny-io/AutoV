@@ -1553,7 +1553,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 **确实**还在某个 `check_*` 里。函数名是这段引用里唯一不随插入代码移动的部分，所以它是必填项，
 匿名行号直接 FAIL）、
 `planrefs`（方案引方案的 `Snn §X` 必须命中 `plans/Snn-*.md` 里真实存在的标题；扫 139 个 md，
-今天共 **467** 处引用、481 个段号对，481/481 命中。
+今天共 **502** 处引用，其中 **467** 处受检（另 35 处在豁免的更正报告里），481 个段号对，481/481 命中。
 这一类可查是因为**归属写进了文本**：`Snn §X` 自带 `Snn`，而「行 537」要另找上下文才知道属于谁。
 补它之前已经查出两处真错：`plans/S45-audit.md` 引了 S07 的 §11（S07 只到 §10）与
 `plans/S19-agent-runtime.md` 引了 S08 的 §6.5（S08 的 §6 只到 §6.4）。
@@ -1564,7 +1564,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「二十二项检查」这个数等于 `--list` 真列出的条数；二是把本段里 27 个手敲的数字逐条和
+「二十二项检查」这个数等于 `--list` 真列出的条数；二是把本段里 28 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1573,20 +1573,20 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 27 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
+那 28 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
 topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
 plantopics unjudged tokens 720、plantopics filename tokens 239、
 plantopics versioned-doc tokens 60、plantopics event-or-action tokens 421、docsreadme count 9、
-citerefs citation 8、planrefs ref 467、planrefs pair 481。
+citerefs citation 8、planrefs ref 502、planrefs judged 467、planrefs pair 481。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过二十七个方向（上面 27 个数各改 1），
-二十七次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
+反向测过二十八个方向（上面 28 个数各改 1），
+二十八次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
 每一个方向都由脚本改一处、跑一遍、读 `readme` 的输出，不是靠记忆归纳的。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。

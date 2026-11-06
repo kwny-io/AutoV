@@ -950,6 +950,8 @@ README_CLAIMS = [
     ("citerefs citation", r"今天共 \*\*(\d+)\*\* 处引用", "citerefs", r"(\d+) check_all\.py citation"),
     ("planrefs ref", r"`planrefs`（[^）]*?今天共 \*\*(\d+)\*\* 处引用",
      "planrefs", r"^(\d+) ref\(s\)"),
+    ("planrefs judged", r"其中 \*\*(\d+)\*\* 处受检",
+     "planrefs", r"\((\d+) judged\)"),
     ("planrefs pair", r"481 个段号对，(\d+)/\d+ 命中", "planrefs", r"(\d+)/\d+ resolve"),
 ]
 
@@ -2224,6 +2226,8 @@ def check_planrefs(name):
         if rel in EXEMPT:
             n = len(ref.findall(mask(_utf8(p))))
             exempt_refs += n
+            refs += n  # the total is what README's prose calls "共 N 处"; the
+                       # judged count is reported separately below
             continue
         text = mask(_utf8(p))
         for m in ref.finditer(text):
@@ -2258,7 +2262,8 @@ def check_planrefs(name):
     for d in dangling:
         r.fail(d)
 
-    note = (f"{refs} ref(s), {pairs} section pair(s) across {len(plans)} plan file(s); "
+    note = (f"{refs} ref(s) ({refs - exempt_refs} judged), "
+            f"{pairs} section pair(s) across {len(plans)} plan file(s); "
             f"{heading}/{pairs} resolve to a heading; "
             f"{exempt_refs} ref(s) in the corrections report not judged")
     if lineno:
