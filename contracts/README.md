@@ -1487,8 +1487,14 @@ python tools/check_all.py --only links,examples
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（**71** 个示例对
+5 条 invariant 里的 **4 条**）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（**71** 个示例对
 schema 校验，另 1 个刻意不映射）、`registry`（`check-registry.v2.json` 存在时才跑）。
+
+`families` 为什么是 4 条而不是 5 条：那第 5 条（`registry entries MUST NOT name an action
+outside families[defect_type].chain ∪ {fallback}`）说的是**登记项**，只能对着
+`check-registry.v2.json` 才能判，所以它归 `registry` 那格；而那个数据文件至今不存在，
+`registry` 只打印「no check-registry.v2.json yet」。也就是说第 5 条今天一次都没执行过，
+写「5 条 invariant」会让这一格读起来比实际覆盖得更多。
 
 `examples` 这一格的数一直随加示例往上走，所以比别的格更容易过期：这里曾经写 63、写 66，
 而磁盘上已经是 71 校验 + 1 无 schema = 72 个文件。数法固定为校验器自己打印的那句

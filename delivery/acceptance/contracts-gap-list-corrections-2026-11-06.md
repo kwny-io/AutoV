@@ -2220,3 +2220,140 @@ stem `generation-command`，所以它只是一个 schema 下的 9 个实例，�
    这一轮两样都没做，只把重算结果贴在这里。
 
 九项仍全过。
+
+### 16.15 `action-families.v2.json` 自己的第 5 条 invariant，和另两份文件、和校验器代码都对不上
+
+§16.14 核到一个事实：`check_families` 只覆盖 `action-families.v2.json` 自己声明的 4 条。
+那第 5 条去哪了？顺着查下去，发现它不只是「没在我的检查里」，而是**跟同仓另外两份文件矛盾**。
+
+文件 `invariants` 列表里原样写着（5 条，第 5 条）：
+
+```
+registry entries MUST NOT name an action outside families[defect_type].chain ∪ {fallback}.
+The qc-sdk validator enforces this at load time; a violating registry is rejected, not logged.
+```
+
+**`chain ∪ {fallback}`** 是并集：登记项可以用链里的动作，**也可以**用该族的 fallback。
+
+同一个族的另外两份文件说的是**只有链**：
+
+| 出处 | 原文 | 允许集合 |
+|---|---|---|
+| `action-families.v2.json` 第 5 条 invariant | `outside families[t].chain ∪ {fallback}` | chain **∪ {fallback}** |
+| `check-registry.v2.schema.json` → `$defs/escalation/properties/escalate_to/description` | `Must also be in families[defect_type].chain.` | chain |
+| `check-registry.v2.schema.json` → `x-cross-checks.rules` 第 2/3/4 条 | `default_action ∈ …chain` / `allowed_actions ⊆ …chain` / `escalate_to ∈ …chain (when non-null)` | chain |
+| `validate_registry.py`（`validate()` 里 `allowed_by_family = set(chain)`） | 三个字段都拿 `set(chain)` 判 | chain |
+
+`x-cross-checks` 的 `why` 明说这些规则「enforced by the qc-sdk registry validator AT LOAD
+TIME」——也就是那份文件自己认定 `validate_registry.py` 是这些规则的实现。数一下出处：
+说「只有 `chain`」的有 **5 条语句、分布在 2 份文件**（`escalate_to.description` 1 条、
+`x-cross-checks.rules` 第 2/3/4 条共 3 条、`validate_registry.py` 的 `allowed_by_family`
+1 条）；说「`chain ∪ {fallback}`」的只有 **1 条语句、1 份文件**。所以那份文件的第 5 条是孤证。
+但按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」，这一轮不改任何一份，
+只把它测出来。
+
+#### 冲突有多宽：24 个 (族, 字段) 对
+
+并集和 `set(chain)` 只有在 `fallback ∈ chain` 或 `fallback == human_review 且 human_review ∈ chain`
+时才相同。这条文件自己又有第 4 条 invariant 规定 `human_review MUST NOT appear in any chain`，
+所以：
+
+```
+=== where the two rules agree (chain U {fallback} == chain) ===
+  6 family/families: ['technical', 'identity', 'anatomy', 'hands', 'temporal', 'audio_mix']
+=== where they contradict ===
+  8 family/families: ['costume', 'prop', 'continuity', 'camera_adherence', 'action_adherence', 'subtitle', 'lipsync', 'voice']
+  affected (family, field) pairs = 8 x 3 = 24
+```
+
+6 个族两说一致（它们的 fallback 是链成员，如 `technical` 的 fallback 是 `regenerate_video`）。
+**8 个族的 fallback 正是 `human_review`**，而这 8 个族的链里都没有 `human_review`——
+于是并集比 `set(chain)` 多出恰好一个值 `human_review`，三个字段各一处，共 24 对。
+
+#### 实测：并集允许的登记项，校验器拒收
+
+建一条 `prop` 族（chain `['regenerate_video','change_spec']`、fallback `human_review`）的登记项，
+只改一个字段填 `human_review`。两次运行之间**只有 `escalate_to` 不同**，所以差出来的那条错误
+只能是这个字段引起的（`_tmp_esc.py` 里的成对探针）：
+
+```
+=== what validate_registry.py says ===
+  exit 1
+  REJECTED: 1 problem(s) in 1 check(s)
+    AUD.LIPSYNC.DRIFT: escalation_rule.escalate_to 'human_review' is outside the lipsync family
+
+=== control: same entry, escalate_to = 'redo_lipsync' (a chain member) ===
+  exit 0
+  OK: 1 check(s) loaded, all within their action families
+```
+
+三个字段都试一遍（`_tmp_esc2.py`），并带一个什么都不填的对照：
+
+```
+field set to human_review  exit  verdict
+default_action             1     REJECTED: 1 problem(s) in 1 check(s)
+allowed_actions            1     VIS.COSTUME.UNSPECIFIED: allowed_actions contains 'human_review', outside the
+escalation_rule            1     VIS.COSTUME.UNSPECIFIED: escalation_rule.escalate_to 'human_review' is outside
+(none - control)           0     OK: 1 check(s) loaded, all within their action families
+```
+
+三条完整错误信息（`prop` 族，不截断）：
+
+```
+VIS.PROP.WRONG_OBJECT: default_action 'human_review' is not in the prop family chain ['regenerate_video', 'change_spec'] (fallback 'human_review' is a fallback, not a start point)
+VIS.PROP.WRONG_OBJECT: allowed_actions contains 'human_review', outside the prop family ['change_spec', 'regenerate_video']. A registry entry may narrow the family, never widen it.
+VIS.PROP.WRONG_OBJECT: escalation_rule.escalate_to 'human_review' is outside the prop family
+```
+
+第一条的括号里那句「fallback … is a fallback, not a start point」其实是**第 5 条应有的含义**：
+fallback 不是起点。那它是不是也不该出现在 `allowed_actions` 里？两种读法都讲得通，而
+**这正是不能自行选边的理由**——代码把一个语义判断（fallback = 终点，不是候选集成员）
+实现成了与契约文字相反的东西，两边都有道理。
+
+#### 不是新发现的重复，是没人跑的代码
+
+`validate_registry.py` 里这段判断**从来没在真实数据上跑过**：`check-registry.v2.json`
+不存在，`registry` 那格一直打印「no check-registry.v2.json yet」。上面那些 `exit 1`
+是我手工喂进去的探针，不是仓库里的既有数据。也就是说，这个矛盾今天**没有任何生产影响**，
+但它是下一次有人真的转录 99 条 `check_id` 时会撞上的第一堵墙——而且撞的时候会看到
+`validate_registry.py` 报「outside the family」，指向的却是那份写着并集的契约文件。
+
+#### 顺带修正我自己的一处过度声称
+
+§16.14 和 `contracts/README.md` 都把 `families` 那格写成「动作族文件自己声明的 **5** 条
+invariant」。实际是 **4** 条：第 5 条讲的是**登记项**，只能对着 `check-registry.v2.json` 判，
+归 `registry` 那格，而那个文件不存在。已改：
+
+- `contracts/README.md` 九项摘要 `families` 格：「5 条 invariant」→「5 条 invariant 里的 **4 条**」
+- 同文件加一段说明第 5 条归 `registry`、今天一次都没执行过
+- `check_families` docstring：「The five invariants」→「Four of the five invariants」，并写明
+  第 5 条为什么不在这个检查里
+- `check_families` 的输出行补一句覆盖范围：
+
+```
+ok    families   14 family/families  [4 of the 5 stated invariants; the one about registry entries is check_registry's]
+```
+
+这是 §16.10 / §16.13 / §16.14 同一个模式的第四次：**绿线读起来比它实际覆盖的多。**
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` 九项摘要 `families` 格 | 「动作族文件自己声明的 5 条 invariant」 | **4 条**（第 5 条归 `registry`，且从未执行） | 把「文件里声明了几条」当成「这个检查覆盖了几条」；两者差的那一条恰好是唯一没跑过的那条 |
+| 2 | `tools/check_all.py` 里 `check_families` 的 docstring | 「The five invariants this file states about itself, checked literally」 | 「Four of the five…」，并说明第 5 条为何不属于这里 | 同一个混淆写进了代码注释，比写在 README 里更难被发现 |
+| 3 | 本节初稿：把 `escalate_to = human_review` 的拒收直接当成「校验器的 bug」 | 打算改 `validate_registry.py` 使并集成立 | 如实报告为**三份文件 vs 一份文件**的冲突，不改任何一份 | AGENTS.md 明写契约与文档冲突要停；而且代码那一侧的括号理由（fallback 不是起点）本身站得住，我差点按「少数服从多数」选边 |
+| 4 | 本节初稿：探针第一次跑出 `'registry_version' is a required property`，我差点把它读成字段相关 | 错误信息里混了 schema 的形状错误，和字段相关的拒收分不开 | 补上 `registry_version` 重跑，让两次运行的**唯一差异**是 `escalate_to` | 探针要能证明因果关系，就必须只留一个变量；带噪的对照不算对照 |
+| 5 | 本节初稿：「四票对一票」 | 四票对一票 | **5 条语句、2 份文件** 对 **1 条语句、1 份文件** | 把「文件数」和「语句数」混成同一个计数；`x-cross-checks` 那 3 条规则是三条独立语句，塌成一份文件的一票会少算 |
+| 6 | 本节初稿：「6 个族两说一致（它们的 fallback 是链成员）」 | 用「fallback 是链成员」解释这 6 个 | 直接对每个族算 `(set(chain) \| {fallback}) == set(chain)`，得 6 相等、8 不等；另验「不等时多出来的值恰好都是 `human_review`」= True | 条件写对了不等于等价关系成立过；这一句是在解释一个我还没直接数过的相等性 |
+
+**owner 决定（新增三条）：**
+
+5. `action-families.v2.json` 第 5 条要不要改成 `chain`（跟着另外三份文件走），还是反过来把
+   `x-cross-checks` 规则 2/3/4 和 `validate_registry.py` 改成 `chain ∪ {fallback}`？
+   改了会影响 S39 的路由候选集公式（`candidates = chain ∩ allowed_actions ∩ policy`），
+   所以不是纯文字改动。这一轮没动。
+6. 若采纳并集：`allowed_actions` 含 `human_review` 是否等于「这个检查允许自动放弃」？
+   今天没有字段表达这个意思，`never_auto_repair`/`no_auto_reason` 是另一回事。
+7. 若维持交集：那第 5 条应删掉并集写法，同时把「fallback 不是候选集成员」这条**语义**写进
+   契约（现在它只活在错误信息的括号里），否则下一个人还会照第 5 条的原文理解。
+
+九项仍全过（`families` 与 `registry` 两格的新措辞见上）。

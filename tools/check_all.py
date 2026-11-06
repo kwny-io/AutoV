@@ -156,13 +156,18 @@ def check_catalog(name):
 
 
 def check_families(name):
-    """The five invariants this file states about itself, checked literally.
+    """Four of the five invariants this file states about itself.
 
     `fallback` is deliberately allowed to be human_review (and often is), and
     `forbidden` deliberately names actions outside the chain; that is the whole
     point of forbidding one. Both were wrong in an earlier draft of this check:
     the assertions were written from memory of "chain is the complete set of
     legal moves", which is not what the contract says.
+
+    The fifth invariant is about *registry entries*, not about this file, so it
+    cannot be evaluated until check-registry.v2.json exists: it belongs to
+    validate_registry.py, which check_registry() runs. Saying "the five" here
+    made a green line claim coverage it does not have.
     """
     r = Result(name)
     fam = json.loads(_utf8(os.path.join(CONTRACTS, "quality", "action-families.v2.json")))
@@ -197,7 +202,9 @@ def check_families(name):
         if len(set(chain)) != len(chain):
             r.fail(f"{t}: chain names an action twice")
 
-    r.note = f"{len(closed)} family/families"
+    stated = len(fam.get("invariants") or [])
+    r.note = (f"{len(closed)} family/families  [4 of the {stated} stated invariants; "
+              f"the one about registry entries is check_registry's]")
     return r
 
 
