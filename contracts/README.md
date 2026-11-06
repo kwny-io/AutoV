@@ -1561,7 +1561,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 它的更正表故意把错误写法放进单元格，而没有任何词法特征能把它和活引用分开，实测过两种都不成立
 （遮行内代码会连 11 处真引用一起遮掉，遮 `「」` 又漏掉反引号里的那一处）。
 这是真缺口：报告之外的错引用会被拦住，报告里的不会。）、
-`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **468** 处引用，其中 **445** 处受检，
+`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **469** 处引用，其中 **445** 处受检，
 489 个段号对：485 个命中标题、3 个命中有序列表项、1 个两样都不是（见下）。
 和 `planrefs` 同一族，但这类引用**几乎都写在 markdown 链接里**（`[docs/07 §1.5](../docs/07-…)`），
 路径由 `links` 验，这里只验段号——此前没有任何检查看这一段。
@@ -1590,7 +1590,7 @@ interaction step 18、interaction endpoint 36、plantopics plan file 49、planto
 plantopics unjudged tokens 720、plantopics filename tokens 239、
 plantopics versioned-doc tokens 60、plantopics event-or-action tokens 421、docsreadme count 9、
 citerefs citation 8、planrefs ref 502、planrefs judged 467、planrefs pair 481、planrefs pair hit 481、
-docrefs ref 468、docrefs judged 445、docrefs pair 489。
+docrefs ref 469、docrefs judged 445、docrefs pair 489。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
