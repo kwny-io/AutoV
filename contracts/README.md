@@ -1600,8 +1600,9 @@ S38:241 的正文缩写，是三处已知悬空引用，列在 `KNOWN_DANGLING_R
 `links` 的只读存档条数（存档是冻结的，数它没有意义）、
 passed/skipped 的拆分（数据文件一落地就变）。
 
-十九项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
-结尾那行现在是 `18 check(s) passed, 1 skipped (registry): nothing was verified there`，
+二十项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：
+结尾那行会把通过的项数减掉它，再把 `1 skipped (registry): nothing was verified there`
+单列在后面（具体几项随检查增减，以 `--list` 为准，不在这里写死——写死过两次，每次加检查就过期），
 那一格自己的状态也打成 `skip` 而不是 `ok`。这条和「一项没跑成不能读成绿灯」是同一条原则，
 只是形态不同——前者是跑失败了，这里是没东西可跑。按旧写法「十项全过」会把一个空转的格子
 算成一票通过，而这个文件里恰好有一段（下一节）在说 `families` 那第 5 条一次都没执行过。

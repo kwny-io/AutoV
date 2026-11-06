@@ -977,6 +977,17 @@ def check_readme_counts(name):
     if stated != len(CHECKS):
         r.fail(f"README says {opener.group(1)}项检查, but {len(CHECKS)} checks are "
                f"registered; --list is the authority")
+    # The same total is restated further down, as "十九项里 `registry` 那一格…".
+    # That copy was typed by hand and went stale the round a check was added --
+    # the opener above was pinned, this one was not. Same class as the count
+    # list: two copies of one number, only one of them nailed down.
+    tail_total = re.search(r"\n([一二三四五六七八九十]+)项里 `registry` 那一格", section)
+    if not tail_total:
+        r.fail("contracts/README.md no longer states 'N 项里 `registry` 那一格' "
+               "about the skipped check")
+    elif _cn_numeral(tail_total.group(1)) != len(CHECKS):
+        r.fail(f"README's later sentence says {tail_total.group(1)}项里, but "
+               f"{len(CHECKS)} checks are registered")
     start = head + opener.end()
     para = readme[start:readme.find("\n\n", start)]
 
