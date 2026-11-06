@@ -266,13 +266,35 @@ def check_catalog(name):
             r.fail(f"{s['service_id']} produces {et!r}, but its catalog row does "
                    f"not list it in published_events")
 
+    # `depends_on` had no check at all: 125 edges whose only requirement was
+    # that the file parses. A typo'd or retired service id there is a dependency
+    # on nothing, and the scaffold below happily copies it into 48 service.yaml
+    # files. Reachability is deliberately NOT tested -- S26 <-> S27 is a real
+    # cycle that plans/S26 §8 says is broken by events (dispatch grant), not by
+    # removing an edge, so a cycle here is not automatically a defect.
+    edges = 0
+    for s in cat:
+        sid = s["service_id"]
+        deps = s.get("depends_on") or []
+        dupes = sorted({d for d in deps if deps.count(d) > 1})
+        if dupes:
+            r.fail(f"{sid} lists the same depends_on target twice: {dupes}")
+        for d in deps:
+            edges += 1
+            if not isinstance(d, str):
+                r.fail(f"{sid} depends_on has a non-string entry {d!r}")
+            elif d == sid:
+                r.fail(f"{sid} depends on itself")
+            elif d not in known:
+                r.fail(f"{sid} depends_on {d!r}, which is not a catalog service_id")
+
     # No topic declares `consumers`, so the loop above has never had an entry to
     # check: the "consumers agree with the catalog" half of this check is dead
     # code. Adding the key is an owner decision (policy.revision-published.v2's
     # POL-* `fix_shape` says so), so the honest thing is to say it out loud
     # rather than let the green line imply the consumer leg ran.
     r.note = (f"{len(ids)} service(s), {len(topics)} topic(s), "
-              f"{published_total} published_event(s)")
+              f"{published_total} published_event(s), {edges} depends_on edge(s)")
     if not with_consumers:
         r.note += "  [producer-only: no topic declares consumers]"
     return r

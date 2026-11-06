@@ -3372,3 +3372,54 @@ docs/02-service-catalog.md       inbox size=5426  (manifest 5426)  hash_ok=True
 | 5 | 「drifted: 6 条，本仓有意演进过的」 | **drifted 类别不成立**：这 6 条在 inbox 里哈希全对，仓库侧的差异是有意演进 | 与前一条同源：把「存档侧和仓库侧不一致」直接当成漂移，没有查第三处是否有原件。**「两侧不同」不等于「内容已变」**，可能只是副本所在位置变了 |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
+
+---
+
+## 16.26 `depends_on` 的 125 条边，此前一条都没校验
+
+**为什么查这个。** `check_catalog` 核了 `service_id` 去重、`docs/02` 镜像、topic 的 `producer` 与 `published_events`，唯独没碰 `depends_on`——`grep -n "depends_on" tools/check_all.py` 在改之前**零命中**。也就是说 48 份 catalog 条目里这 125 条边，唯一的「要求」是整个文件能被 `json.load`。
+
+**这个问题为什么是真的。** `depends_on` 不是注释，它被 `tools/scaffold/generate_services.py` 原样抄进 48 份 `services/*/service.yaml` 的 `depends_on:` 块。写错一个 id（退役服务、手误、把 slug 当 id 写），生成物会把错误一起放大，而整条链路上没有任何一格会红。
+
+先量了一下现状：
+
+```
+services 48, edges 125, zero-dep ['S01'], max fanout 6
+never depended upon: ['S30','S32','S39','S42','S44','S45','S46','S47','S48']
+top indegree: [('S28', 20), ('S01', 15), ('S26', 10), ('S08', 7), ('S02', 7)]
+```
+
+三类问题分别测：
+
+- **悬空引用**：0 条。125 条边的目标全部是真实 `service_id`。
+- **自环**：0 条。
+- **重复边**：0 条。
+
+所以**今天没有错**，这和「这项检查该不该加」是两个问题。125 条无人看守的边，答案是该加。
+
+**加了什么。** `check_catalog` 里新增一段，逐条边核三件事：目标必须是 `str`（不是 `{service_id: ...}` 这类对象——catalog 的形状是纯字符串数组，写成对象会让生成物跟着变形）、不能等于自身、必须在 `known` 里；另外每服务查一遍重复。`r.note` 末尾加 `125 depends_on edge(s)`，让这个数字进每日输出，而不是只在失败时才有人知道。
+
+**故意没做什么：不查环。**
+
+我一开始把 `S26 -> S27 -> S26` 当缺陷，差点写进去。查了才知道这不是漏配：`plans/S26-generation-jobs.md` 第 8 行原话是「本文重点回答两个问题：**S26 ⇄ S27 这个环怎么用事件拆开**（§10）」，第 6 行给出链上位置「S26 持久化任务与准入 Saga → S27 按渠道执行」。这个环是被 `dispatch grant` + 事件拆开的，两个方向都是真实依赖——S26 要 S27 去提交，S27 要 S26 发 grant。**按可达性判环会把这个设计判成错误**，所以这里只核边的形状和指向，不核图有没有环。写进注释了，免得下一个人照着「依赖图不能有环」的常识再加一遍。
+
+**负向测试（三个方向各打一次）。** 直接改 `contracts/service-catalog.v2.json` 再跑全量：
+
+```
+FAIL  catalog    3 problem(s)  [48 service(s), 55 topic(s), 55 published_event(s), 128 depends_on edge(s) ...]
+        S01 depends_on 'S99', which is not a catalog service_id
+        S06 depends on itself
+        S08 depends_on has a non-string entry {'service_id': 'S01'}
+```
+
+三个方向都红，报出的 id 与注入的一致，恢复后回到 `ok ... 125 depends_on edge(s)`、exit 0。
+
+**更正表。**
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 「`S26 -> S27 -> S26` 是个环，应报缺陷」 | 不是缺陷：`plans/S26` §8 明写这个环由事件拆开，两个方向都是真实依赖 | **拿通用的图论常识代替了读该服务自己的方案。**依赖图有环通常是坏味道，但这里是有意设计。核对「这算不算错」之前必须先读被核对象的说明，不能只靠形状 |
+
+**顺带记一条操作教训（不算本节缺陷，是我这轮的返工）。** 上面那个负向测试用 `json.dumps(...)` 回写 catalog，缩进被我改成 2 空格、文件从 43573 涨到 44717 字节；`git diff --numstat` 显示 0/0 行变更（因为确实是同一份数据换排法），差点当成「干净」放过。**`--numstat` 全零不等于文件没变**——字节数变了、格式变了，它一样报 0。用 `git checkout --` 从 HEAD 恢复，现在 `contracts/service-catalog.v2.json` 与 HEAD 完全一致。以后改配置文件做负向测试，应该先复制到临时路径改副本，或者在 `finally` 里从 `git show HEAD:` 恢复，而不是自己 `dumps` 回去。
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。
