@@ -58,7 +58,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 钉死为 envelope，改它的含义等于静默改变全部 55 个 topic 的契约。加 `data_schema_ref`
 是纯增量，缺省 = 没有 payload 契约（envelope-only）。
 
-**这个键今天有 42 个 topic 带**（13 个仍是 envelope-only）。没带的不全是遗漏：payload
+**这个键今天有 43 个 topic 带**（12 个仍是 envelope-only）。没带的不全是遗漏：payload
 可能已经由自己的企业 schema 表达（例如 QCReport 走 `quality/qc-report.v2.schema.json`，
 经 REST 传递），也可能本来就只发一个引用。**给某个 topic 加 `data_schema_ref` 是一次
 契约变更**：生产方要按 schema 发，消费方可以开始校验，两边都得跟着动。
@@ -107,6 +107,7 @@ S45 `PAYLOAD_SECRET_SCAN`、S46 `INGRESS_SECRET_SCAN`、S47 `PROJECTION_SECRET_S
 | `projection.cursor.advanced` | `projection.cursor-advanced.v2.schema.json` | S47 §4.4 |
 | `integration.command.accepted` | `integration.command-accepted.v2.schema.json` | S46 §4.5 |
 | `narrative.script.revision.created` | `narrative.script-revision-created.v2.schema.json` | S04 §5.3 |
+| `asset.scene.revision.accepted` | `asset.scene-revision-accepted.v2.schema.json` | S13 §5.3 |
 
 六个 `production.*.ready` 是同一批加的，写法一致：字段名一律用生产方（S29–S34）的名字，
 形状从各计划 §6.4 的示例取，**取值域只在 DDL 有 `CHECK` 时才收窄成 `enum`**。没有 DDL
@@ -1120,6 +1121,79 @@ owner 在三种写法里选了一种（NAR-1）。而 §5.3 行 704 的示例本
 全部被拒；正例 8 条全过，其中关键的是 `produced_by` 取 `null`、只给 `{"task_id"}`、或给满五个
 键三种形状都放行——这是「不选边」在测试上的表现。
 
+### `asset.scene-revision-accepted.v2.schema.json`：事件说两个订阅方靠它重算，两个订阅方的方案里都没有它
+
+S13 这条事件的存在理由是 §5.3 行 590 那一句：`topology_hash` 与 `topology_changed` **必须**
+在事件里，「订阅方（S09 依赖图、S17 缓存）靠它决定是否要重算空间检查」。§3.3 行 402 又补一层：
+「场景拓扑变了，所有在该场景生成的镜头都可能作废」。整条事件的设计就是围绕这两句话。
+
+**这两句话在三份方案里都找不到落点。** `plans/S09-lineage-impact.md` 全文对
+`asset.scene.revision.accepted`、`topology_hash`、`scene_asset` 的命中是 **0**；
+`plans/S17-continuity.md` 对本事件与 `topology_hash` 的命中也是 **0**。真正消费它的是 S10
+（§5.3 行 625 的 `asset.character.revision.accepted 等 | S11–S15`，而 S10 §1.1 行 27 把场景资产
+列在 S13 名下）——S10 读的只有 `scene_ref.revision` 与 `scene_ref.content_hash`，用途是刷新检索
+投影的引用，`**不消费内容**`。于是本事件被读的键，与它宣称存在的理由，是两组不相交的键。
+
+第二层问题在血缘图上更硬：S09 的 `edge_kind` 是闭集 11 项（§1.2 行 70–80），**没有任何一项的
+source 是 S13**。最接近的 `SHOT_DERIVED_FROM_SCENE`（行 73）是 `S05 scene → S06 shot_spec`，
+而 S05 的 `scene` 是**分场**、S13 的是**场景资产**，不是同一个对象。所以「拓扑变了该重做哪些
+镜头」这条因果，在 S09 的图上没有一条边能承载——上游节点根本不在图里（SCN-7）。
+
+`impact_plan_ref` 那一路同样接不上。事件写 `{"service_id":"S09","id":"impact_01J...","revision":1}`
+（行 577），但 S09 方案 §2.8 行 468 明写「`impact_plan` | 那是 S07 的 `change_plan`。S09 只有
+`impact_analysis`」，而 S09 自己的 id 列叫 `analysis_id`（§2.3 行 283）、S07 的 `change_plan`
+主键叫 `plan_id`（§2.1 行 114）。三个名字，示例用了第四个（`impact_`）。而 F18 补充（行 631）
+说 S13 只校验「有值」、从不 dereference——所以行 400 那道「没有影响计划就不接受」的硬闸门，
+在数据上退化成「非空字符串即可」。S14 子方案（行 436 / 449 / 564）用了同一字段名、同样没定义
+键集，说明这是 docs/10 那一层的概念缺口，不是 S13 的笔误（SCN-1）。
+
+还有一条更早的时序问题：`impact_plan_ref` 必须在 accept 命令里就有值（行 459），而影响分析要
+基于这次改的拓扑——候选内容在 `scene_candidate.payload`（行 275–289）里，但 §4.3 的七条读路径
+全部作用在 `revisions`/`canonical`/`lookup` 上，**没有一条能读候选**。外部服务推不出「这次拓扑
+改了什么」，只能由调用方转述或塞占位值（SCN-6）。
+
+**canonical 也有洞。** `POST /scene-assets/{id}:set-canonical`（§5.1 行 554）是独立命令，能不产生
+新 revision、也不发任何事件地移动 canonical，而 `event-topics.v2.json` 里 S13 只有本主题一个
+topic。按本事件缓存「当前 canonical 是哪一版」的一方，会在那次命令之后永久陈旧，且没有任何信号。
+`canonical_pointer` 里真正决定「谁定、凭什么定」的 `decision_kind`/`decided_by`/`prior_canonical`
+（行 291–305）一个都不进事件，所以连「这次换 canonical 是否经过人审」都拿不到——而 E05-D1
+（行 706）恰恰拿场景 canonical 当 gate 依据（SCN-2）。
+
+**收得紧的地方确实收紧了。** 三个键有真 DDL 依据，就不留活口：`topology_hash` 收
+`^[0-9a-f]{64}$`（行 170 的 `sr_topohash_len` 是真 CHECK，不是注释——这一点与 S04 的
+`structure_hash` 正相反，那个字段在 DDL 里根本不存在）；`location_class` 收四值 `enum`（行 120–121
+是真 CHECK）；`anchor_ids` 的下限按 `location_class` 分档进 `allOf/if-then`（行 435：`primary_set`
+≥4、`recurring_location` ≥2、`one_off` ≥1），这是本事件里唯一一条能从载荷自身字段完整推出的
+不变量——探针实测三种分档各给一条越界负例，全部被拒。反过来，`lighting_axes` 与 `anchor_ids`
+的**元素**都不收 `enum`：六个光照值与六个 anchor 名只在行 238 / 行 219 的注释里，
+`scene_lighting_variant` 与 `scene_anchor` 的建表语句都没有 CHECK，按本仓库既定口径不构成 enum
+依据（同 S09 的 `seed_kind`）。
+
+`rights_ref` 是例外：S13 全文**没有一处写出它的键集**（DDL 行 161 只有 `rights_ref jsonb NOT NULL`，
+事件行 584 是三字符 `{...}`）。S10/S11 的四键形 `{rights_owner, rights_id, rights_revision,
+rights_hash}` 是一个可疑的类比，但照抄就是替 S13 编造契约，所以收成 `object` + `minProperties: 1`
++ 允许任意键，形式与 `integration.command-accepted.v2.schema.json` 的 `target` 同。更麻烦的是
+E30 的防线只在读响应里：`rights_recheck_required=true` 出现在 §4.3 行 496 的 `/topology`，
+**不在本事件里**。只吃事件的消费方拿不到「该不该复查权利」的提示，按构造就无法满足 E30-D1
+（行 701）（SCN-4）。
+
+本文件 `x-needs-owner` 五条、`x-conflicts` 八条（SCN-1..SCN-8）。探针实测：payload 侧 36 条负例
+（12 个必填各缺一次、`topology_hash` 非 hex 与 63 位、`location_class` 给 `hero_set`、
+`canonical_revision` 为 0、`anchor_ids` 空/重复、`lighting_axes` 含整数/重复、`era` 缺 `label`/
+多一个键、`rights_ref` 给 `null`/`{}`、`scene_ref` 多键/`revision` 为 0/`service_id` 给 `S1`/
+hash 给 `zz`、`impact_plan_ref` 给字符串/拓扑变更时为 `null`/多一个 `content_hash`/少一个
+`revision`，以及三种 `location_class` 分档各一条越界）全部被拒；envelope 侧 6 条负例
+（`causation_id: null`、`aggregate_sequence: 0`、缺 `data_ref`、信封多一个键、`data_ref` 给字符串）
+全部被拒；正例 18 条全过，其中关键的是五组「不选边」形态都放行——`impact_plan_ref` 取 `null`
+（且 `topology_changed=false`）、`became_canonical=false` 配 `canonical_revision=null`、
+`era` 只给 `label`、`rights_ref` 给 S10 四键或给一个不透明单键、`impact_plan_ref` 指 `S07` 的
+`plan_` 或 `S09` 的 `analysis_`。
+
+一条**已知漏检**（不是本 schema 的缺陷）：信封的 `source` 与 `type` 都只收非空字符串
+（`event-envelope.v2.schema.json` 的 `source` 是 `{"type":"string","minLength":1}`），所以把
+`source` 改成 `S14` 而载荷仍是场景事件时，两层校验都放行。本仓信封不对任何 topic 钉生产者与
+主题的对应关系，`catalog` 检查管的是 `event-topics.v2.json` 里的 `producer` 字段，不是实例数据。
+
 ### `artifact-ingested.v2.schema.json`：字段全部有出处，缺口单独标
 
 字段名一律用 S28 的名字，不用消费方的别名。**已知缺口写在文件里的 `x-needs-owner`
@@ -1216,8 +1290,8 @@ python contracts/quality/validate_registry.py <registry.json>
 service-catalog.v2.json  ──生成──▶  services/<slug>/service.yaml
         │
         └──引用──▶ event-topics.v2.json ──schema_ref──▶ event-envelope.v2.schema.json
-                                        └──data_schema_ref──▶ 42 个 payload schema
-                                                              （见上表；其余 13 个 envelope-only）
+                                        └──data_schema_ref──▶ 43 个 payload schema
+                                                              （见上表；其余 12 个 envelope-only）
 ```
 
 改服务元数据请改 catalog，然后重新生成 `service.yaml`，不要手改生成物。
@@ -1230,11 +1304,11 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（122 个 JSON 解析）、`payloads`（97 条 `schema_ref` / `data_schema_ref`
-都指向真实文件，其中 42 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
+九项检查：`json`（124 个 JSON 解析）、`payloads`（98 条 `schema_ref` / `data_schema_ref`
+都指向真实文件，其中 43 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic 生产消费方 / `docs/02` 三方一致）、`families`（动作族文件自己声明的
-5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（58 个示例对
+5 条 invariant）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（59 个示例对
 schema 校验）、`registry`（`check-registry.v2.json` 存在时才跑）。
 
 `payloads` 是后加的，因为它抓的错比 `json` 更晚才暴露：一个 topic 指向不存在的 schema

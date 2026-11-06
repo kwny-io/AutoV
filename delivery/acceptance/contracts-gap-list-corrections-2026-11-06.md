@@ -349,3 +349,50 @@ print('example json', len(glob.glob('contracts/examples/*.json')))
 写这一段时我先写成「差值仍是 70」——把 `118 − 49 = 69` 当成了 70。这是本节第 4 个错，
 错因与上面三条不同：前三条是没回读文档，这一条是**心算了两个两位数的减法**。
 规矩同样记下：**写进报告的每一个差、和、比值，都用脚本算一遍贴输出，不写在正文里现算**。
+
+## 10. S13 这一轮：三条断言写错了方向，其中一条我自己先写成了反面
+
+这一轮加 `asset.scene-revision-accepted.v2.schema.json`。写的过程中有六处自查。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | schema `x-conflicts[SCN-6]` 初版 | 「S09 与 S17 都不消费本事件」，并以「两份方案全文命中 0」为据 | 该结论对 S09/S17 成立，但对**全仓**不成立：S10 §5.3 行 625 明写消费 `asset.character.revision.accepted 等 \| S11–S15`，而 S10 §1.1 行 27 把场景资产列在 S13 名下，所以本事件落在那个「等」里 | 我拿「点名的那两个服务没提」当成了「没人消费」。**「某两个服务的方案里没写」与「没有人消费」是两个命题**，前者我核对过（确实 0 命中），后者我没核对就写下了。改法是把结论收窄到能被证据支持的范围，并把 S10 那条一并写进去——它恰好让问题更尖锐：本事件被读的键（`scene_ref.revision`/`content_hash`）与它宣称存在的理由（`topology_hash`/`topology_changed`）是两组不相交的键 |
+| 2 | schema `x-conflicts[SCN-1]` 初版 `s07_plan` 字段 | 「S07 的方案里没有 `impact_plan` 这个对象」 | S07 §2.1 行 112 的对象叫 `change_plan`、主键列叫 `plan_id`。说的是「名字不同」，不是「不存在」 | 我为了强调「三个名字对不上」把它写成了「不存在」，这会让读者以为 S07 缺这个能力。实际相反：S07 有完整实现（含 `plan_hash` 与 `cp_hash_uniq`），缺的是 S13 的 ref 指向它的名字 |
+| 3 | 示例 `data.impact_plan_ref` | 我一度把它写成 `{"service_id":"S07","id":"plan_01J...","revision":1}`——一个能自圆其说的值 | 改回方案原文的 `{"service_id":"S09","id":"impact_01J...","revision":1}` | **这不是笔误，是选边**。SCN-1 的立场是「三处文档互不相同，本 schema 不替 owner 选」，而示例一旦写成 S07，就等于用示范数据裁定了争议。示例必须保持方案里的原样，让冲突在数据里也看得见——探针正例因此专门保留了三组互相矛盾的 `impact_plan_ref` 形态（`null`、S07 的 `plan_`、S09 的 `analysis_`），全部放行 |
+
+另记一条**已知漏检**（不是本轮引入的缺陷）：信封的 `source` 与 `type` 都只收非空字符串
+（`event-envelope.v2.schema.json` 的 `source` 是 `{"type":"string","minLength":1}`）。把示例的
+`source` 改成 `S14` 而载荷仍是场景事件时，payload 层与 envelope 层都放行。本仓信封不对任何
+topic 钉生产者与主题的对应关系。这不是新问题，但它决定了「A 服务发出的载荷一定是 A 的形状」
+这件事**无法由 schema 保证**——只能靠 `event-topics.v2.json` 的 `producer` 字段靠 catalog
+检查管住配置，管不住实例。
+
+本轮的真实数字（脚本输出，未心算）：
+`topics 55 / schema_ref 55 / data_schema_ref 43 / payloads 98 / envelope-only 12`、
+`schema files 52`、`json(all) 124`、`example json 60`、差值 `124 − 52 = 72`。
+`python tools/check_all.py` → `ok json 124 file(s)`、
+`ok payloads 98 schema ref(s), 43 topic(s) with a payload schema`、
+`59 example(s) valid, 0 failing, 1 without a schema`、`9 check(s) passed`。
+
+### 10.1 本节自己又错了一次，而且错在「更正上一节」
+
+上面那段收尾文字，初稿里原本还有一句「顺手更正上一节末尾那句推论」——说第 9 节那句
+「每轮在两个数上各加 1，所以差值每轮也加 1」是错的，并给出「差值从 70 变成 72，即加了 2」。
+这句话本身是错的，两条：
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 4 | 本节收尾段 | 「差值从 70 变成 72，即**加了 2**」 | 上一轮（HEAD `dae385e`）是 `122 / 51`，差 **71**；本轮 `124 / 52`，差 **72**。**从 71 变成 72，加了 1** | `json` 本轮确实加了 2（schema + 示例各 1），但我把「`json` 的增量」当成了「差值的增量」。差值 = `json − schema`，分子加 2、分母加 1，差值只加 1 |
+| 5 | 同上 | 「第 9 节那句『差值每轮也加 1』是错的」 | 第 9 节没说错。凡是各轮都「+1 schema +1 示例」的轮次，差值就 +1；本轮恰好 +1 | 我没回读 HEAD 的两个数就先下了「上一节错了」的结论。**这比原错误更糟：它把一条正确的推论改成了错的** |
+
+所以第 9 节的结论原样保留。顺带把那个真正稳定的关系写对：
+
+```
+json(all) − schema files = examples + 12
+其中 12 = 4 个非 schema 的根级 JSON（event-topics / mcp-tools / redaction-policy / service-catalog）
+        + 3 个 quality/ + 5 个 domain-v1/
+本轮核对：124 − 52 = 72，60 + 12 = 72 ✓
+```
+
+这个恒等式能当校验和用，而「差值恒定」不能——因为 `examples` 在涨。上一节该说的话是这句，
+我却在它的位置上写了一个更差的错误结论。

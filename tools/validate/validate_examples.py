@@ -81,6 +81,7 @@ SCHEMA_OF = {
     "snapshot-manifest-committed": "event-envelope.v2.schema.json",
     "storyboard-shot-revision-created": "event-envelope.v2.schema.json",
     "narrative-script-revision-created": "event-envelope.v2.schema.json",
+    "asset-scene-revision-accepted": "event-envelope.v2.schema.json",
     "breakdown-revision-created": "event-envelope.v2.schema.json",
     "capacity-plan": None,
 }
