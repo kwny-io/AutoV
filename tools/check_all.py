@@ -325,6 +325,64 @@ def check_examples(name):
     return r
 
 
+def check_maturity(name):
+    """`maturity` must describe the tree it is written into.
+
+    README.md tells a reader that this repo is at the skeleton stage and that
+    every service's `maturity` is `design_only`. Both halves are statements
+    about the working tree, and nothing compared them against it: the value is
+    copied straight from the catalog by the generator, so it says what the
+    catalog author intended, not what is on disk. A service that gains code
+    without the catalog being bumped would still read `design_only`, and a
+    catalog bumped ahead of the code would read as more finished than it is.
+
+    The two directions are not equally bad, so they are not treated equally.
+    Code without a bumped maturity hides progress (the repo looks less done
+    than it is, so nobody runs its tests). A bumped maturity with an empty
+    `src/` claims progress that isn't there (AGENTS.md's "不能把 schema 校验
+    通过当作分布式正确性证明" is the same failure one level down).
+    """
+    r = Result(name)
+    cat = json.loads(_utf8(os.path.join(CONTRACTS, "service-catalog.v2.json")))["services"]
+    states = {}
+    for s in cat:
+        states[s["maturity"]] = states.get(s["maturity"], 0) + 1
+
+    with_code, without = [], []
+    for s in cat:
+        slug = s.get("slug") or s.get("service_id")
+        src = os.path.join(ROOT, "services", slug, "src")
+        files = []
+        if os.path.isdir(src):
+            for p in glob.glob(os.path.join(src, "**", "*"), recursive=True):
+                if not os.path.isfile(p):
+                    continue
+                if os.path.basename(p) in (".gitkeep", ".keep"):
+                    continue
+                files.append(p)
+        (with_code if files else without).append(s["service_id"])
+        if files and s["maturity"] == "design_only":
+            r.fail(f"services/{slug}/src/ holds {len(files)} file(s) but the catalog "
+                   f"still says maturity=design_only; bump the catalog")
+        if not files and s["maturity"] != "design_only":
+            r.fail(f"services/{slug}/src/ is empty but the catalog says "
+                   f"maturity={s['maturity']!r}; the catalog is ahead of the tree")
+
+    # The README's sentence is only true while every service is design_only.
+    readme = _utf8(os.path.join(ROOT, "README.md"))
+    design_only = states.get("design_only", 0)
+    if design_only == len(cat):
+        if "所有服务的 `maturity` 均为 `design_only`" not in readme:
+            r.fail("every service is design_only but README.md no longer says so")
+    elif "所有服务的 `maturity` 均为 `design_only`" in readme:
+        r.fail(f"README.md still says every service is design_only, but "
+               f"{len(cat) - design_only} of {len(cat)} are not")
+
+    breakdown = ", ".join(f"{v} {k}" for k, v in sorted(states.items()))
+    r.note = f"{len(cat)} service(s): {breakdown}; {len(with_code)} with code in src/"
+    return r
+
+
 def check_registry(name):
     """Run validate_registry.py if a registry data file exists yet.
 
@@ -452,6 +510,7 @@ CHECKS = [
     ("families", check_families, "action-family structural invariants"),
     ("scaffold", check_scaffold, "generated files match the catalog"),
     ("examples", check_examples, "contracts/examples/ validate against their schemas"),
+    ("maturity", check_maturity, "catalog maturity matches whether services/*/src/ has code"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
 

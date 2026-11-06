@@ -2365,3 +2365,105 @@ ok    families   14 family/families  [4 of the 5 stated invariants; the one abou
    契约（现在它只活在错误信息的括号里），否则下一个人还会照第 5 条的原文理解。
 
 九项仍全过（`families` 与 `registry` 两格的新措辞见上）。
+
+### 16.16 加第十项检查 `maturity`：README 说「全是 design_only」，此前没有任何东西在核
+
+前十五节做的都是「把已有的绿线读准」。这一节换一件事：**补一个此前完全没有的检查**，
+因为那条陈述——README 开头「所有服务的 `maturity` 均为 `design_only`」——是可机械验证的，
+却一直没人验证。
+
+#### 先量清楚实际情况，不凭印象
+
+```
+service dirs: 48
+non-gitkeep, non-generated files under services/: 0
+.gitkeep files: 336
+services with any extra file: 0
+maturity values across services/*/service.yaml: {'design_only': 48}
+```
+
+48 个服务目录下，除 `service.yaml` / `service.md` 两个生成物之外**一个文件都没有**，336 个
+`.gitkeep` 撑起 `src/ api/ events/ migrations/ tests/ deploy/ runbooks/` 七个子目录。
+catalog 里 48 条也**全部**是 `design_only`。所以今天这两句话是**对的**——问题不在于它是错的，
+而在于**它错的时候没有任何东西会响**。
+
+这与 `docs/16` 的要求直接相关：E01–E40 全部是分布式行为验收（跨租户拒绝、重复投递幂等、
+乱序事件、重启恢复……），**没有任何一条能靠静态文件检查通过**，该文件末尾自己也写着
+「不能把设计schema合法等同于分布式行为已正确」。所以九项检查再全，也不可能让 E01–E40 变绿。
+能做的只有一件：保证「还没实现」这件事本身别被说假。
+
+#### 为什么这不是多余的检查
+
+`maturity` 的值是 `scaffold` 从 catalog **照抄**进 `service.yaml` 的（`generate_services.py`
+的 `maturity: %s` 那一行）。也就是说它写的是**编 catalog 的人当时的意图**，不是磁盘上的事实。
+两个方向都会歪，且后果不同：
+
+| 方向 | 现象 | 后果 |
+|---|---|---|
+| 代码先到，catalog 没跟 | `src/` 里有文件，`maturity` 仍是 `design_only` | 仓库看起来**比实际更没做**；没人会去跑它的测试，也没人知道它已经能跑 |
+| catalog 先改，`src/` 还空 | `maturity=implemented`，`src/` 仍是 `.gitkeep` | **报假进度**。与 AGENTS.md「不能把 schema 校验通过当作分布式正确性证明」是同一种错，只低一层 |
+
+所以两个方向都报 FAIL，不设「只报一个方向」的宽松处理——上面那个表格就是理由。
+
+#### 检查做什么
+
+`check_maturity`：对 catalog 每条服务，走 `services/<slug>/src/`，数**非 `.gitkeep`** 的文件。
+
+- 有文件而 `maturity == design_only` → FAIL，提示「bump the catalog」
+- 无文件而 `maturity != design_only` → FAIL，提示「the catalog is ahead of the tree」
+- 另外单独核 README 那句话：全 48 条都是 `design_only` 时，README 必须仍写着那句；
+  只要有一条不是，README 就不能再写「所有」。这一条是为了防「catalog 改了、README 忘了」，
+  也就是 §16.14 那个「上游变了下游没跟」的同一个形状。
+
+输出：
+
+```
+ok    maturity   48 service(s): 48 design_only; 0 with code in src/
+```
+
+#### 反向测试（跑完已还原）
+
+```
+=== 1. baseline ===
+  exit 0
+  ok    maturity   48 service(s): 48 design_only; 0 with code in src/
+
+=== 2. code planted, catalog still design_only ===
+  exit 1
+  FAIL  maturity   1 problem(s)  [48 service(s): 48 design_only; 1 with code in src/]
+  services/budget-ledger/src/ holds 1 file(s) but the catalog still says maturity=design_only; bump the catalog
+
+=== 3. catalog says implemented, src/ empty ===
+  exit 1
+  FAIL  maturity   2 problem(s)  [48 service(s): 47 design_only, 1 implemented; 0 with code in src/]
+  services/budget-ledger/src/ is empty but the catalog says maturity='implemented'; the catalog is ahead of the tree
+  README.md still says every service is design_only, but 1 of 48 are not
+
+=== 4. restore and confirm clean ===
+  exit 0
+  ok    maturity   48 service(s): 48 design_only; 0 with code in src/
+  tree after restore: CLEAN
+```
+
+第 3 组一次报出**两条**，说明 README 那条独立于目录那条，不是同一个断言换句话。
+
+#### 由此带来的两个变化
+
+1. `tools/check_all.py` 从九项变**十项**（`--list` 也是 10 行，已核对）。
+2. `contracts/README.md` 的「九项检查」改为「十项检查」，并补了 `maturity` 那一格及上面
+   这个两方向表格。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` 检查总览 | 「九项检查」 | **十项** | 加了检查却没改数；这正是 §16.14 记的「上游变了下游没跟」，这次发生在同一个文件里、隔了不到十行 |
+| 2 | 本节初稿：「防『catalog 改了、README 忘了』,」 | 句中出现半角逗号 `,` | 全角 `，` | 中英标点混用；同一个句子里其余逗号都是全角，只有这一个是从键盘直接敲出来的 |
+
+**owner 决定（新增一条）：**
+
+8. `maturity` 的取值域要不要收紧成枚举？`service-catalog.v2.json` **没有配 schema**
+   （顶层只有 `schema_version` 与 `services` 两个键，`contracts/*catalog*.schema.json` 一个都
+   不存在），所以 `maturity` 是自由字符串，没有任何东西限制它能取哪些值。检查只能比较
+   「是不是 `design_only`」，无法判断 `implemented` / `beta` / `ga` 里哪个算「已经有代码」。
+   这一轮没有替它定，只用了「非 `design_only` 即需要有代码」这个最小判据。
+
+十项全过。

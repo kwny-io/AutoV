@@ -1483,12 +1483,23 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-九项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+十项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名）、`links`（1321 条相对链接全部可达）、`catalog`
 （服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（120 个生成物与 catalog 一致）、`examples`（**71** 个示例对
-schema 校验，另 1 个刻意不映射）、`registry`（`check-registry.v2.json` 存在时才跑）。
+schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity` 与 `services/*/src/`
+里到底有没有代码一致）、`registry`（`check-registry.v2.json` 存在时才跑）。
+
+`maturity` 这一格是后补的，补之前那两句话没有任何东西在核：本文件开头的 README 说
+「所有服务的 `maturity` 均为 `design_only`」，而 `maturity` 的值是 `scaffold` 从 catalog
+照抄的——它说的是**编 catalog 的人当时的意图**，不是磁盘上的事实。两边都可能歪：代码先到而
+catalog 没跟，仓库看起来比实际更没做（没人会去跑它的测试）；catalog 先改而 `src/` 还空，
+就是在报假进度——和 AGENTS.md 那句「不能把 schema 校验通过当作分布式正确性证明」是同一种错，
+只低一层。所以这一格两个方向都报 FAIL，并单独核 README 那句话是否仍然成立。
+反向测过：往 `budget-ledger/src/` 放一个文件 → FAIL（「holds 1 file(s) but the catalog still
+says maturity=design_only」）；把 catalog 某条改成 `implemented` → FAIL 两条（空 `src/` +
+README 与目录不符）。
 
 `families` 为什么是 4 条而不是 5 条：那第 5 条（`registry entries MUST NOT name an action
 outside families[defect_type].chain ∪ {fallback}`）说的是**登记项**，只能对着
