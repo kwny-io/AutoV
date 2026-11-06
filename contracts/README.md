@@ -12,7 +12,7 @@
 contracts/
   openapi.v2.yaml              OpenAPI 3.1，21 个核心操作
   service-catalog.v2.json      48 服务元数据（services/*/service.yaml 的源）
-  event-topics.v2.json         48 个 topic，注册 55 个 event_type
+  event-topics.v2.json         55 个 topic，注册 55 个 event_type
   mcp-tools.v2.design.json     12 个 MCP 工具（streamable-http）
   redaction-policy.v2.json     密钥脱敏规则表：secret 闭集、替换形态、兜底（见下）
   *.v2.schema.json             企业 schema + 单 topic 的 payload schema（见下）
@@ -1492,9 +1492,15 @@ schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity
 里到底有没有代码一致）、`readme`（上面这段里的数必须还是各检查真跑出来的数）、
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
-`readme` 这一格是在核**这段自身**。它做两件事：一是核开头的「十一项检查」这个数等于
-`--list` 真列出的条数；二是把本段里 9 个手敲的数字逐条和对应检查自己算出的数比，
-不一致就 FAIL 并指出**是哪一个**。
+`readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
+「十一项检查」这个数等于 `--list` 真列出的条数；二是把本段里 9 个手敲的数字逐条和
+对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
+12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
+
+布局块那 5 个数不是从某个检查的 `note` 读的，而是直接读源文件（catalog、topics、
+mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格时它当场抓到：布局块写着
+「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
+本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
 那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1321、
 stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格当天就抓到一个：
@@ -1504,6 +1510,8 @@ stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格�
 
 反向测过十个方向（上面 9 个数各改 1，再加开头「十一」改成「十」），十次全部被抓到，
 报的是 `README says 149 for JSON 解析, json says 148` 这种话；还原后 `git diff` 为空。
+布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
+六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
 另外还测了段落锚点消失（改节标题、删掉「N 项检查：」开头）两种，各自报自己的错。
 
 刻意不 pin 的：`families` 的「4 of 5」里那个 4（是语义判断，不是计数）、

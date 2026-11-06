@@ -2806,3 +2806,71 @@ restored identical: True
 
 十项里 9 项真跑过、1 项没有——现在是十一项里 10 项真跑过、1 项没有。
 
+### 16.20 布局表写「48 个 topic」，而同一份文件另外 11 处写 55
+
+§16.19 把检查摘要段那 9 个数钉住了，但同一份 README 开头那张「布局」表没被覆盖——
+它不是摘要段的一部分，也不是任何检查的 `note` 产生的，所以`readme` 这一格当时看不见它。
+
+#### 错在哪
+
+`contracts/README.md` 第 15 行：
+
+```
+  event-topics.v2.json         48 个 topic，注册 55 个 event_type
+```
+
+改正前，同一个文件里「55 个 topic」出现在第 44、57、58、61、437、787、863、1487、1543
+共 **9 行**，而写「48 个 topic」的只有第 15 行这一处。
+（改正后全文 11 处，多出的 2 处是本节的说明文字和检查器报错原文里的引用，不算正文。）
+`event-topics.v2.json` 里是 **55** 个 topic：
+
+```
+services            48
+topics              55
+topic.event_type    55   distinct=55
+openapi operations  21  paths=21
+mcp tools           12  (key=tools)
+```
+
+48 是**服务**数，55 是 **topic** 数。第 14 行正好是「service-catalog.v2.json 48 服务元数据」，
+下一行就把 48 抄了过去——**相邻两行，上一行的主语换成了下一行的宾语。**
+
+这和 §16.18 的更正表第 3 行是同一个形状（把隔壁字段的 7 个枚举数串到 `window_scope` 头上），
+也和 §16.19 的 `scaffold` 120 同源：**数字在文件里出现过一次，就被当成可以复用的常量。**
+
+#### 改法与覆盖
+
+布局块那 5 个数（48 服务 / 55 topic / 55 event_type / 12 MCP 工具 / 21 个 OpenAPI 操作）
+现在纳入 `check_readme_counts`。它们不来自任何检查的 `note`，所以直接读源文件：
+`service-catalog.v2.json`、`event-topics.v2.json`、`mcp-tools.v2.design.json`、
+`openapi.v2.yaml`（后者用 `^\s{4}(get|post|...):` 数路径下的操作键）。
+
+反向测过六个方向：
+
+```
+original bug: 55 topics -> 48    CAUGHT  ['README layout block says 48 for topics, the source file has 55']
+services 48 -> 47                CAUGHT  ['README layout block says 47 for services, the source file has 48']
+event_type 55 -> 54              CAUGHT  ['README layout block says 54 for event_type, the source file has 55']
+mcp 12 -> 11                     CAUGHT  ['README layout block says 11 for mcp tools, the source file has 12']
+openapi 21 -> 20                 CAUGHT  ['README layout block says 20 for openapi operations, the source file has 21']
+block heading renamed            CAUGHT  ["contracts/README.md no longer has the '## 布局' block"]
+restored identical: True
+```
+
+第一条就是把这个错原样放回去，它被抓到了——这是这一格存在的理由。
+
+#### 由此带来的变化
+
+- `contracts/README.md` 第 15 行：`48 个 topic` → `55 个 topic`。
+- `tools/check_all.py` `check_readme_counts`：新增布局块 5 个数的校验，`note` 变成
+  `9 count(s) in contracts/README.md's summary; layout block 5 count(s)`。
+- `contracts/README.md` 说明段补了布局块这一部分以及它当场抓到的那个错。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `contracts/README.md` 第 15 行（布局表） | `event-topics.v2.json 48 个 topic，注册 55 个 event_type` | **55 个 topic** | **把上一行的数抄进了下一行。**第 14 行是「48 服务元数据」，第 15 行开头换成 topic，48 却留了下来；同一文件其余 9 处都写 55 |
+| 2 | §16.19 的说明段 | 「它做两件事：一是…二是…」 | 三件事，加了布局块 | 写那一格时只盯着摘要段，没往文件开头看；README 里同一类手敲数字的另一处就在第 15 行 |
+| 3 | 本节初稿 `check_readme_counts` 的 `r.note` | 先 `+=` 再被 `r.note =` 覆盖，布局那半句永远不显示 | 用一个变量接住，最后一次性拼 | 复制粘贴了 `check_examples` 的 `+=` 写法，但这个函数的 `r.note` 是在末尾赋值的，顺序反了 |
+
+全量仍是 10 项通过、1 项 skip（`registry`），exit 0。
+

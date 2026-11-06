@@ -516,7 +516,43 @@ def check_readme_counts(name):
             r.fail(f"README says {claimed.group(1)} for {label}, {check_name} "
                    f"says {actual.group(1)}")
 
-    r.note = f"{len(README_CLAIMS)} count(s) in contracts/README.md's summary"
+    # The '## 布局' block, near the top of the same file, states four counts in
+    # the same hand-typed way. They were not covered by README_CLAIMS (that
+    # table is anchored to the check summary), and one of them was wrong: the
+    # block said "48 个 topic" while eleven other places in this file said 55
+    # and the file holds 55. Reading the numbers from the sources rather than
+    # from a check's note, because no check reports these four.
+    lay = re.search(r"\n## 布局\n\n```text\n(.*?)```", readme, re.S)
+    counts_note = ""
+    if not lay:
+        r.fail("contracts/README.md no longer has the '## 布局' block")
+    else:
+        block = lay.group(1)
+        cat = json.loads(_utf8(os.path.join(CONTRACTS, "service-catalog.v2.json")))
+        services = cat["services"] if isinstance(cat, dict) else cat
+        topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
+        mcp = json.loads(_utf8(os.path.join(CONTRACTS, "mcp-tools.v2.design.json")))
+        api = _utf8(os.path.join(CONTRACTS, "openapi.v2.yaml"))
+        truth = [
+            ("services", r"(\d+) 服务元数据", len(services)),
+            ("topics", r"(\d+) 个 topic，", len(topics)),
+            ("event_type", r"注册 (\d+) 个 event_type", len(topics)),
+            ("mcp tools", r"(\d+) 个 MCP 工具", len(mcp["tools"])),
+            ("openapi operations", r"OpenAPI 3\.1，(\d+) 个核心操作",
+             len(re.findall(r"^\s{4}(?:get|post|put|patch|delete|head|options):", api, re.M))),
+        ]
+        for label, pat, actual in truth:
+            m = re.search(pat, block)
+            if not m:
+                r.fail(f"README's layout block no longer states the {label} count "
+                       f"in the form this check reads")
+            elif int(m.group(1)) != actual:
+                r.fail(f"README layout block says {m.group(1)} for {label}, "
+                       f"the source file has {actual}")
+        counts_note = f"layout block {len(truth)} count(s)"
+
+    r.note = (f"{len(README_CLAIMS)} count(s) in contracts/README.md's summary"
+              + (f"; {counts_note}" if counts_note else ""))
     return r
 
 
