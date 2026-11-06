@@ -1529,8 +1529,10 @@ schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity
 S47 把 `drama.model-registry.v2` 和 `model.route.selected` 配在一起，而那事件在
 `drama.model-routing.v2` 上——两边 producer 都是 S25，这正是 `来源` 列看起来没问题而 topic 错了的原因。
 不判的东西也说清楚：**未声明的事件名不判**。作为反引号 token 它和权限动作名
-（`asset.voice.authorize`、`platform.tenant.provision`）分不开，实测 276 处里绝大多数是动作；
-且方案本来就会提议新事件并当场写明（S04「新增，待登记」、S06、S44）。S47 的三条、
+（`asset.voice.authorize`、`platform.tenant.provision`）分不开——`plans/*.md` 里未声明的
+带点反引号 token 共 720 处，其中 239 是文件名（`service.yaml`）、60 是带版本的文档名
+（`shot-spec.v1`），剩下 421 处「事件或动作形状」的里权限动作名占大头，没有任何注册表
+能把这 421 处一条条判开；且方案本来就会提议新事件并当场写明（S04「新增，待登记」、S06、S44）。S47 的三条、
 S29 的一条这类「写了但注册表没有」的行，在各自方案的缺口表里都记着，这里只报**不可判**的数量）、
 `readme`（上面这段里的数必须还是各检查真跑出来的数）、
 `registry`（`check-registry.v2.json` 存在时才跑）。
