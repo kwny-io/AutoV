@@ -3898,3 +3898,39 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 | 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:752`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
 | 3 | 本节初稿「`execution-context` 被 13 个 JSON 引用、`episode-manifest` 被 16 个引用」 | 实为 **11** 和 **6**；且 `memory-claim` 被 **0** 个 JSON 引用（只被 S16 方案与一个 example 用到） | 13 / 16 是上一轮 `grep -rl` 的**文件命中数**（含 md 与自引用），不是 `contracts/**/*.json` 里的引用数。两个口径混用了一次 |
 | 4 | 本节初稿「55 个 payload schema 全是过去分词或事件名词」 | 末段分布里 `ready` 有 8 个（形容词），`prompt.compiled` 的末段还带点号；只能说"绝大多数是过去分词" | 先下了"全是"这个强判断，再去找例子印证。**枚举类判断必须先数分布再写程度词** |
+
+### 补记：让 `payloads` 的绿说出这个数
+
+上面写了「`check_payload_refs` 只查正向，所以这 8 个从来没人报过」。把反向那一半补成**报数**
+（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:752`）
+现在顺带算一遍 `contracts/*.schema.json` 里没有出现在任何 topic 的 `schema_ref` /
+`data_schema_ref` 上的文件：
+
+```
+ok  payloads  110 schema ref(s), 55 topic(s) with a payload schema;
+              64 top-level schema file(s), 8 of them named by no topic
+```
+
+**没有做成 FAIL。** 这 8 个是 REST 形状，不是错误；做成 FAIL 会逼每次运行都挂着一个红。
+而只报数不解释又会变成另一个「绿得看不出内容」——所以数后面直接写「named by no topic」，
+`contracts/README.md` 缺口清单第 7 条给出这 8 个的归类。
+
+三个用例（临时放文件、跑、删文件、再跑，`restored: True`）：
+
+| 状态 | `payloads` 那行的尾部 |
+|---|---|
+| 现状 | `64 top-level schema file(s), 8 of them named by no topic` |
+| 复制一份 `memory-claim` 成 `zz-orphan-probe` | `65 top-level schema file(s), 9 of them named by no topic` |
+| 删掉探针 | 回到 `64 … 8` |
+
+第二行是要紧的：注进去之前这个分支**从未执行**，注进去之后它真的跟着变——说明不是写死，
+只是没有会动的输入。
+
+同时确认 `README_CLAIMS` 里那两条针对 `payloads` 的正则没被新 note 打断：
+
+```
+schema_ref     -> True
+payload topic  -> True
+```
+
+两条都是 `re.search`，新 note 是把额外的数**追加在分号后面**，前面那截一个字没动。

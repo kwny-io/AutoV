@@ -755,22 +755,35 @@ def check_payload_refs(name):
     A topic that points at a schema which does not exist is worse than one with
     no payload contract at all: consumers see a typed contract and the validator
     cannot load it, so the failure lands at read time in someone else's service.
+
+    This walks topics forward only. The other direction -- a `contracts/*.schema.json`
+    that no topic names -- is not a failure: 8 of the 64 are REST request/response
+    shapes, reached by `$ref` from other schemas rather than by an event. The count
+    goes in the note because nothing else reports it, and the layout block that
+    describes this directory used to call all 64 "single-topic payload schema".
     """
     r = Result(name)
     topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
     refs = 0
     with_payload = 0
+    named = set()
     for t in topics:
         for key in ("schema_ref", "data_schema_ref"):
             ref = t.get(key)
             if not ref:
                 continue
             refs += 1
+            named.add(ref)
             if key == "data_schema_ref":
                 with_payload += 1
             if not os.path.exists(os.path.join(CONTRACTS, ref)):
                 r.fail(f"topic {t.get('topic')}: {key} -> {ref} does not exist")
-    r.note = f"{refs} schema ref(s), {with_payload} topic(s) with a payload schema"
+    on_disk = {os.path.basename(p)
+               for p in glob.glob(os.path.join(CONTRACTS, "*.schema.json"))}
+    orphaned = sorted(on_disk - named)
+    r.note = (f"{refs} schema ref(s), {with_payload} topic(s) with a payload schema; "
+              f"{len(on_disk)} top-level schema file(s), "
+              f"{len(orphaned)} of them named by no topic")
     return r
 
 
