@@ -4491,3 +4491,50 @@ request_acceptance_CAS                                      -> accepted_manifest
 
 顺带把补记八里「十七项检查」的说法一并改成「十八项」——这个数由 `readme` 对着
 `len(CHECKS)` 核，不是手敲的。`contracts/README.md` 里那 15 个数字的表也补成 17 个。
+
+### 补记十：上一轮加了两条 claim，README 正文里「15 个数字」没跟着改
+
+| 原写 | 正确 | 错因 |
+|---|---|---|
+| `contracts/README.md`: 「二是把本段里 **15** 个手敲的数字逐条和对应检查自己算出的数比」 | 17 个 | 补记九之二加了 `interaction step` 和 `interaction endpoint` 两条 `README_CLAIMS`，表变成 17 条，正文这句话没改 |
+| 同上：「那 **15** 个数是 …」后面列到 safety provider 8 为止 | 17 个数，末尾补 `interaction step 18、interaction endpoint 36` | 同上；列出来的清单本身也不全 |
+| 同上：「反向测过**十七**个方向（上面 **15** 个数各改 1，再加开头「十八」改成「十」、`safety` 那格的 provider 数改 1），**十七**次全部被抓到」 | 十八个方向（17 个数各改 1 + 开头数），十八次 | 这段原本是凭上一轮记忆写的，混进了「布局块一个数」这个**没测过**的方向；实际脚本测的 18 个方向里没有它 |
+
+第三行是最该记的一笔：**我在写「测过 N 次」时，把没测过的方向算进去了。**
+它不产生任何检查失败——`readme` 只核数字不核这句话——所以只有回头对着脚本输出重数才发现。
+这正是 [[feedback-quote-verification]] 那条：**「原文」+ 复述 = 编造引文**，
+这里的形式是「脚本输出」+ 凭记忆补一句 = 编造的测试结论。
+
+现在这段的每个数都来自实际运行。脚本 `_inbox/probe_all_claims.py` 从 `check_all.py`
+里**读出** `README_CLAIMS`（不是另抄一份），对每条在 README 正文里找到它的数字 `+1`，
+跑一次全量，读 `readme` 那行。输出：
+
+```
+baseline exit=0
+ 1. JSON 解析: 148 -> 149   CAUGHT
+ 2. schema_ref: 110 -> 111   CAUGHT
+ 3. payload topic: 55 -> 56   CAUGHT
+ 4. openapi file ref: 11 -> 12   CAUGHT
+ 5. topic field: 10 -> 11   CAUGHT
+ 6. secret class: 6 -> 7   CAUGHT
+ 7. MCP tool: 12 -> 13   CAUGHT
+ 8. check_id: 99 -> 100   CAUGHT
+ 9. links: 1330 -> 1331   CAUGHT
+10. stated invariant: 5 -> 6   CAUGHT
+11. scaffold: 118 -> 119   CAUGHT
+12. example: 71 -> 72   CAUGHT
+13. unmapped example: 1 -> 2   CAUGHT
+14. archive match: 51 -> 52   CAUGHT
+15. safety provider: 8 -> 9   CAUGHT
+16. interaction step: 18 -> 19   CAUGHT
+17. interaction endpoint: 36 -> 37   CAUGHT
+++ leading '十八项检查' -> '十项检查'   CAUGHT
+
+restored exit=0
+
+=== 19 direction(s), 0 not caught ===
+```
+
+最后那行 `19` 是脚本把 baseline 也记进了结果列表，**真的探针是 18 个**——
+正文现在写的是 18，不是脚本打印的 19。这个差额本身也值得记一笔：
+读脚本输出时要把「基线」和「探针」分开数，不然会跟着脚本的分母一起错。

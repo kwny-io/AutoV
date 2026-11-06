@@ -1524,7 +1524,7 @@ schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「十八项检查」这个数等于 `--list` 真列出的条数；二是把本段里 15 个手敲的数字逐条和
+「十八项检查」这个数等于 `--list` 真列出的条数；二是把本段里 17 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1533,17 +1533,18 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 15 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
+那 17 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
 topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、stated invariant 5、
-`scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8。
+`scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
+interaction step 18、interaction endpoint 36。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过十七个方向（上面 15 个数各改 1，再加开头「十八」改成「十」、`safety` 那格的 provider
-数改 1），十七次全部被抓到，
-报的是 `README says 149 for JSON 解析, json says 148` 这种话；还原后 `git diff` 为空。
+反向测过十八个方向（上面 17 个数各改 1，再加开头「十八」改成「十」），
+十八次全部被抓到，报的是 `README says 149 for JSON 解析, json says 148` 这种话。
+每一个方向都由脚本改一处、跑一遍、读 `readme` 的输出，不是靠记忆归纳的。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
 另外还测了段落锚点消失（改节标题、删掉「N 项检查：」开头）两种，各自报自己的错。
