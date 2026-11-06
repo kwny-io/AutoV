@@ -81,8 +81,9 @@ x-owner     : 0
 ### 2.1 `publish` 不在五档闭集里
 
 [docs/13:13](../../docs/13-api-product.md) 定的是 `read / plan / execute / review / admin` 五档。
-`drama.delivery.publish` 用了第六个值 `publish`。四档都有实例，`plan` 只有一条，
-`publish` 一条。要么五档表少了一档，要么这条该降到 `execute`——**这是授权粒度决策，不是提取**。
+`drama.delivery.publish` 用了第六个值 `publish`。**五档每一档都有实例**（`read` 4、`execute` 4、
+`plan` 1、`review` 1、`admin` 1），`publish` 再占一条。要么五档表少了一档，要么这条该降到
+`execute`——**这是授权粒度决策，不是提取**。
 
 ### 2.2 工具集合与 `docs/13` 的具名清单不一致
 
@@ -3455,5 +3456,66 @@ FAIL  catalog    3 problem(s)  [48 service(s), 55 topic(s), 55 published_event(s
 | 2 | 「原样抄进 **48 份** `services/*/service.yaml`」 | **47 份**带 `depends_on:` 块；S01 依赖为空，生成器不写空块 | **把「有 48 个服务」直接当成了「有 48 个生成块」。**空列表的字段在生成物里没有对应行，服务数与块数不是同一个数——写「N 份文件里有 X」之前要 `grep -l` 数一遍，不能用服务总数替代 |
 
 **顺带记一条操作教训（不算本节缺陷，是我这轮的返工）。** 上面那个负向测试用 `json.dumps(...)` 回写 catalog，缩进被我改成 2 空格、文件从 43573 涨到 44717 字节；`git diff --numstat` 显示 0/0 行变更（因为确实是同一份数据换排法），差点当成「干净」放过。**`--numstat` 全零不等于文件没变**——字节数变了、格式变了，它一样报 0。用 `git checkout --` 从 HEAD 恢复，现在 `contracts/service-catalog.v2.json` 与 HEAD 完全一致。以后改配置文件做负向测试，应该先复制到临时路径改副本，或者在 `finally` 里从 `git show HEAD:` 恢复，而不是自己 `dumps` 回去。
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。
+
+## 16.28 `required_scope` 有四个各自独立的枚举，其中 S19 那个会把两个工具挡在外面
+
+查 `mcp-tools.v2.design.json` 时顺手把「哪些地方声明过 scope 取值」全找了一遍。找到四处，
+**取值集合没有两处是完全相同的**：
+
+| # | 位置 | 取值数 | 取值 | 这是什么 |
+|---|---|---|---|---|
+| 1 | `contracts/mcp-tools.v2.design.json` | **6** | `admin / execute / plan / **publish** / read / review` | 12 个工具实际用到的 |
+| 2 | `docs/13-api-product.md:13`（正文） | **5** | `read / plan / execute / review / admin` | 定档的那句话 |
+| 3 | `plans/S19-agent-runtime.md:610`（DDL） | **4** | `read / plan / execute / admin` | `agent_definition_tool.required_scope` |
+| 4 | `plans/S46-developer-integration.md:475`（DDL） | **5** | `read / plan / execute / review / admin` | `client_scope_grant.scope` |
+
+按 docs/13 那五档为基准逐处比对：
+
+```
+contracts/mcp-tools.v2.design.json
+    extra vs docs/13 : ['publish']
+plans/S19-agent-runtime.md:610 (CHECK)
+    missing vs docs/13: ['review']
+```
+
+**第 2 类不一致（`publish`）已经在 §2.1 记过并标 `NEEDS_OWNER`。第 3 处没记过，而且它不是
+缺一档的措辞问题：**
+
+```
+tool scopes that S19's CHECK would reject: ['publish', 'review']
+  -> ['drama.review.decide', 'drama.delivery.publish']
+```
+
+按 [S19 §2.5](../../plans/S19-agent-runtime.md) 的原文，Agent 定义里每个工具都要落一行
+`agent_definition_tool`，列名就叫 `required_scope`、且是这个 4 值 CHECK。那么
+`drama.review.decide` 这个工具**在 S19 里根本注册不进去**——哪怕把 `publish` 的争议
+按 `execute` 解决掉，`review` 仍然会被拒。而 `review` 在 docs/13 和 S46 里都是合法档位，
+只有 S19 没有。
+
+四处全仓搜过（排除 `.claude/worktrees/` 与 `docs/design-package/`），S19 那处
+**没有任何一句说这是有意收窄**，也没有任何报告记过它。按 AGENTS.md
+「契约与文档冲突 → 停下，报告冲突，不要自行选边」，这里只报，不改：
+
+- 可能是 S19 漏写 `review`（DDL 是后补的，抄了当时更短的枚举）；
+- 也可能是 S19 有意不同轴——它是「agent 能声明什么」，不是「客户端能授什么」，
+  这两种语义本来就允许取值集不同。
+
+**两读都成立，需要 owner 定。** 定之前不动 S19 的 DDL，也不动另外三处。
+
+### 量法的两个坑，各踩了一次
+
+1. **`grep "IN ('read'"` 只找到两处，是因为 S46 的列名不叫 `required_scope` 而叫 `scope`。**
+   第一遍按字段名搜，S46 完全没出现，差点写成「只有三处声明」。改按 `IN ('read'` 搜才找全。
+   **按语义找东西，不能按自己以为的字段名找。**
+2. **§2.1 原句写「四档都有实例」，实际是五档。** 这条已经改在 §2.1 里，更正表见下。
+
+### 更正表
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | §2.1「四档都有实例」 | **五档每档都有实例**（`read` 4、`execute` 4、`plan` 1、`review` 1、`admin` 1） | 数的时候把 `review` 漏了。12 个工具的 scope 我列出过、表就在 §2 里，`drama.review.decide` 那一行明明白白写着 `review`——**表是对的，是我把列了 12 行的表"总结"成了 4**。概括时没有回表重数，等于亲手制造了一个与自己的证据相反的结论 |
+| 2 | §16.28 初稿「`required_scope` 的枚举只有三处声明」 | **四处**：docs/13 正文、S19 DDL、S46 DDL（列名是 `scope`）、mcp-tools JSON | 按 `required_scope IN (` 这个字段名搜，S46 的列叫 `scope`，没命中。**搜取值集合不能锚定在自己记得的列名上** |
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。

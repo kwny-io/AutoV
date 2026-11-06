@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1321 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1325 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
@@ -1503,7 +1503,7 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1321、
+那 9 个数是 `json` 148、`schema_ref` 110、payload topic 55、`check_id` 99、`links` 1325、
 stated invariant 5、`scaffold` 118、`examples` 71、unmapped 1。加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
@@ -1624,10 +1624,18 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
      `model.estimate` / `project.get`；JSON 有而 `docs/13` 无：`delivery.prepare` /
      `delivery.publish` / `policy.get` / `run.command`；
    - `model.estimate` / `episode.plan` / `memory.extract` 在 `docs/13` 里承担「要 `plan:compute`
-     预算」的角色，JSON 无对应工具——**能力清单差异，不是措辞差异**。
+     预算」的角色，JSON 无对应工具——**能力清单差异，不是措辞差异**；
+   - **同一件事有四处各自独立的 scope 枚举，没有两处集合相同**：`docs/13` 正文 5 档、
+     [S46:475](../plans/S46-developer-integration.md) 5 档（与正文一致）、
+     `mcp-tools` JSON 6 个值、[S19:610](../plans/S19-agent-runtime.md) **只有 4 个值**
+     （少 `review`）。S19 的表要让每个工具都落一行 `required_scope`，于是
+     `drama.review.decide`（`review`）与 `drama.delivery.publish`（`publish`）
+     **在 S19 里注册不进去**——把 `publish` 的争议按 `execute` 解决掉，`review` 仍然被拒。
 
-   补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断。
+   补/删工具、改 scope 都属于授权决策，标 `NEEDS_OWNER`，不从任何一侧推断；S19 是漏写
+   `review` 还是有意与客户端授权不同轴，同样两读都成立，不选边。
    原文「没有 scope 字段……只有 annotations 和 input schema」是错的。
+   逐处比对见 [§16.28](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
 3. **`examples/` 里所有 hash 和金额都是占位符**（`aaaa…`、`bbbb…`）—— 结构示意，不能直接当测试 fixture。
    **但形状是全的**：71 个示例全部通过各自 schema 校验（`capacity-plan.json` 没有对应 schema，
    是纯结构示意）。用 `python tools/validate/validate_examples.py` 复核。
