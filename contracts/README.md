@@ -1485,7 +1485,7 @@ python tools/check_all.py --only links,examples
 
 十一项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1321 条相对链接全部可达）、`catalog`
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1321 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id / topic `producer` / `docs/02` 三方一致）、`families`（动作族文件自己声明的
 5 条 invariant 里的 **4 条**）、`scaffold`（118 个生成物与 catalog 一致）、`examples`（**71** 个示例对
 schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity` 与 `services/*/src/`
@@ -1527,9 +1527,20 @@ S38:241 的正文缩写，是三处已知悬空引用，列在 `KNOWN_DANGLING_R
 `VIS.SAFE_AREA.TEXT_OVERLAP` 等），`SUB.TIMING.CPS` 是同一句后半截就点了完整 id 的缩写。
 按这个口径，四份方案里 3 段及以上的提及共 146 处，其中 3 处悬空。
 
+`links` 这一格有两个看不见的边界，两个都写进 `note` 了，因为**覆盖得比看上去少**
+恰恰是这个模块开头那句「没跑成的检查不能读成绿灯」要防的事：
+
+- `docs/design-package/` 按 AGENTS.md 是原始设计包存档、只读，里面的断链本仓库不能修，
+  所以不 FAIL。但它被数出来报在 `note` 里（56 个 md、94 条链接），有断链时 `note` 会追加
+  `-- N broken there`——**看得见，但不拦**。
+- `glob("**/*.md")` 不下钻以 `.` 开头的目录。这恰好把 `.claude/worktrees/`（别的会话的检出，
+  不是本仓库的内容）排除掉了，但那是 glob 的副作用，不是决定；`_tmp` 之类的临时目录也会
+  藏在那里。
+
 刻意不 pin 的：`families` 的「4 of 5」里那个 4（是语义判断，不是计数）、
 `checkids` 的不合规条数（白名单本来就该缩短，写死等于要求它别缩短）、
 `checkids` 的悬空引用条数（同上，`KNOWN_DANGLING_REFS` 本来就该缩短）、
+`links` 的只读存档条数（存档是冻结的，数它没有意义）、
 passed/skipped 的拆分（数据文件一落地就变）。
 
 十一项里 `registry` 那一格今天**什么都没校验**（数据文件不存在），所以它不计进 `passed`：

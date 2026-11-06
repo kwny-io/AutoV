@@ -2988,3 +2988,77 @@ restored identical: True
 全量：10 项通过、1 项 skip（`registry`），exit 0。`checkids` 的 `note` 现在是
 `99 check_id(s), 3 known non-conforming ...; 146 citation(s), 3 unresolved ...`。
 
+---
+
+### 16.22 `links` 有两个看不见的边界，现在两个都写在 `note` 里
+
+上一轮核对 `links` 的覆盖面时，我错把它当成「扫了全仓」。改正数字之后还剩一个问题：
+**它到底没扫什么，读输出的人看不出来。**`note` 只写「1321 条本地链接」，像个全仓结论。
+
+#### 边界一：`docs/design-package/` 是有意跳过的
+
+按 AGENTS.md，那个目录是原始设计包存档、**只读，不能改**。里面的断链本仓库修不了，
+所以让它 FAIL 只会制造一个永远红、且没人有权处理的格子。
+
+但它也不是「没有链接」。实测：
+
+```
+glob **/*.md 总命中: 268
+  skip docs/design-package/       56 md,    94 links,   0 broken
+```
+
+56 个 md、94 条链接被静默跳过。这 94 条今天全通，所以跳不跳没关系——但「今天恰好全通」
+不是一个可以被信任的前提，尤其那个目录是**别的来源**拷进来的。
+
+改法是让它**看得见但不拦**：`note` 里报出被跳过的规模和原因，有断链时追加条数。
+
+#### 边界二：`glob("**/*.md")` 不下钻点目录
+
+这是 glob 的既有行为，不是谁写的规则。它恰好把 `.claude/worktrees/` 排除了——那里有
+**773 个 md**，是别的会话的检出，不是本仓库的内容，确实不该扫。但那是**副作用**，
+不是决定：哪天有人在 `.scratch/` 或 `.notes/` 里放 markdown，同样会消失得无声无息。
+
+这一条写进了 docstring，`note` 里没有报数（`glob` 的返回值本身就看不见那些文件，
+要报就得先走一遍 `os.walk` 再比对，为一句 note 多扫全盘不划算）。**这是有意的取舍，
+不是遗漏。**
+
+#### 改完的样子
+
+```
+ok    links      1321 local link(s); docs/design-package/ (56 md, 94 link(s)) is read-only archive, not checked
+```
+
+反向测了两个方向，重点是**没把只读存档变成会 FAIL 的东西**：
+
+```
+baseline failures: []
+baseline note    : 1321 local link(s); docs/design-package/ (56 md, 94 link(s)) is read-only archive, not checked
+planted broken   : CAUGHT ['plans/S38-subtitles.md:302 -> ./no-such-file-xyz.md']
+archive broken   : failed=0 | note: ... 94 link(s) ... not checked -- 1 broken there
+restored: True | archive restored: True
+```
+
+第二条正是要的行为：往只读存档里塞一条断链，**套件不红**，但 `note` 说
+`-- 1 broken there`。看得见，不拦。
+
+#### 自己踩了一脚，而且是被自己的检查抓到的
+
+改 README 摘要段时我把 `links` 那格的措辞改成了「仓库正文 1321 条相对链接…」，
+破坏了 `README_CLAIMS` 里锚定 `\`links\`（(\d+) 条相对链接` 的那个模式，于是：
+
+```
+FAIL  readme     1 problem(s)
+        README summary no longer states the links count in the form this check reads; update README_CLAIMS or the prose
+```
+
+这正是 §16.19 那段注释里写的耦合风险：**note/regex 匹配的是给人读的字符串**。它没有
+悄悄跳过，而是响亮地 FAIL 并指名哪一格——按那段注释的设计意图，这就是对的。改回
+「1321 条相对链接全部可达；另有 …」之后恢复。
+
+| # | 位置 | 原写 | 正确 | 错因 |
+|---|---|---|---|---|
+| 1 | `check_links` 的 `note` | `1321 local link(s)` | 追加 `; docs/design-package/ (56 md, 94 link(s)) is read-only archive, not checked`，有断链时追加条数 | **把「我扫了这些」说成「这就是全部」。**94 条链接被静默排除，读者看不出这个数不含存档 |
+| 2 | 本节初稿改的 README 摘要段 | 「`links`（仓库正文 1321 条相对链接全部可达…」 | 「`links`（1321 条相对链接全部可达；另有 …」 | **改措辞时打断了 `README_CLAIMS` 的锚点正则**，`readme` 立刻 FAIL。检查器行为正确，是我没先看一眼它的匹配式 |
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。
+

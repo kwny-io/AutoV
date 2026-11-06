@@ -97,14 +97,48 @@ def check_json(name):
 
 
 def check_links(name):
+    """Every relative markdown link resolves.
+
+    Scope has two invisible edges, and both are stated in the note because a
+    count that quietly covers less than it appears to is the failure this
+    module's docstring warns about:
+
+    - `docs/design-package/` is skipped on purpose. It is the archived original
+      design package, read-only by AGENTS.md, so a broken link in it is not
+      something this repo may repair. Counted below so the skip is visible.
+    - `glob("**/*.md")` does not descend into dot-directories. That happens to
+      exclude `.claude/worktrees/` -- other sessions' checkouts, which are not
+      this checkout's content -- but it is an accident of the glob, not a
+      decision. `_tmp`-style scratch directories would also hide there.
+    """
     r = Result(name)
     fence = re.compile(r"```.*?```", re.S)
     inline = re.compile(r"`[^`\n]*`")
     link = re.compile(r"\[[^\]]*\]\(([^)\s]+?)(?:\s+\"[^\"]*\")?\)")
     total = 0
+    skipped_files = 0
+    skipped_links = 0
+    skipped_broken = []
     for p in sorted(glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True)):
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
         if rel.startswith(("docs/design-package/", ".git/")) or "node_modules/" in rel:
+            # Read-only archive: counted, not checked. A broken link here is
+            # reported in the note rather than failed, so it stays visible
+            # without turning the suite red for something nobody may edit.
+            if rel.startswith("docs/design-package/"):
+                skipped_files += 1
+                text = inline.sub("", fence.sub("", _utf8(p)))
+                base = os.path.dirname(p)
+                for m in link.finditer(text):
+                    t = m.group(1)
+                    if t.startswith(("http://", "https://", "mailto:", "#")):
+                        continue
+                    t = t.split("#")[0]
+                    if not t:
+                        continue
+                    skipped_links += 1
+                    if not os.path.exists(os.path.normpath(os.path.join(base, t))):
+                        skipped_broken.append(rel)
             continue
         text = _utf8(p)
         # A link inside a fenced block or inline code is an example, not a
@@ -122,7 +156,10 @@ def check_links(name):
             if not os.path.exists(os.path.normpath(os.path.join(base, target))):
                 line = text[: m.start()].count("\n") + 1
                 r.fail(f"{rel}:{line} -> {target}")
-    r.note = f"{total} local link(s)"
+    r.note = (f"{total} local link(s)"
+              f"; docs/design-package/ ({skipped_files} md, {skipped_links} link(s)) "
+              f"is read-only archive, not checked"
+              + (f" -- {len(skipped_broken)} broken there" if skipped_broken else ""))
     return r
 
 
