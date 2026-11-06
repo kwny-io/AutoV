@@ -4188,3 +4188,96 @@ duplicate name         → 11 distinct tool(s) (1 duplicate)
 
 这也再次说明这批文件的共同形状：**`event-topics` / `redaction-policy` / `mcp-tools`
 三个顶层契约，字段都在，读者都只用了其中一两个。**
+
+### 补记七：`docs/design-package/MANIFEST.md` 的 115 个校验和，一个都没重算过
+
+AGENTS.md 对 `docs/design-package/` 的规定最硬：「原始设计包存档，**只读**」，
+理由是「改了就没法对照了」。但这句话此前**没有任何检查在守**。包里自带一份
+`MANIFEST.md`，115 行，每行一条路径 + 字节数 + SHA-256，也从没人算过。
+在存档里改一个字，工作区看起来和干净的一模一样——`links` 检查还明确跳过了这个目录。
+
+**先把 115 行拆开数**（脚本输出，不沿用中间结果）：
+
+```
+manifest rows                : 115
+  rows naming an in-package file: 54   (files in package: 57)
+  of those, byte-identical      : 51
+  of those, divergent           : 3
+    DESIGN.md              73898B -> 74502B  (+604)
+    README.md              3943B -> 4067B  (+124)
+    contracts/README.md    2152B -> 2175B  (+23)
+  rows naming a file imported elsewhere: 61
+
+outside rows: still identical 57 / changed 4 / gone 0
+    contracts/event-topics.v2.json      18584B -> 25073B (+6489)
+    contracts/service-catalog.v2.json   43310B -> 44717B (+1407)
+    docs/02-service-catalog.md           5426B -> 5618B (+192)
+    examples/memory-committed-event.json  797B -> 1892B (+1095)
+```
+
+两个方向都要说清楚：
+
+**只有 54 行指的是包里的文件，不能全比。** 另外 61 行指向的是导入时搬到真身的文件
+（`contracts/`、`docs/`、`contracts/examples/`、`docs/diagrams/`、`apps/studio-web/layout.html`）。
+那 61 个**本来就会**随正常开发变——实测 57 个搬完仍逐字节相同、4 个已经合法改动、
+0 个丢失。把它们也纳入比对，等于每次改文档都报红，真正要抓的信号会被淹没。
+所以 `check_archive` 只比对落在包内的 54 行。
+
+反向也有一个洞，顺手补上：包里有 57 个文件，但只有 54 个有 MANIFEST 行，
+缺的是 `00-阅读顺序.txt`、`MANIFEST.md` 自己、`contracts/domain-v1-README.md`。
+这三个**改了什么都不会被发现**——它们是只读规则下的真实缺口，但要不要补行是
+归档流程的事，检查只报这个数，不替 owner 决定。
+
+**3 个对不上的，是导入时就注定的，不是有人改过。** 三个文件全都只被 `8c94e5f`
+（scaffold 那一次）碰过，之后再没动过：
+
+| 文件 | 行数 / 字节 | 结构 | 对不上的原因 |
+|---|---|---|---|
+| `DESIGN.md` | 850 行 / 74502B | **18 个 H1 标题**，66 条 `../` 链接 | 全部文档拼成一个文件，再把链接改写进仓库层级；MANIFEST 存的是拼之前每篇的校验和 |
+| `README.md` | 40 行 / 4067B | 1 个 H1，18 条 `../` 链接 | 链接在导入时改写 |
+| `contracts/README.md` | 16 行 / 2175B | 1 个 H1，0 条链接 | 无链接可改写，增量是正文说明（已核过内容，见缺口 2） |
+
+`DESIGN.md` 的 18 个 H1 是关键：它是多篇文档的**拼接**，逐文件校验和对它本来就不成立。
+把 `../` 前缀改回 `../../` 也复现不出 73898B（重算得 74304B），说明差异不止链接一处。
+
+**所以这 3 行永远对不上，但也不能简单跳过。** 第一版 `check_archive` 直接
+`FAIL` 这 3 行 → 整个套件永久红，红到底就失去了鉴别力；改成只按文件名跳过 →
+**这 3 个文件谁都能改，而它们恰恰是最容易被「顺手统一一下链接」扫到的地方**。
+最后做法是**把 3 个文件各自冻结到当前哈希**（`ARCHIVE_KNOWN_DIVERGENT`），
+既让基线是绿的，又让改动这 3 个文件照样报红。探针第 3、4 行就是专门验这一点的。
+
+**新检查 `archive`（第 16 项）**：
+
+```
+ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
+                 3 known divergences (see the set in this file);
+                 61 row(s) name files imported elsewhere and are not compared
+```
+
+比对用的是磁盘字节而不是 `git cat-file`——先确认过工作区是 LF：MANIFEST 是从 LF 文件
+算出来的，一次 CRLF checkout 会把 54 个全报成改动。
+
+| 探针 | 输出 |
+|---|---|
+| 包内一个匹配文件尾部加 1 个换行 | `FAIL archive 1` / `50/54 match` / `S31-speech-production.md: expected 2436B/SHA-256, file is 2437B`；`readme` 同时报 `README says 51 for archive match, archive says 50` |
+| 3 个 allow-list 文件各加 1 个换行（逐个测） | 三次都 `FAIL archive 1` / `2 known divergences` / `DESIGN.md: expected 74502B/SHA-256, file is 74503B`。注意此时 `readme` 是**绿的**——51 没动 |
+| 改一个匹配文件，同时把它的新哈希写进 allow-list | `archive` **绿**（`50/54 match`、`4 known divergences`），只有 `readme` 报 `README says 51 for archive match, archive says 50` |
+| allow-list 写一个 MANIFEST 里没有的名字 | `FAIL archive 1` / `NOT-A-REAL-FILE.md is listed as known-divergent but MANIFEST.md has no row for it` |
+| README 把 51 改成 52 | `FAIL readme 1` / `README says 52 for archive match, archive says 51` |
+| 全部还原 | 16 项注册、15 通过、1 跳过 |
+
+第 2、3 行合起来才是完整结论。**allow-list 本身不带防护**：只要改动的人顺手把
+新哈希也更新到 `ARCHIVE_KNOWN_DIVERGENT`，`archive` 就是绿的，唯一拦住它的是
+`readme` 钉住的那个 51。也就是说这两项检查在这里是**互补**的，缺一个就漏一个方向：
+
+- 只留 `archive`：改了文件又更新 pin → 全绿
+- 只留 `readme`：改了 allow-list 里的文件（51 不变）→ 全绿
+
+所以钉数不是为了好看，它是 allow-list 的第二道锁。这一条如果哪天要动
+`ARCHIVE_KNOWN_DIVERGENT`，`README_CLAIMS` 里的 `archive match` 不能一起去改——
+一起去改就等于同时卸掉两道锁。
+
+**记一笔数**：`contracts/README.md` 从「十五项检查 / 13 个数 / 十四个方向」
+同步改成「十六项检查 / 14 个数 / 十五个方向」，`README_CLAIMS` 加了一行
+`archive match`，把 51 钉进 `readme` 检查。`archive` 的 note 里 51 与 54 都是
+本次实算，`known divergences` 由冻结集逐条比对得出，不是写死的字面量。

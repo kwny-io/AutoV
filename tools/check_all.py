@@ -23,6 +23,7 @@ working tree.
 import argparse
 import contextlib
 import glob
+import hashlib
 import importlib.util
 import io
 import json
@@ -569,6 +570,8 @@ README_CLAIMS = [
     ("scaffold", r"`scaffold`（(\d+) 个生成物", "scaffold", r"(\d+) generated file"),
     ("example", r"`examples`（\*\*(\d+)\*\* 个示例", "examples", r"(\d+) valid"),
     ("unmapped example", r"另 (\d+) 个刻意不映射", "examples", r"(\d+) without a schema"),
+    ("archive match", r"逐个比字节数并算哈希，\*\*(\d+)\*\* 个对得上",
+     "archive", r"(\d+)/\d+ match MANIFEST\.md"),
 ]
 
 
@@ -1158,6 +1161,106 @@ def check_check_ids(name):
     return r
 
 
+# Files inside docs/design-package/ whose MANIFEST.md row can never match, pinned to
+# the hash they had when this check was written. All three were already out of step
+# in the scaffolding commit (8c94e5f) and none has been touched since, so this is
+# import-state, not drift. DESIGN.md is every archived document concatenated into
+# one 849-line file with 66 repo-relative links; README.md and contracts/README.md had
+# their links rewritten from ../docs/ to ../../docs/ on import. In all three the
+# manifest holds the pre-import checksum, so no edit to the archive can reproduce it.
+# Clearing them means regenerating MANIFEST.md -- an owner decision, since the
+# package is read-only until they say otherwise.
+#
+# These are pinned to their own hashes rather than merely skipped. A skip list keyed
+# on filename alone would let the next edit to any of the three through, and those
+# three are the most likely place to hide one: they are the files a careless
+# "let me normalise these links" sweep would touch. Pinning means the note's
+# "3 known divergences" can only stay at 3 while they stay byte-identical to what
+# was reviewed here.
+ARCHIVE_KNOWN_DIVERGENT = {
+    "DESIGN.md": (74502,
+                  "fdb457740855e387e6382ad4243f542d3170ecec5cb80e98719e0d9539f763e2"),
+    "README.md": (4067,
+                  "06e09aca9bc3f727ef5c79ed6967e0dd1198f3d8300d0b9339349472ae1a68fe"),
+    "contracts/README.md": (2175,
+                            "72a98b9f82f9c4b6b8ff9e25d19ee43a08562d5803695ca053740f59a1fa9a93"),
+}
+
+
+def check_archive(name):
+    """The read-only design package still matches the checksums in its MANIFEST.
+
+    AGENTS.md says `docs/design-package/` is the original input and must not be
+    edited -- "改了就没法对照了". Nothing enforced that. The package ships a
+    MANIFEST.md of 115 rows, each a path, a byte count and a SHA-256, and none of
+    it had ever been recomputed. A silent edit inside the archive would look
+    exactly like a clean tree.
+
+    115 rows but only 54 files live inside the package: the rest were imported to
+    their real homes on scaffolding (contracts/, docs/, contracts/examples/,
+    docs/diagrams/, apps/studio-web/layout.html), and those are expected to keep
+    changing. So only the 54 in-package rows are compared -- checking the other 61
+    would flag every legitimate doc edit and bury the signal.
+
+    The comparison uses the bytes on disk, not `git cat-file`, after confirming
+    the working tree is LF here: the manifest was built from LF files and a CRLF
+    checkout would otherwise report all 54 as changed.
+
+    The three rows in ARCHIVE_KNOWN_DIVERGENT cannot match by construction, so they
+    are pinned to their own hashes and reported separately. Pinned rather than
+    skipped for the same reason they are enumerated rather than counted: a bare
+    count or a filename-only skip would let a fourth edit hide behind the old
+    number, and a fourth edit is exactly what this check exists to catch.
+    """
+    r = Result(name)
+    pkg = os.path.join(ROOT, "docs", "design-package")
+    man = os.path.join(pkg, "MANIFEST.md")
+    if not os.path.exists(man):
+        r.note = "no MANIFEST.md; nothing to compare"
+        return r
+    rows = []
+    for line in _utf8(man).splitlines():
+        m = re.match(r"\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*`([0-9a-f]{64})`\s*\|", line)
+        if m:
+            rows.append((m.group(1), int(m.group(2)), m.group(3)))
+
+    inside = 0
+    known = 0
+    bad = []
+    for rel, size, sha in rows:
+        p = os.path.join(pkg, rel)
+        if not os.path.exists(p):
+            continue
+        inside += 1
+        b = open(p, "rb").read()
+        h = hashlib.sha256(b).hexdigest()
+        if len(b) == size and h == sha:
+            continue
+        if rel in ARCHIVE_KNOWN_DIVERGENT:
+            # Pinned to the hash reviewed here, not merely skipped -- see the set.
+            fsize, fsha = ARCHIVE_KNOWN_DIVERGENT[rel]
+            if len(b) == fsize and h == fsha:
+                known += 1
+            else:
+                bad.append((rel, fsize, len(b)))
+            continue
+        bad.append((rel, size, len(b)))
+
+    for rel, want, got in bad:
+        r.fail(f"{rel}: expected {want}B/SHA-256, file is {got}B")
+    # A stale entry is itself a finding: if an owner regenerates MANIFEST.md, these
+    # three start matching and the set should shrink with it.
+    stale = set(ARCHIVE_KNOWN_DIVERGENT) - {rel for rel, _, _ in rows}
+    for rel in sorted(stale):
+        r.fail(f"{rel} is listed as known-divergent but MANIFEST.md has no row for it")
+    r.note = (f"{inside} in-package file(s) checksummed, "
+              f"{inside - known - len(bad)}/{inside} match MANIFEST.md"
+              + (f", {known} known divergences (see the set in this file)" if known else "")
+              + f"; {len(rows) - inside} row(s) name files imported elsewhere "
+                f"and are not compared")
+    return r
+
+
 CHECKS = [
     ("json", check_json, "every contracts/**.json parses"),
     ("payloads", check_payload_refs, "every topic schema_ref/data_schema_ref names a real file"),
@@ -1172,6 +1275,7 @@ CHECKS = [
     ("scaffold", check_scaffold, "generated files match the catalog"),
     ("examples", check_examples, "contracts/examples/ validate against their schemas"),
     ("maturity", check_maturity, "catalog maturity matches whether services/*/src/ has code"),
+    ("archive", check_archive, "docs/design-package/ matches the checksums in its MANIFEST"),
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]
