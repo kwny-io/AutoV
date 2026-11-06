@@ -4358,10 +4358,11 @@ ok    safety    4/4 gate(s) false, 1/1 shared_database_writes false,
 我也认为该为 false，但 AGENTS.md 没有把它们的语义写死（比如「区域故障自动切换并
 付费重提」到底允不允许），所以只报不判，留给 owner。
 
-`service-interactions.yaml` **没有**纳入这一项：它需要一个「action 名是否合法」的
-清单，而这个清单目前不存在（`docs/04` 只有散文）。把「18 步的 from/to/event 都在
-catalog/topics 里」单独立成一项检查是可以做的，但那属于新增覆盖面而不是修复漏洞，
-先记录在这里。
+`service-interactions.yaml` 当时**没有**纳入这一项。~~因为它需要一个「action 名是否合法」
+的清单，而这个清单目前不存在（`docs/04` 只有散文），所以先记录在这里。~~
+**更正（见补记九）：这个判断错了一半。** 「action 名是否合法」确实没有清单，但这份文件里
+14 个可断言的事实（36 个端点、18 步形状、5 个 event 名、5 个 producer、7 个权威、7 条次序）
+一个都不需要那张清单，我在下一轮就把它们做成了第 18 项检查 `interactions`。
 
 | 探针（都在 `runtime-safety.yaml` 上） | 输出 |
 |---|---|
@@ -4390,3 +4391,103 @@ note 里一个字都不变。现在每个子句都是 `N/M`，探针一一对应
 这已经是同一个缺陷的第五次复现，而每次都是在「检查本身是对的、只是它说的话
 不对」这个形状上——`feedback-note-must-not-read-green.md` 那条记忆应该改成
 「凡是 note 里出现的**任何**数字，都必须能因为这次运行而变化」。
+
+### 补记九：`examples` 说「72 个文件在磁盘上」，目录里是 74 个
+
+| 原写 | 正确 | 错因 |
+|---|---|---|
+| `examples` note：`72 file(s) on disk` | `72 json file(s) of 74 on disk` | 这个 `72` 是 `glob("*.json")` 的长度，却被写成「在磁盘上的文件数」。`contracts/examples/` 里还有 `runtime-safety.yaml` 和 `service-interactions.yaml`，两个都没进这个数，也没在任何地方被提到 |
+| `contracts/README.md`：`= 72 个文件` | `= 72 个 .json`，并另起一段写明目录共 74 个文件 | 同上；「72 个文件在磁盘上」读起来像目录总数，实际上悄悄把两个 YAML 排除了 |
+
+错因是同一条：**note 里的分母是「本次 glob 到了什么」，却用了「磁盘上有多少」的说法。**
+这是 [补记八](#补记八runtime-safetyyaml-是-agentsmd生产开关默认关闭的机器可读版此前零校验)
+里那个缺陷的第六次复现，但形状比前五次更隐蔽——前五次是「判定对、措辞假」，
+这一次**分母本身就是错的**，而且错的正好是被排掉的那两个文件所处的目录。
+
+数字来源（脚本 `_inbox/count_examples_dir.py`，输出原样贴）：
+
+```
+files in contracts/examples/            : 74
+  .json    72
+  .yaml    2
+
+glob('*.json')            : 72
+the check's note says     : 72 file(s) on disk
+
+non-json files:
+   contracts/examples\runtime-safety.yaml
+   contracts/examples\service-interactions.yaml
+```
+
+现在 note 的每一段都会因为目录变化而动：
+
+| 探针 | `examples` 的输出 |
+|---|---|
+| 基线 | `71 valid, 1 without a schema; 72 json file(s) of 74 on disk, 64 stem(s), 64 mapped  [not JSON-schema examples, so not validated here: runtime-safety.yaml, service-interactions.yaml]` |
+| 加一个 `.yaml` | `72 json file(s) of 75 on disk`，跳过清单里多出它，json 仍是 72 |
+| 加一个未映射的 `.json` | `FAIL examples 3` / `73 json file(s) of 75 on disk, 65 stem(s), 64 mapped` |
+| 还原 | 回到 `72 ... of 74` |
+
+注意第二个探针：加 YAML 只让分母从 74 变 75，**不用改任何代码**就直接反映出来了，
+这正说明这个数现在是活的。
+
+### 补记九之二：`service-interactions.yaml` 立成第 18 项检查 `interactions`
+
+补记八里我说这份文件「需要一个 action 名清单，而清单不存在，所以先不做」。
+重看之后这个理由只对了一半：**有没有那张清单，跟能不能断言无关。** 这份文件里有
+14 个不依赖清单的事实，全部可以核：
+
+| 断言 | 依据 | 为什么没人能替代 |
+|---|---|---|
+| 36 个端点都是真实 `service_id` | `service-catalog.v2.json` | 打错一个字母就是一张不存在的图 |
+| 18 步每步恰好有 `action` 或 `event` 之一 | 文件自身结构 | 两个都有是说了两件事，一个都没有是画线 |
+| 5 个 event 名都被某个 topic 声明 | `event-topics.v2.json` 的 `event_type` | 否则这一步在描述一条没人发布的消息 |
+| 该步的 `from` == 那个 topic 的 `producer` | 同上 | 箭头从一个发不出它的服务出发 |
+| 7 个 action 发给 `runtime-safety.yaml` 声明的权威 | `enterprise_defaults.*_authority` | 发错就是 AGENTS.md 禁止的「绕过 S23/S22 直接付费」 |
+| `paid_admission` 满足 `plans/S22:516-527` 的 7 条先后 | `plans/S22-scheduler-quota.md` | 顺序错了照样读起来像张合理的图 |
+
+权威映射（7 个 action 各有一个单一 owner，其余 6 个没有声明，只报不判）：
+
+```
+reserve_budget / confirm_authorization / accrue_and_settle  -> financial_authority = S23
+acquire_permit / confirm_dispatch_permit /
+  release_confirmed_terminal_permit                        -> quota_authority     = S22
+request_acceptance_CAS                                      -> accepted_manifest_authority = S08
+```
+
+`plans/S27:24` 是这条最硬的旁证：`may_accept_output: false`，并原样引
+`accepted_manifest_authority: S08`。所以 `request_acceptance_CAS` **不能**发给 S27。
+现状里它也确实是 `S40 -> S08`，S27 的唯一步骤是收 `connector.observation.received`。
+
+**探针找出来的洞：漏了 `reserve_budget < acquire_permit`。** 第一版 `ORDER` 有 6 条约束，
+唯独没有这一对——它们相邻，交换之后其余 6 条一条都没破，检查全绿。但
+`plans/S22:516-527` 把 `reserve_budget` 编号为第 1 步、`acquire_permit` 第 2 步，而且
+它的失败表写着「**步 2 失败**（S23 已预留）→ 返回 429/503，不创建 permit，S26 调 S23 `release`」——
+这句话只有在预算**先**预留时才成立。反过来先占槽，占槽失败时什么都没预留，
+这条补偿路径根本不存在。加上第 7 条约束后探针 5 才变红。
+
+| 探针（都在 `service-interactions.yaml` 上） | 输出 |
+|---|---|
+| `from: S40` → `S99` | `FAIL interactions 1` / `35/36 endpoint(s) name a catalog service` |
+| `memory.canon.committed` → `...commited`（少一个 t） | `4/5 event name(s) declared`，producer 仍是 `4/4` |
+| `S16 -> S18` 改成 `S18 -> S16` | `FAIL interactions 1` / `4/5 event(s) emitted by that topic's producer` |
+| `reserve_budget` 的 `to: S23` → `S22` | `FAIL interactions 1` / `6/7 action(s) addressed to the declared authority` |
+| 交换 `reserve_budget` 与 `acquire_permit` | `FAIL interactions 1` / `6/7 paid-admission ordering constraint(s) hold` |
+| 把 `confirm_authorization` 换成第二个 `issue_fenced_dispatch_grant` | `FAIL interactions 3`（缺的两个 action 各自一条 + 次序一条） |
+| 全部还原 | 17 项注册、17 通过、1 跳过 |
+
+探针 2 还有一个 note 层面的修正：第一版 producer 子句的分母是**全部 event 步**，
+所以一个拼写错误会同时扣两格（`4/5` 和 `4/5`），读起来像两个独立缺陷。
+现在 producer 的分母是「名字真的声明过的那些」，一个错只扣一格。
+
+`readme` 也补了两条 claim，把新数字钉住：
+
+| 探针 | 输出 |
+|---|---|
+| README `3 段交互共 18 步` → `19 步` | `README says 19 for interaction step, interactions says 18` |
+| README `36 个端点` → `37 个端点` | `README says 37 for interaction endpoint, interactions says 36` |
+| README `十八项检查` → `十七项检查` | `README says 十七项检查, but 18 checks are registered; --list is the authority` |
+| 全部还原 | `ok readme 17 count(s)` |
+
+顺带把补记八里「十七项检查」的说法一并改成「十八项」——这个数由 `readme` 对着
+`len(CHECKS)` 核，不是手敲的。`contracts/README.md` 里那 15 个数字的表也补成 17 个。

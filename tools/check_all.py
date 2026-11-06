@@ -468,18 +468,28 @@ def check_examples(name):
     # because nothing tied the sentence to the files. The validator's own tally is
     # the source of truth; check that it closes over the directory so the number
     # can be copied from a green line instead of remembered.
-    on_disk = len(glob.glob(os.path.join(CONTRACTS, "examples", "*.json")))
-    stems = {os.path.basename(p).split(".")[0]
-             for p in glob.glob(os.path.join(CONTRACTS, "examples", "*.json"))}
+    json_files = glob.glob(os.path.join(CONTRACTS, "examples", "*.json"))
+    on_disk = len(json_files)
+    # "N file(s) on disk" used to mean N JSON files while the directory held two
+    # more, both YAML. The number read as a directory total and was not one --
+    # `safety` covers runtime-safety.yaml, nothing covers service-interactions.yaml,
+    # and neither was mentioned anywhere on this line. Report the exclusion.
+    every = [p for p in glob.glob(os.path.join(CONTRACTS, "examples", "*"))
+             if os.path.isfile(p)]
+    skipped = sorted(os.path.basename(p) for p in every if not p.endswith(".json"))
+    stems = {os.path.basename(p).split(".")[0] for p in json_files}
     mapped = {s for s in stems if s in mod.SCHEMA_OF}
     tally = re.search(r"(\d+) example\(s\) valid, (\d+) failing, (\d+) without a schema",
                       verbose.getvalue())
     if tally:
         r.note += (f"  {tally.group(1)} valid, {tally.group(3)} without a schema; "
-                   f"{on_disk} file(s) on disk, {len(stems)} stem(s), {len(mapped)} mapped")
+                   f"{on_disk} json file(s) of {len(every)} on disk, "
+                   f"{len(stems)} stem(s), {len(mapped)} mapped")
     else:
-        r.note += (f"  {on_disk} file(s) on disk, {len(stems)} stem(s), "
-                   f"{len(mapped)} mapped")
+        r.note += (f"  {on_disk} json file(s) of {len(every)} on disk, "
+                   f"{len(stems)} stem(s), {len(mapped)} mapped")
+    if skipped:
+        r.note += f"  [not JSON-schema examples, so not validated here: {', '.join(skipped)}]"
     if len(mapped) < len(stems):
         r.fail(f"{sorted(stems - mapped)} is on disk but missing from SCHEMA_OF; "
                f"the validator prints UNMAPPED for it and the README's count "
@@ -658,6 +668,207 @@ def check_safety_switches(name):
     return r
 
 
+def check_interactions(name):
+    """`contracts/examples/service-interactions.yaml` names real services, topics
+    and authorities, in the order the paid-admission saga requires.
+
+    This is the repo's only machine-readable statement of "who calls whom". It
+    was read by nothing: every check here globs `.json` (`examples` globs
+    `*.json`), so both YAML files in that directory were invisible. `safety`
+    took `runtime-safety.yaml`; this covers the other one.
+
+    Four things in it can go wrong without any other check noticing:
+
+    - a service id typed as S99 or renamed in the catalog;
+    - an event name that no topic declares -- the step then describes a message
+      nothing ever publishes;
+    - an event step whose `from` is not that topic's `producer`, which draws an
+      arrow from a service that cannot send it;
+    - an `action` step addressed to a service that is not the authority step
+      `runtime-safety.yaml` names. AGENTS.md forbids bypassing S23/S22 for
+      payment and forbids making any service a second authority; a grant issued
+      before the budget is reserved, or a release sent to whoever is nearest, is
+      exactly that, and it reads like a plausible diagram.
+
+    The last one is checked by name rather than by a rule, because there is no
+    action registry to derive ownership from: `docs/04` describes the saga in
+    prose and `plans/S22:516-527` tabulates it. The map below is those two steps
+    that have a single declared owner in `runtime-safety.yaml`; the remaining
+    action names have none declared and are counted, not guessed at.
+    """
+    r = Result(name)
+    path = os.path.join(CONTRACTS, "examples", "service-interactions.yaml")
+    if not os.path.exists(path):
+        r.fail("contracts/examples/service-interactions.yaml is missing")
+        return r
+    try:
+        import yaml
+    except ImportError:
+        r.fail("PyYAML is not installed, so the interactions cannot be read; "
+               "this is not a pass")
+        return r
+    try:
+        doc = yaml.safe_load(_utf8(path))
+    except Exception as exc:
+        r.fail(f"service-interactions.yaml does not parse: {exc}")
+        return r
+
+    cat = json.loads(_utf8(os.path.join(CONTRACTS, "service-catalog.v2.json")))["services"]
+    ids = {s["service_id"] for s in cat}
+    topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
+    producer = {t["event_type"]: t.get("producer") for t in topics
+                if t.get("event_type")}
+    safety = yaml.safe_load(_utf8(
+        os.path.join(CONTRACTS, "examples", "runtime-safety.yaml")))
+    defaults = safety.get("enterprise_defaults") or {}
+
+    interactions = doc.get("interactions") or []
+    if not interactions:
+        r.fail("service-interactions.yaml has no interactions")
+        return r
+
+    steps = [(it.get("id"), n, st)
+             for it in interactions
+             for n, st in enumerate(it.get("steps") or [], 1)]
+    if not steps:
+        r.fail("service-interactions.yaml declares interactions but no steps")
+        return r
+
+    refs_ok = 0
+    refs_bad = 0
+    for iid, n, st in steps:
+        where = f"{iid} step {n}"
+        for side in ("from", "to"):
+            svc = st.get(side)
+            if svc is None:
+                r.fail(f"{where} has no `{side}` service")
+                refs_bad += 1
+            elif svc not in ids:
+                r.fail(f"{where} `{side}: {svc}` is not a catalog service_id")
+                refs_bad += 1
+            else:
+                refs_ok += 1
+
+    # Exactly one of action/event per step: a step with both says two things, a
+    # step with neither is a line drawing. Neither is a schema failure here.
+    shape_bad = 0
+    for iid, n, st in steps:
+        kinds = [k for k in ("action", "event") if k in st]
+        if len(kinds) != 1:
+            r.fail(f"{iid} step {n} has {kinds or 'neither `action` nor `event`'}; "
+                   f"each step carries exactly one")
+            shape_bad += 1
+    shape_ok = len(steps) - shape_bad
+
+    evt_ok = evt_bad = prod_ok = prod_bad = 0
+    for iid, n, st in steps:
+        if "event" not in st:
+            continue
+        et = st["event"]
+        if et not in producer:
+            r.fail(f"{iid} step {n} emits {et!r}, which no topic in "
+                   f"event-topics.v2.json declares")
+            evt_bad += 1
+            continue
+        evt_ok += 1
+        if st.get("from") != producer[et]:
+            r.fail(f"{iid} step {n} draws {et!r} from {st.get('from')}, but that "
+                   f"topic's producer is {producer[et]}")
+            prod_bad += 1
+        else:
+            prod_ok += 1
+    # The producer clause is only meaningful for names that exist, so its
+    # denominator is evt_ok, not the total. With a typo'd name both clauses would
+    # otherwise drop together and the line would read as two separate defects.
+    producer_total = evt_ok or 1
+
+    # Each action here has exactly one owning authority declared in
+    # runtime-safety.yaml; a step addressed elsewhere has bypassed it.
+    OWNER = {
+        "request_acceptance_CAS": "accepted_manifest_authority",
+        "reserve_budget": "financial_authority",
+        "confirm_authorization": "financial_authority",
+        "accrue_and_settle": "financial_authority",
+        "acquire_permit": "quota_authority",
+        "confirm_dispatch_permit": "quota_authority",
+        "release_confirmed_terminal_permit": "quota_authority",
+    }
+    own_ok = own_bad = 0
+    for iid, n, st in steps:
+        want_key = OWNER.get(st.get("action"))
+        if want_key is None:
+            continue
+        want = defaults.get(want_key)
+        if want is None:
+            r.fail(f"runtime-safety.yaml declares no {want_key}, so "
+                   f"{iid} step {n} ({st['action']}) has no authority to check against")
+            own_bad += 1
+        elif st.get("to") != want:
+            r.fail(f"{iid} step {n} sends {st['action']} to {st.get('to')}, but "
+                   f"{want_key} is {want} -- AGENTS.md forbids bypassing the authority")
+            own_bad += 1
+        else:
+            own_ok += 1
+
+    # plans/S22:516-527 orders the seven paid-admission steps. A grant issued
+    # before the budget reservation, or a settlement before the grant, is the
+    # "绕过 S23/S22 直接付费" AGENTS.md forbids -- and a reordered YAML still
+    # reads as a reasonable diagram.
+    #
+    # `reserve_budget < acquire_permit` is the one pair the first draft omitted:
+    # the two are adjacent, so swapping them broke none of the other clauses and
+    # the check stayed green. plans/S22:521-522 numbers them steps 1 and 2, and
+    # its failure table only makes sense in that order -- "步 2 失败（S23 已预留）"
+    # says the budget is already held when the slot cannot be taken. Reverse
+    # them and taking the slot can fail with nothing reserved, which is not a
+    # compensation path the plan describes.
+    ORDER = [
+        ("reserve_budget", "acquire_permit"),
+        ("reserve_budget", "confirm_authorization"),
+        ("acquire_permit", "confirm_dispatch_permit"),
+        ("confirm_authorization", "issue_fenced_dispatch_grant"),
+        ("confirm_dispatch_permit", "issue_fenced_dispatch_grant"),
+        ("issue_fenced_dispatch_grant", "accrue_and_settle"),
+        ("issue_fenced_dispatch_grant", "release_confirmed_terminal_permit"),
+    ]
+    pos = {}
+    for it in interactions:
+        if it.get("id") != "paid_admission":
+            continue
+        for n, st in enumerate(it.get("steps") or []):
+            if "action" in st:
+                pos.setdefault(st["action"], n)
+    order_ok = order_bad = 0
+    for before, after in ORDER:
+        a, b = pos.get(before), pos.get(after)
+        if a is None or b is None:
+            r.fail(f"paid_admission no longer contains both {before!r} and "
+                   f"{after!r}, so plans/S22:516-527's order cannot be confirmed")
+            order_bad += 1
+        elif a > b:
+            r.fail(f"paid_admission runs {before!r} (step {a + 1}) after "
+                   f"{after!r} (step {b + 1}); plans/S22:516-527 puts it first")
+            order_bad += 1
+        else:
+            order_ok += 1
+
+    act_total = sum(1 for _, _, st in steps if "action" in st)
+    evt_total = sum(1 for _, _, st in steps if "event" in st)
+    # Every clause is passing/total -- see the note in `safety`.
+    r.note = (f"{len(interactions)} interaction(s), {len(steps)} step(s); "
+              f"{refs_ok}/{refs_ok + refs_bad} endpoint(s) name a catalog service, "
+              f"{shape_ok}/{len(steps)} step(s) carry exactly one action-or-event, "
+              f"{evt_ok}/{evt_total} event name(s) declared by a topic, "
+              f"{prod_ok}/{producer_total} event(s) emitted by that topic's producer, "
+              f"{own_ok}/{own_ok + own_bad} action(s) addressed to the declared "
+              f"authority, {order_ok}/{order_ok + order_bad} paid-admission "
+              f"ordering constraint(s) hold"
+              + (f"; {act_total - own_ok - own_bad} of {act_total} action(s) have "
+                 f"no declared owner and are not checked here"
+                 if act_total > own_ok + own_bad else ""))
+    return r
+
+
 # The numbers contracts/README.md quotes in its check summary, pinned to the
 # numbers the checks produce. Each entry is (label as README says it, regex
 # over the README summary paragraph, the check whose Result supplies the truth,
@@ -687,6 +898,10 @@ README_CLAIMS = [
      "archive", r"(\d+)/\d+ match MANIFEST\.md"),
     ("safety provider", r"\*\*(\d+)\*\* 个 provider 都显式",
      "safety", r"(\d+)/\d+ provider\(s\) explicitly disabled"),
+    ("interaction step", r"3 段交互共 (\d+) 步",
+     "interactions", r"(\d+) step\(s\)"),
+    ("interaction endpoint", r"(\d+) 个端点必须都是真实",
+     "interactions", r"(\d+)/(\d+) endpoint\(s\)"),
 ]
 
 
@@ -1392,6 +1607,7 @@ CHECKS = [
     ("maturity", check_maturity, "catalog maturity matches whether services/*/src/ has code"),
     ("archive", check_archive, "docs/design-package/ matches the checksums in its MANIFEST"),
     ("safety", check_safety_switches, "runtime-safety.yaml keeps every production switch off"),
+    ("interactions", check_interactions, "service-interactions.yaml names real services, topics and authorities"),
     ("readme", check_readme_counts, "contracts/README.md's check-summary counts match the checks"),
     ("registry", check_registry, "check-registry.v2.json passes load-time validation, if present"),
 ]

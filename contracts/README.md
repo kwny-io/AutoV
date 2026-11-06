@@ -1483,7 +1483,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-十七项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+十八项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
@@ -1511,11 +1511,20 @@ schema 校验，另 1 个刻意不映射）、`maturity`（catalog 的 `maturity
 `external_publish_enabled: false`、`plans/S27:24` 引它的 `accepted_manifest_authority: S08`。
 此前**没有任何检查读它**——`examples` 只 glob `*.json`，目录里两个 `.yaml` 就这么被漏掉了。
 4 个总开关逐个断言为 `false`、`shared_database_writes` 为 `false`、**8** 个 provider 都显式
-`enabled: false`、5 个 `*_authority` 都指向真实 `service_id`）、`readme`（上面这段里的数必须还是各检查真跑出来的数）、
+`enabled: false`、5 个 `*_authority` 都指向真实 `service_id`）、`interactions`（同目录的
+`service-interactions.yaml` 是仓库里唯一一份「谁调谁」的机器可读表述，此前同样没有任何检查读它。
+3 段交互共 18 步：36 个端点必须都是真实 `service_id`；每步只能有 `action` 或 `event` 之一；
+5 个 event 名必须在 `event-topics.v2.json` 里声明，且该步的 `from` 必须等于这个 topic 的
+`producer`——否则画出来的箭头是发给一个根本发不出它的服务；7 个有单一权威的 action 必须发给
+`runtime-safety.yaml` 声明的那个服务（`reserve_budget`/`confirm_authorization`/`accrue_and_settle`
+→ `S23`，`acquire_permit`/`confirm_dispatch_permit`/`release_confirmed_terminal_permit` → `S22`，
+`request_acceptance_CAS` → `S08`）——发错就是 AGENTS.md 禁止的「绕过 S23/S22 直接付费」；
+`paid_admission` 的 7 条先后约束必须符合 `plans/S22:516-527` 的七步，
+其中 `reserve_budget` 必须先于 `acquire_permit`）、`readme`（上面这段里的数必须还是各检查真跑出来的数）、
 `registry`（`check-registry.v2.json` 存在时才跑）。
 
 `readme` 这一格是在核**这段自身**，以及本文件开头那张「布局」表。一是核开头的
-「十七项检查」这个数等于 `--list` 真列出的条数；二是把本段里 15 个手敲的数字逐条和
+「十八项检查」这个数等于 `--list` 真列出的条数；二是把本段里 15 个手敲的数字逐条和
 对应检查自己算出的数比；三是核布局块里 5 个数（48 服务 / 55 topic / 55 event_type /
 12 MCP 工具 / 21 个 OpenAPI 操作）—这三处不一致都 FAIL 并指出**是哪一个**。
 
@@ -1532,7 +1541,8 @@ topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1330、s
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
 被 glob 一起数进去了。这个数在 README 里挂了很久没人核，因为没人会去数目录里有几个文件。
 
-反向测过十六个方向（上面 15 个数各改 1，再加开头「十七」改成「十」），十六次全部被抓到，
+反向测过十七个方向（上面 15 个数各改 1，再加开头「十八」改成「十」、`safety` 那格的 provider
+数改 1），十七次全部被抓到，
 报的是 `README says 149 for JSON 解析, json says 148` 这种话；还原后 `git diff` 为空。
 布局块另测了六个方向（5 个数各改 1，加上把上面那个真错原样放回去，再加改掉节标题），
 六次全抓到，例如 `README layout block says 48 for topics, the source file has 55`。
@@ -1590,11 +1600,18 @@ outside families[defect_type].chain ∪ {fallback}`）说的是**登记项**，�
 执行过，写「5 条 invariant」会让这一格读起来比实际覆盖得更多。
 
 `examples` 这一格的数一直随加示例往上走，所以比别的格更容易过期：这里曾经写 63、写 66，
-而磁盘上已经是 71 校验 + 1 无 schema = 72 个文件。数法固定为校验器自己打印的那句
+而磁盘上已经是 71 校验 + 1 无 schema = 72 个 `.json`。数法固定为校验器自己打印的那句
 `{ok} example(s) valid, {failing} failing, {skipped} without a schema`——`ok` 是要写进这一格的数，
 `skipped` 是那 1 个 `capacity-plan.json`（`SCHEMA_OF` 里显式映射成 `None`：它是容量测算输入，
 不是事件，没有对应 schema）。`ok + skipped` 必须等于 `contracts/examples/` 下的 `.json` 个数；
 不相等说明有文件没被映射到，校验器会另打 `UNMAPPED` 行并以 1 退出。
+
+这一格原来说「72 个文件在磁盘上」，**说错了**：目录里是 **74** 个文件，多出的 2 个是
+`runtime-safety.yaml` 和 `service-interactions.yaml`。它们不是 JSON-schema 示例，本来就不该
+进这个数，但旧的 note 把 `*.json` 的个数写成「在磁盘上的文件数」，读起来像目录总数，
+把这两个文件悄悄排除在视野外。现在 note 写 `72 json file(s) of 74 on disk` 并把跳过的
+文件名列出来。这两个文件的归属是：`runtime-safety.yaml` 归 `safety` 那格，
+`service-interactions.yaml` 归 `interactions` 那格。
 
 `catalog` 里还有一条**从没执行过**的分支：它会校验 topic 的 `consumers` 是否都是真实
 服务 id，但 `event-topics.v2.json` 的 55 个 topic **没有一个带 `consumers` 键**，那条
