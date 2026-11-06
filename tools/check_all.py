@@ -801,8 +801,9 @@ def check_openapi_refs(name):
 
     YAML is parsed with a line scan rather than a YAML library: this repo has no
     PyYAML dependency and the only thing needed is `$ref: <value>` occurrences.
-    A `$ref` whose value starts with `#` is a local pointer into this same file
-    and is not checked against the filesystem.
+    A `$ref` whose value starts with `#` is a local pointer, and it must name a
+    component this file defines under `components:`; 32 of the 43 point into 3
+    components (Error / Operation / Run).
     """
     r = Result(name)
     path = os.path.join(CONTRACTS, "openapi.v2.yaml")
@@ -814,15 +815,47 @@ def check_openapi_refs(name):
     # most common form in this file, and excluding `#` makes those match nothing.
     refs = re.findall(r"\$ref:\s*['\"]?([^'\"\s]+)", text)
     external = [v for v in refs if not v.startswith("#")]
+    local = [v for v in refs if v.startswith("#/")]
+
     for v in external:
         target = os.path.join(os.path.dirname(path), v.split("#")[0])
         if not os.path.exists(target):
             r.fail(f"$ref -> {v} does not exist")
+
+    # Components are `components: -> schemas: -> <Name>:`; collect the names by
+    # indentation, which is enough for this file's fixed two-level shape.
+    defined = set()
+    in_components = in_schemas = False
+    comp_indent = schema_indent = -1
+    for ln in _utf8(path).split("\n"):
+        s = ln.rstrip()
+        if not s or s.lstrip().startswith("#"):
+            continue
+        k = len(s) - len(s.lstrip())
+        st = s.strip()
+        if st == "components:":
+            in_components, comp_indent = True, k
+            continue
+        if in_components and k <= comp_indent:
+            in_components = False
+        if in_components and st == "schemas:":
+            in_schemas, schema_indent = True, k
+            continue
+        if in_schemas:
+            if k <= schema_indent:
+                in_schemas = False
+            elif k == schema_indent + 2 and st.endswith(":") and not st.startswith("-"):
+                defined.add(st[:-1])
+    for v in local:
+        name = v.rsplit("/", 1)[-1]
+        if name not in defined:
+            r.fail(f"$ref -> {v} names no component under components/schemas")
+
     # An operation with a request body or a 200 response but no schema at all is
     # not this check's business; count only what was resolved, so the note cannot
     # be read as "N operations verified".
     r.note = (f"{len(refs)} $ref occurrence(s), {len(external)} naming a file, "
-              f"{len(refs) - len(external)} local pointer(s)")
+              f"{len(local)} local pointer(s) into {len(defined)} component(s)")
     return r
 
 

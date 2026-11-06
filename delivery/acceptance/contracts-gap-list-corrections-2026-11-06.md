@@ -3856,7 +3856,7 @@ selected/rendered/advanced/planned/recorded 各 1, prompt.compiled 1
 这是**跨字段不变量的写法**，事件 payload 用不着。
 
 它们是**接口的请求/响应体**，主要出处是 `contracts/openapi.v2.yaml`：11 处 `$ref` 里
-**5 处是整个 body**（`schema: $ref:` 直接挂在这个文件上）、**3 处嵌在别的 body 里**
+**5 处是整个 body**（`schema: $ref:` 直接挂在这个文件上）、**6 处嵌在别的 body 里**
 （`context:` / `policy:` / `generation_command:` 这种属性级引用）。对照组是另外 55 个
 payload schema——它们只被 `event-topics` 的 `data_schema_ref` 指到，`openapi.v2.yaml` 一个都不指。
 
@@ -3932,7 +3932,8 @@ YAML 那 11 处逐条：
 | 5 | 上一轮修正后写「被别的 schema 用 `$ref` 挂着」并给出 11 / 6 / 3 / 3 / 2 / 2 / 1 / 0 | **真正 `$ref` 进去的只有 2 个目标文件**：`execution-context` 与 `automation-policy`，其余 6 个一条都没有。那 11/6/3… 是「文件正文里提到该文件名的次数」，多数是 `description` 里写「与 `episode-manifest` 的 `accepted_artifact_ref` 完全相同」这类散文对照 | **数引用边必须解析 JSON 取 `$ref` 的值，不能在原文里搜文件名。** 上一轮的更正已经指出过「两个口径混用」，我却把同一类错误又犯了一次：换成"数引用"这个动作，用的还是字符串搜索 |
 | 6 | 上一轮写「8 个是 REST 请求/响应体的形状」 | **这一条当时判成错误，其实是对的**——见第 8 行。它们确实出现在 HTTP 接口上，只是当时的理由是猜的（从"不挂事件"推"那就是 REST 的"），**结论对而论证不对** | 从"不挂事件"直接推到"那就是 REST 的"。中间那步「它们为什么存在」没有证据，靠名字猜的。**结论对不等于论证成立；也不能因为论证是猜的就把结论一起推翻** |
 | 7 | 上一轮修正后写「真正的 `$ref` 边只有 5 条」 | 按 `$ref` 出现次数是 **6 处**、按（引用文件→目标）去重是 **5 组**、被引目标文件是 **2 个**。`mcp-tools.v2.design.json` 一个文件里引了 `execution-context` 两次，所以「边」和「文件对」对不上 | 数出来的 5 是按文件对去重的结果，写成了「边」。**报引用数时三个口径（出现次数 / 引用文件数 / 目标文件数）必须同时列出**，只报一个就是在等下一次被当成另一个意思 |
-| 8 | 上一轮把第 6 行"改"成「它们不是 REST 请求/响应体，是被内联复用的领域对象」，并据此写「6 个一条 `$ref` 都没有，只被方案散文提到」 | **反了。这 8 个就是接口的请求/响应体**：`contracts/openapi.v2.yaml` 用 `$ref` 指着全部 8 个，共 **11 处**（5 处是整个 body、3 处嵌在别的 body 里）。加上 JSON 里的 6 处，合计 **17 处**，**没有任何一个目标文件是零引用**。原来的说法基本是对的 | **遍历只写了 `contracts/**/*.json`，`.yaml` 从头到尾没进过搜索范围。** 一个 glob 的扩展名决定了整节的结论，而我没检查"我数的那类文件是不是全部文件"。第 6 行本来是对的，被这条错误的穷举推翻了——**"我没找到"不能当成"不存在"，除非先说清找的范围** |
+| 8 | 上一轮把第 6 行"改"成「它们不是 REST 请求/响应体，是被内联复用的领域对象」，并据此写「6 个一条 `$ref` 都没有，只被方案散文提到」 | **反了。这 8 个就是接口的请求/响应体**：`contracts/openapi.v2.yaml` 用 `$ref` 指着全部 8 个，共 **11 处**（5 处是整个 body、6 处嵌在别的 body 里）。加上 JSON 里的 6 处，合计 **17 处**，**没有任何一个目标文件是零引用**。原来的说法基本是对的 | **遍历只写了 `contracts/**/*.json`，`.yaml` 从头到尾没进过搜索范围。** 一个 glob 的扩展名决定了整节的结论，而我没检查"我数的那类文件是不是全部文件"。第 6 行本来是对的，被这条错误的穷举推翻了——**"我没找到"不能当成"不存在"，除非先说清找的范围** |
+| 9 | 第 8 行写「5 处是整个 body、**3 处**嵌在别的 body 里」，`contracts/README.md` 缺口 7 同样写 3 | 嵌套的是 **6 处**，不是 3。11 = 5 整个 body + 6 嵌套（`context:` / `policy:` / `items:` / `candidate_manifest:` / `generation_command:` ×2） | 写完 5（whole）之后，脑中拿"8 个文件"减去"5 个 whole"补了个 3。**这一步减法混了两个口径**：11 是 `$ref` 处数、5 是其中整块的处数，差额是 6 处嵌套，不是"剩下几个文件"。**并列的计数要一次数完，不能推** |
 
 ### 补记：让 `payloads` 的绿说出这个数
 
@@ -3980,23 +3981,31 @@ payload topic  -> True
 现在有 `check_openapi_refs`（`tools/check_all.py`，注册名 `openapi`）：
 
 ```
-ok  openapi    43 $ref occurrence(s), 11 naming a file, 32 local pointer(s)
+ok  openapi    43 $ref occurrence(s), 11 naming a file, 32 local pointer(s) into 3 component(s)
 ```
 
 - 43 处 `$ref` 里 11 处是文件名、32 处是 `#/components/...` 本地指针
-- 只核文件名那 11 处：目标必须 `os.path.exists`
-- 本地指针不核文件系统（它们指向本文件自己的 `components`）
+- 文件名那 11 处：目标必须 `os.path.exists`
+- 本地指针那 32 处：名字必须出现在本文件 `components/schemas` 下（只有 `Error` 21 处、
+  `Operation` 10 处、`Run` 1 处）
 
 **第一版写错了，探针当场抓住。** 正则原本是 `[^'\"\s#]+`——把 `#` 排除在字符类外，
 而 `$ref: '#/components/...'` 是这个文件里最常见的形式，结果 43 处只认出 11 处，
 note 报「0 local pointer(s)」。改成 `[^'\"\s]+` 后才是 32。
 
-探针（改一条 `$ref` → 跑 → 还原）：
+**第二版也不够。** 认出 32 条之后，第一版把它们当成"本地指针，不核文件系统"就放过了。
+可是本地指针会失效——把 `components/schemas/Operation` 改名，10 处引用全部指向空气，
+而检查照样绿。现在两条分支都核，各自探过：
 
-| 状态 | 输出 |
+| 探针 | 输出 |
 |---|---|
 | 把 `automation-policy` 改成 `zz-does-not-exist` | `FAIL openapi 1 problem(s)` / `$ref -> zz-does-not-exist.v2.schema.json does not exist`，exit 1 |
-| 还原 | `ok openapi 43 $ref occurrence(s), 11 naming a file, 32 local pointer(s)`，byte-identical |
+| 把一条本地指针改成 `NotAComponent` | `FAIL openapi 1 problem(s)` / `$ref -> #/components/schemas/NotAComponent names no component under components/schemas`，exit 1 |
+| 把组件定义 `Operation:` 改名，指针不动 | `FAIL openapi 10 problem(s)`——10 条引用逐条报出，exit 1 |
+| 全部还原 | `ok openapi 43 … 32 local pointer(s) into 3 component(s)`，byte-identical |
+
+第三个探针是要紧的：一个组件定义被改名会同时打断 10 处引用，失败数不是 1 而是 10，
+说明它逐条核而不是只看第一个。
 
 同时 `README_CLAIMS` 加了第 10 条（`openapi file ref`），README 开头的「十一项检查」
 改「十二项检查」，检查段落里 10 个手敲数字里多一个 11。

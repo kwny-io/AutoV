@@ -1486,8 +1486,8 @@ python tools/check_all.py --only links,examples
 十二项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
-`openapi`（`openapi.v2.yaml` 里 43 处 `$ref` 中的 11 处指向真实文件，全部可达；另 32 处是
-`#/components/...` 本地指针，不核文件系统）、`checkids`（四份 QC 方案里 99 个
+`openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
+`#/components/...` 本地指针，必须命中本文件 `components/schemas` 下定义的 3 个组件）、`checkids`（四份 QC 方案里 99 个
 `check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1329 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
 `docs/02` 镜像的五列与 catalog 逐字段一致）、`families`（动作族文件自己声明的
@@ -1739,7 +1739,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `episode-manifest` / `execution-context` / `generation-command` / `memory-claim`——
    带 `revision` / `content_hash` / 稳定 id 这类字段，是可以单独读写的持久对象，
    所以会出现在 HTTP 接口上。**8 个全部被 `$ref` 到，没有一个是游离的**：
-   `openapi.v2.yaml` 11 处（其中 5 处是整个 body、3 处嵌在别的 body 里）、
+   `openapi.v2.yaml` 11 处（其中 5 处是整个 body、6 处嵌在别的 body 里）、
    `contracts/**/*.json` 6 处（`execution-context` 5、`automation-policy` 1）。
    其中 6 个的唯一引用入口就是那 11 条 YAML。
 
