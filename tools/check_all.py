@@ -173,10 +173,38 @@ def check_catalog(name):
         r.fail(f"duplicate service_id: {dupes}")
 
     # docs/02 is the human-readable mirror of the catalog and must not drift.
+    # The old test was `if i not in doc02` over the whole file text, which an id
+    # passes if it appears anywhere at all -- in a sentence, in an example, in a
+    # stray mention -- so a row could be deleted or its name/domain/owner/team
+    # edited and the check stayed green. Parse the table and compare the columns
+    # it mirrors.
     doc02 = _utf8(os.path.join(ROOT, "docs", "02-service-catalog.md"))
-    for i in ids:
-        if i not in doc02:
-            r.fail(f"{i} in catalog but not in docs/02")
+    row = re.compile(
+        r"^\|\s*(S\d{2})\s*\|\s*\[([^\]]*)\]\(([^)]*)\)\s*\|\s*([^|]*?)\s*\|"
+        r"\s*`([^`]*)`\s*\|\s*([^|]*?)\s*\|\s*$", re.M)
+    mirrored = {}
+    for m in row.finditer(doc02):
+        mirrored[m.group(1)] = dict(name=m.group(2), link=m.group(3),
+                                    domain=m.group(4), schema=m.group(5),
+                                    team=m.group(6))
+    for s in cat:
+        sid = s["service_id"]
+        if sid not in mirrored:
+            r.fail(f"{sid} in catalog but has no row in docs/02")
+            continue
+        got = mirrored[sid]
+        for field, want, have in (
+            ("name", s["name"], got["name"]),
+            ("link", f"../services/{s['slug']}/service.md", got["link"]),
+            ("domain", s["domain"], got["domain"]),
+            ("schema_owner", s["schema_owner"], got["schema"]),
+            ("runtime_owner_team", s["runtime_owner_team"], got["team"]),
+        ):
+            if want != have:
+                r.fail(f"docs/02 {sid} {field}: catalog says {want!r}, "
+                       f"docs/02 says {have!r}")
+    for sid in sorted(set(mirrored) - set(ids)):
+        r.fail(f"docs/02 has a row for {sid}, which is not a catalog service_id")
 
     topics = json.loads(_utf8(os.path.join(CONTRACTS, "event-topics.v2.json")))["topics"]
     known = set(ids)

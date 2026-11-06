@@ -3194,3 +3194,108 @@ no filters         69
 ```
 
 全量：10 项通过、1 项 skip（`registry`），exit 0。
+
+## 16.24 `docs/02` 的镜像只核了「ID 出现过」，五行内容全没核
+
+**问题。** `check_catalog` 里管 docs/02 的那段原本是：
+
+```python
+    # docs/02 is the human-readable mirror of the catalog and must not drift.
+    doc02 = _utf8(os.path.join(ROOT, "docs", "02-service-catalog.md"))
+    for i in ids:
+        if i not in doc02:
+            r.fail(f"{i} in catalog but not in docs/02")
+```
+
+`i not in doc02` 是在**整个文件文本**里找子串。于是只要 `S01` 在文件任何地方出现过——正文里一句提及、一个示例、一处顺带的名字——这一项就通过。真实后果是：删掉 `S01` 的一整行表格、或者把它的名称/域/schema/团队改成任何别的东西，检查依然全绿。注释写的是「must not drift」，代码做的是「字符串里出现过」。
+
+docs/02 镜像的是五行：
+
+```
+| ID | 服务 | 域 | 数据所有者schema | 负责团队 |
+|---|---|---|---|---|
+| S01 | [租户与访问](../services/tenant-access/service.md) | enterprise | `tenant_access` | platform |
+```
+
+对应 catalog 的 `name`、`slug`（拼进链接）、`domain`、`schema_owner`、`runtime_owner_team`。
+
+**现状测量（改成按行比对之前）。** 48 个服务、48 行，双向无缺漏，五行内容 0 处不一致：
+
+```
+catalog services: 48   docs/02 rows: 48
+
+in catalog but no docs/02 row: []
+docs/02 rows with no catalog entry: []
+
+field disagreements: 0
+```
+
+也就是说**今天这份镜像是对的**；这项改动不让任何现存问题暴露出来，它只是让「以后改坏了会被发现」成立。
+
+**改后的做法。** 解析表格行，逐列比对，并双向查缺：
+
+```python
+    row = re.compile(
+        r"^\|\s*(S\d{2})\s*\|\s*\[([^\]]*)\]\(([^)]*)\)\s*\|\s*([^|]*?)\s*\|"
+        r"\s*`([^`]*)`\s*\|\s*([^|]*?)\s*\|\s*$", re.M)
+    mirrored = {}
+    for m in row.finditer(doc02):
+        mirrored[m.group(1)] = dict(name=m.group(2), link=m.group(3),
+                                    domain=m.group(4), schema=m.group(5),
+                                    team=m.group(6))
+    for s in cat:
+        sid = s["service_id"]
+        if sid not in mirrored:
+            r.fail(f"{sid} in catalog but has no row in docs/02")
+            continue
+        got = mirrored[sid]
+        for field, want, have in (
+            ("name", s["name"], got["name"]),
+            ("link", f"../services/{s['slug']}/service.md", got["link"]),
+            ("domain", s["domain"], got["domain"]),
+            ("schema_owner", s["schema_owner"], got["schema"]),
+            ("runtime_owner_team", s["runtime_owner_team"], got["team"]),
+        ):
+            if want != have:
+                r.fail(f"docs/02 {sid} {field}: catalog says {want!r}, "
+                       f"docs/02 says {have!r}")
+    for sid in sorted(set(mirrored) - set(ids)):
+        r.fail(f"docs/02 has a row for {sid}, which is not a catalog service_id")
+```
+
+行尾的 `\s*\|\s*$` 是有意的：它要求这一行**恰好是这五列**。多一列少一列都匹配不上，于是表格结构本身被改坏时，那一行会以「no row in docs/02」的形式失败，而不是被宽松地匹配上、然后悄悄少比几列。
+
+**负向测试（六个方向，改字符串副本，不碰真实文件）。**
+
+```
+--- 0 baseline
+    failures: 0
+--- 1 docs/02 renames S01
+    failures: 1
+      docs/02 S01 name: catalog says '租户与访问', docs/02 says '租户与权限'
+--- 2 docs/02 changes S01 domain
+    failures: 1
+      docs/02 S01 domain: catalog says 'enterprise', docs/02 says 'creation'
+--- 3 docs/02 changes S01 team
+    failures: 1
+      docs/02 S01 runtime_owner_team: catalog says 'platform', docs/02 says 'workflow'
+--- 4 docs/02 drops the S01 row
+    failures: 1
+      S01 in catalog but has no row in docs/02
+--- 5 docs/02 invents an S99 row
+    failures: 1
+      docs/02 has a row for S99, which is not a catalog service_id
+--- 6 docs/02 points S01 at the wrong slug
+    failures: 1
+      docs/02 S01 link: catalog says '../services/tenant-access/service.md', docs/02 says '../services/tenant-access-v2/service.md'
+```
+
+六个方向各报且只报该报的一条。第 4 与第 5 是一对：前者查 catalog→docs/02 缺行，后者查 docs/02→catalog 多行，两侧都堵住。
+
+**更正表。**
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 代码注释「docs/02 is the human-readable mirror … must not drift」，实现为 `if i not in doc02` | 按表格行解析后逐列比对五列 | **注释承诺的和代码做的不是一件事。**子串检查在整份文件里找 ID，任何一处提及都算通过，「不漂移」实际上只保证「ID 这个字符串还在文件里」。这类差距不会报错，只会让人以为已经覆盖了 |
+
+全量：10 项通过、1 项 skip（`registry`），exit 0。
