@@ -179,9 +179,35 @@ CREATE TABLE continuity.episode_baseline (
 ### 1.7 基础设施表
 
 ```sql
-continuity.idempotency_key (tenant_id, command_id, request_hash, response_body, ...);
-continuity.outbox_event    (tenant_id, event_id, aggregate_id, aggregate_sequence, payload, ...);
-continuity.inbox_consume   (tenant_id, consumer, event_id, applied_at, ...);
+CREATE TABLE continuity.idempotency_key (
+  tenant_id       text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type    text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code   integer, response_body jsonb,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at      timestamptz NOT NULL DEFAULT now() + interval '30 days',
+  PRIMARY KEY (tenant_id, command_id)
+);  -- 同键同 hash 返回缓存；同键不同 hash → 409
+
+CREATE TABLE continuity.outbox_event (
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id          text NOT NULL,
+  aggregate_id       text NOT NULL,              -- check_run_id
+  aggregate_sequence bigint NOT NULL,
+  event_type         text NOT NULL,
+  partition_key      text NOT NULL,              -- tenant_id || ':' || aggregate_id
+  payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  published_at       timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON continuity.outbox_event (id) WHERE published_at IS NULL;
+
+CREATE TABLE continuity.inbox_consume (
+  consumer    text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
 
 ---

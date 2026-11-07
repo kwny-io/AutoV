@@ -317,19 +317,31 @@ CREATE TABLE story_memory.entity_alias (
 ### 1.10 基础设施表
 
 ```sql
-story_memory.idempotency_key (
-  tenant_id, command_id, request_hash bytea, response_body jsonb,
-  response_status int, created_at, PRIMARY KEY (tenant_id, command_id)
+CREATE TABLE story_memory.idempotency_key (
+  tenant_id       text NOT NULL, command_id text NOT NULL, request_hash bytea NOT NULL,
+  response_body   jsonb, response_status int, created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
 );  -- 同键同 hash 返回缓存；同键不同 hash → 409
 
-story_memory.outbox_event (
-  tenant_id, event_id, aggregate_id, aggregate_sequence, event_type,
-  payload jsonb, created_at, published_at,
-  PRIMARY KEY (tenant_id, event_id)
+CREATE TABLE story_memory.outbox_event (
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id          text NOT NULL,
+  aggregate_id       text NOT NULL,              -- series_id || ':' || branch_id
+  aggregate_sequence bigint NOT NULL,
+  event_type         text NOT NULL,
+  partition_key      text NOT NULL,              -- tenant_id || ':' || aggregate_id
+  payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  published_at       timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
 );
+CREATE INDEX outbox_unpublished_idx ON story_memory.outbox_event (id) WHERE published_at IS NULL;
 
-story_memory.inbox_consume (
-  tenant_id, consumer text, event_id, applied_at, PRIMARY KEY (tenant_id, consumer, event_id)
+CREATE TABLE story_memory.inbox_consume (
+  tenant_id  text NOT NULL, consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, consumer, event_id)
 );
 ```
 
