@@ -5277,7 +5277,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 把 `plans/S21-orchestration.md` 的 `docs/01 §3` 改成 `§9`（正确引用改错被抓）、
 删掉 known 条目（要求补回）。
 
-**定稿自查又抓到十五处。前十二处是我这一轮自己写下的；第十三条不同——错在提交树里早就在，是我这一轮改对了报告却漏改了源文件；第十四、十五条同样早就存在，都是照着旧状态或换个口径写的描述没跟着走：**
+**定稿自查又抓到十六处。前十二处是我这一轮自己写下的；第十三条不同——错在提交树里早就在，是我这一轮改对了报告却漏改了源文件；第十四、十五、十六条同样早就存在，都是照着旧状态或换个口径写的描述没跟着走：**
 
 | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|
@@ -5296,6 +5296,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 | `contracts/README.md:1569`（**提交树里早就错，不是本轮写下**） | 「语料里另有 **9 处**把它写全成 `docs/07` 的 `§1` + 步骤 5」 | **7 处**。精确子串在 `plans/` 下 7 处（`S29:1052`、`S30` 5/494/1206、`S31` 5/140/1327）；另 2 处是 `contracts/README.md` 自己与更正报告在**描述**这个写法 | 本轮我在报告里把「9 处」改成了 7 并写明「这一格原写「另有 9 处」…9 是**全仓**子串数」，**却只改了报告，没回头改 README 本体**——`check_all.py` 的 docstring 早已写成 `7 in plans/; 2 more elsewhere describe the form`，三份文件里两份对、一份错，错的恰是没有检查 pin 的那份。**改一处描述性计数时，要搜同一句话还有几份副本** |
 | `check_all.py` 的 `check_plan_topics` docstring | 「The **three** such rows in S47 are recorded in its own §11 (C47-12/13/14)」，正文里写的也是「The three such rows」 | note 里那栏是 **4** 格，第四格是 `plans/S29-image-production.md:800` 的 `image.job.state-changed` | docstring 是照着 S47 那次修复（`783ef51`）写的，当时确实只有 S47 三处；后来 S29 的 `drama.image-production.v2` 单元格也落进同一个分支，没人回头改这句话。**总数（note 报 4）与列举（docstring 说 3）又没对上——和第 12 行同一族**。已补：第四格是 S29 自己的 §12 C2，那里明写「需要至少三个额外事件」 |
 | `check_all.py` 的 `check_payload_refs` docstring | 「reached … from **sibling schemas** (6 `$ref`)」 | 那 6 条是 `contracts/**/*.json` 里全部文件型 `$ref` 的总数，**只有 3 条来自兄弟 schema**（`admission-record` / `enterprise-change-plan` / `generation-command` → `execution-context`）；另 3 条来自 `contracts/mcp-tools.v2.design.json`（`automation-policy` 1、`execution-context` 2），而设计文件不是 schema | `de0eda7` 那次的 commit message 是「$ref 计数拆成 JSON (6) 与 YAML (11)，共 17」，写 docstring 时把「JSON 6」直接读成了「兄弟 schema 6」。**两个口径差一层 glob：`contracts/**/*.json` 收了 `*.design.json`。** 同一个 docstring 里「11 / 5 个整 body」回表复测是对的。`contracts/README.md:1835` 的 `execution-context` 5、`automation-policy` 1 也是对的 |
+| `check_all.py` 的 `check_examples` note | `contracts/examples/  [7 schema file(s) never loaded by the validator: 5 in domain-v1/, 2 in quality/]` | 数字对（7 = 5 + 2，回表复测过），**但目录写错了根**：那 7 个在 `contracts/domain-v1/` 与 `contracts/quality/`，是 `contracts/examples/` 的**兄弟**，不是它的子目录。note 现在把前缀紧贴在 `contracts/examples/` 后面，读起来像 `contracts/examples/domain-v1/`——那个路径不存在 | `unloaded` 的 glob 是 `contracts/**/*.schema.json`，而 `r.note` 一开头就设为 `"contracts/examples/"`，两段拼在一条线上。**同一条 note 里前半截和后半截数的是不同的根**，中间没写分界。已改成 `counting contracts/** not contracts/examples/:` + `contracts/domain-v1/` 全路径。**第一版修法在 `check_examples` 里加了 3 行注释，把 `check_payload_refs` 从 1383 顶到 1386，`citerefs` 立刻报 6 处失效引用（README 2 + 报告 4）——修好一个描述，反倒弄坏了六处线号。最终改成等长 3 行、线号不动** |
 
 其中 `482/481` 那一行要更正一次判断：**README 里的 `481/481` 一直是对的**，我看到 482 是因为停掉一个
 还在跑的变异脚本时它恰好把这一行改成了 `482/481`，而检查读到了那个中间态。用 `git show HEAD` 核过，

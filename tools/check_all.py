@@ -483,9 +483,9 @@ def check_examples(name):
         for rel in unloaded:
             d = os.path.dirname(rel).replace(os.sep, "/") or "."
             by_dir[d] = by_dir.get(d, 0) + 1
-        summary = ", ".join(f"{n} in {d}/" for d, n in sorted(by_dir.items()))
-        r.note += (f"  [{len(unloaded)} schema file(s) never loaded by the validator: "
-                   f"{summary}]")
+        summary = ", ".join(f"{n} in contracts/{d}/" for d, n in sorted(by_dir.items()))
+        r.note += (f"  [{len(unloaded)} schema file(s) never loaded by the validator, "
+                   f"counting contracts/** not contracts/examples/: {summary}]")
 
     # contracts/README.md quotes a count of examples in its nine-check summary,
     # and that count went 57 -> 63 -> 66 while the directory kept growing to 72,
