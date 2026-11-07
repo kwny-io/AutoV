@@ -1485,8 +1485,10 @@ def check_plan_topics(name):
     by shape, rather than pretending to cover it: most of it is not event names at
     all (file names such as `service.yaml`, versioned document names such as
     `shot-spec.v1`), and nothing in this repo declares permission action names, so
-    the remainder cannot be separated either way. The three such rows in S47 are
-    recorded in its own §11 (C47-12/13/14).
+    Four pairing cells reach this branch, and each is already reported as a gap by the plan that wrote it: the
+    three in S47 are its own §11 (C47-12/13/14), and `S29:800`'s
+    `image.job.state-changed` -- `S29` declares only `production.image.ready` --
+    is its §12 C2, which says outright that three more events are needed.
 
     Scope is `plans/` alone. `delivery/` holds the corrections reports, which have
     to be able to quote a wrong name verbatim to say what was wrong.
