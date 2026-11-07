@@ -111,7 +111,7 @@ candidates = action_family[defect.defect_type]
 | `contracts/quality/action-families.v2.json` | 7.6 KB | 14 值闭集 → 动作族；每族 `chain` / `fallback` / `forbidden[]`（含理由）；`keyframe_edit` 的 ≤6 帧前置条件；三步交集公式；5 条不变量 |
 | `contracts/quality/qc-report.v2.schema.json` | 24 KB | QCReport v2 完整 payload，**从 `plans/S35` §2.3 程序化提取**而非手抄，避免转录漂移 |
 | `contracts/quality/check-registry.v2.schema.json` | 8.3 KB | 登记项形状；`check_id` 命名模式；两条 `allOf` 条件（`never_auto_repair` → 必须有理由；窗口类 → 必须有 `window_max_frames`）；`x-cross-checks` 列出 schema 表达不了的 7 条规则 |
-| `contracts/quality/validate_registry.py` | 5.3 KB | 跨文件约束的参考实现。退出码 0=可加载 / 1=拒绝 / 2=环境问题 |
+| `contracts/quality/validate_registry.py` | 7.0 KB | 跨文件约束的参考实现。退出码 0=可加载 / 1=拒绝 / 2=环境问题 |
 
 **三份枚举已交叉验证一致**（14 个 `defect_type`、12 个动作），且 `human_review` 不出现在任何
 `chain` 里。校验器已用一条违规登记项实测：把 `SUB.TIMING.OVERLAP` 的 `default_action` 写成
@@ -368,6 +368,7 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
   | 4 | §7 第 10 条（**当轮写下、当轮改正**） | 引文「`docs/03:53` 确有…、`docs/03:55` 确有验收目标」 | `docs/03:23`（第 53 行是空行）、`docs/03:54`（第 55 行是空行） | 我写完这一条时**没有回表**，凭「刚才看的时候大概在这一带」填了行号，而那两个数恰好一个指向空行、一个指向空行。**同一错误的第六次**：契约缺口更正报告（`contracts-gap-list-corrections-2026-11-06.md`）的 §11（S14 的 41 处指错）、§12（S11 的 94 处里 8 处指错）、§16.11（改 README 时写成过期行号）、以及 `docrefs` 失败信息少报 1 行那 30 处 —— 全是同一个动作缺失。行号必须 `grep -n` 现查，不能从先前 `sed -n` 的窗口里推 |
   | 5 | §7 第 6 条「清单已交」 | 「commit `717e7c1`，分支 `claude/magical-mendeleev-14bc20`，**未合入 main、未推送**」+「要看这份清单，得 checkout 那个分支」 | 首版 `717e7c1` 在分支 `claude/check-registry-data`（**不是** `magical-mendeleev-14bc20`），且已随 `4254bdb` 收进本地 `main`；main 上是 **936 行**，首版 461 行 | 两处都是陈述过期：把提交所在分支写成了产物所有者的分支（两个名字都好记，就写混了），而「未合入」在 `4254bdb` 之后不再成立。**核对方式**是 `git merge-base --is-ancestor 4254bdb main`（YES）+ `git ls-tree claude/magical-mendeleev-14bc20 -- <path>`（空，文件不在那分支）+ `git show <ref>:<path> \| wc -l` 三个数。和第 3 行同族：**「当时为真」写成「现在为真」** |
   | 6 | §6.2 末条的范围标签（2026-11-08 第二轮复核） | 「S02–S18 / S35–S40 这 16 篇」 | 「S02 / S10–S18 / S35–S40 这 16 篇」 | **总数 16 是对的，范围写错**：把 S02–S18 整段当成了一个连续区间，那是 **23** 篇，其中 S03–S09 这 7 篇一个 `E\<NN\>-` 编号都没有（逐篇 `grep -cE 'E[0-9]{2}-[A-Za-z0-9]'` 全为 0）。16 = 1（S02）+ 9（S10–S18）+ 6（S35–S40）。错因是**用「跨度」代替「集合」**——和 §6.2 记的「用行数代替合规数」是同一族：都在拿一个方便得到的近似量顶替真正要数的那个 |
+  | 7 | §2.4「落地的四个文件」表的 `validate_registry.py` 大小（2026-11-08 第三轮复核） | **5.3 KB** | **7.0 KB**（7024 字节，十进制 KB） | 该文件在报告写完之后又改过两次：`2534923`（jsonschema 缺失时 fail loud）→ 5401 字节，`ce90429`（`keyframe_edit` 的 ≤6 帧前置条件进加载期校验）→ 7024 字节。同表另外三个文件自 `991ccee` 起一次未改，所以只有这一格过期。和第 3、5 行同族：**「当时为真」写成「现在为真」**。核对方式是 `git log -- contracts/quality/validate_registry.py` 逐个 `git show <ref>:<path> \| wc -c`，不是 `stat` 一次就填 |
 
   第 1、2 两处都已用 `§` 正则重新逐条核对：13 个 `plans/` 章节号 + 契约指向的两份 `docs` 章节全部命中真实标题，**没有一条是悬空的**——错的只是计数，不是引用。第 3 处不是计数错而是**结论过期**，核对方式是回表跑 `event-topics.v2.json` 的 55 条 `data_schema_ref` 并逐个 `json.load`，不是数文档。
 
