@@ -387,7 +387,14 @@ schema 的 `check_id` pattern 也强制三段：
 | 按朴素解析取的格 | 实际内容 | 被误判为 |
 |---|---|---|
 | `c[5]`（动作列） | `> 1 帧` | 第 3 处枚举外动作 |
-| `c[6]`（复检列） | `regenerate_video` | 第 11 处枚举外复检范围 |
+| `c[6]`（复检列） | `实测时长` | 第 11 处枚举外复检范围 |
+
+（这两格的值以朴素 `split('|')` 后按位置取的第 6、第 7 个元素为准。整行 9 格是
+`0 ID / 1 technical / 2 blocker / 3 "\" / 4 "actual − ShotSpec.duration\" / 5 "> 1 帧" /
+6 实测时长 / 7 "regenerate_video, temporal_edit" / 8 technical` —— 复检列实际落到的
+`c[6]` 是 `实测时长`，不是 `regenerate_video`（那是 `c[7]`）。原写 `regenerate_video`
+把右移一格的落点又往前挪了一格；两个值都不在 `recheck_scope` 枚举内，所以 3/11 与 2/10 的
+结论不受影响，错的是这张示意表的最后一格。见 §5.1 更正记录。）
 
 用 `(?<!\\)\|` 切分后这一行仍是 7 列，正确结果是：
 
@@ -507,6 +514,7 @@ pat = re.compile(r'^\|\s*`(TECH|VIS|AUD|SUB)\.[A-Z0-9_.]+`\s*\|')
 | 8 | §9.3 末段「正文完全没提」的族清单 | 列了 `costume`/`prop`/`anatomy`/`hands`/`action_adherence`/`camera_adherence`，末尾接「之外的几个」 | 恰好 **6 个族**，没有"之外的"；且 `camera_adherence` 不能出现在这里 | 这句话把 `camera_adherence` 同时写进了两个互斥集合——上一段刚说它"可以按族拍定（3 条）"，末段又说它"正文完全没提"。它确实没提，但"没提"不影响它能否拍定（候选值 `shot` 无争议）。真正既没提、又要逐族拍的 6 个族是 `anatomy`/`hands`/`costume`/`prop`/`action_adherence`/`camera_adherence`，"之外的几个"是一句没算过的收尾。已删掉该短语 |
 | 9 | §9.3 表下「65 的逐族加总」 | 「identity 3 + anatomy 2 + hands 3 + costume 3 + prop 2 + continuity 8 + action_adherence 3 + temporal 7 + voice 10 + technical 23 = 65」 | 这十项相加是 **64**；第 65 条是 [S36:236](../../plans/S36-semantic-qc.md) `VIS.SAFE_AREA.TEXT_OVERLAP`（`defect_type=subtitle`，但查画面） | 第 7 处修完后按承诺"逐行验"，验出加总比被加数少 1。写加总时按"其余 10 个族"取族，而 S36:236 虽是 `subtitle` 类型却不在 S38 那 24 条里，被两边都漏掉——**它正好是 §9.1 #10 行末自己点名的那一条**。已在加总里显式列出。同一处还补完了第 8 处没做完的修改：末段族清单里的 `camera_adherence` 当时只删了收尾短语、没从清单里删掉，与"32 条含 camera_adherence"仍冲突 |
 | 10 | `contracts/README.md` 缺口表第 4 行 | 「S35 中 **3 处**动作 / 11 处复检；实为 **1 处** / 10 处」 | **2 处**动作 / 10 处复检 | 转义管道符那个 bug 修对了（3→2），但修的时候两格用了不同口径：复检格把 `—` 算进 10 处，动作格只数了 `remux→transcode`。`TECH.META.MISSING`（[S35:783](../../plans/S35-technical-qc.md)）的 `—` 也是枚举外的值，必须计。口径写死为：**非枚举值一律计数，`—` 也是非枚举值**，两格同进同出。§5.1 正文里的 2 / 10 一直是对的，只有 README 那格错 |
+| 11 | §5.1 示意表「`c[6]`（复检列）」 | 实际内容 `regenerate_video` | `实测时长`（`regenerate_video` 是 `c[7]`） | 2026-11-08 自查。写这张示意表时是按"右移一格"推的：判定列含转义管道的 `\|actual − ShotSpec.duration\|` 多切出 2 格，后续每格右移 2 位而不是 1 位，`c[6]` 落到 `实测时长` 而不是 `regenerate_video`。**这段文字本身就是"用推理代替实测"的产物**——它的上一行正是责备别人没回到源表，自己却没把那行按位置打出来。3/11 与 2/10 两个结论不受影响（两个候选值都在枚举外），但示意格错了。已把整行 9 格逐格列出 |
 
 **复核确认为正确、未改动的数字**（同样逐条复算过，作为对照组）：
 
