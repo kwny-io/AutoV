@@ -25,7 +25,7 @@ C45-7 的脱敏规则表也已落（§2.6，`status: proposal`）。
 | 服务 ID 引用有效性 | 全量正则扫描对比 catalog 48 项 | **0 越界引用** |
 | 幂等键格式 | `tenant_id + command_id + request_hash` | **47/48 一致**；S27 的幂等入口不同（`dispatch_id` + `stable_client_key` 双唯一约束，见 §6.2），不算偏离 |
 | `execution_fence` / `node_epoch` 混用 | 逐文件扫描误用句式 | **0 处混用** |
-| defect type 闭集 | 99 个 check 的 `defect_type` 对 14 值闭集 | **99/99 合规**（重数：TECH 23 / VIS 32 / AUD 20 / SUB 24，见 §7 第 6 条） |
+| defect type 闭集 | 99 个 check 的 `defect_type` 对 `check-registry.v2.schema.json` 的 14 值闭集 | **97/99 合规**；S36:`VIS.KNOWLEDGE.SCOPE_RENDER` 与 S37:`AUD.TEXT.SCRIPT_CONFLICT` 的 `type` 是 `—`（两行都自述"不存在"/"不产生 defect"，**不登记为 check**，见 [缺字段清单](check-registry-missing-fields-2026-11-05.md) §11.5）。闭集里的 `audio_mix` 一次未现，13 个非空 type 覆盖 97 条。原写 99/99，见 §6.2 |
 | `check_id` 命名规约 | 99 条首格对 `S35:157` 的 `<LAYER>.<GROUP>.<NAME>` | **96/99 合规**；S35 的 `TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME` 只有两段，见 §7 第 7 条 |
 | 动作族一致性 | S35 §2.2.1 的 14 行 `chain` + `fallback` 逐格比对 `action-families.v2.json` | **14/14 一致**；`lipsync` 是单动作链（`redo_lipsync`，无箭头），需单独比对 |
 | QCReport 规范唯一性 | 检查是否被复述 | **唯一在 S35 §2**，S36/S37/S38 只引用 |
@@ -34,7 +34,7 @@ C45-7 的脱敏规则表也已落（§2.6，`status: proposal`）。
 | outbox DDL 完整性 | 44 个内联 `CREATE TABLE ... outbox` 逐个解析列名 | **44/44 六列齐全**（`tenant_id` / `partition_key` / `aggregate_id` / `aggregate_seq` / `headers` / `published_at`） |
 | 跨库写入 / 跨库 JOIN | 正负向扫描 | **0 处**（命中 2 处均为"禁止跨库 JOIN"的表述） |
 | 发布事件名 ↔ `event-topics.v2.json` | 48 份的"发布"行逐个比对目录的 55 个 `event_type` | **48/48 一致**（2026-11-05 补登后重跑）；反向检查也通过：catalog 声明的 55 条与目录 55 条双向无差 |
-| 脱敏契约 ↔ 消费点 | 三份方案引用的 `redaction-policy.v2` 字段路径逐个解析 | **全部存在**；`applies_to[].rule_ref` 引的 9 个章节号（S45 ×4 / S46 ×5 / S47 ×2）逐条对到原文 |
+| 脱敏契约 ↔ 消费点 | 三份方案引用的 `redaction-policy.v2` 字段路径逐个解析 | **全部存在**；`applies_to[].rule_ref` 引的 **13 个章节号（S45 ×5 / S46 ×5 / S47 ×3）逐条对到原文**，外加 `docs/04 §4`、`docs/14 §1` 两处也都在 |
 | E01–E40 覆盖 | 全量扫描 | **40/40** 被引用 |
 
 ---
@@ -354,6 +354,15 @@ S38 的输入链确实不需要媒体字节（`S37 时间码 + S06 对白 + S15 
 - **本报告「3 处动作在枚举外、11 处复检范围」也是错的**（2026-11-05 复核）：实际是 **1 处**（`TECH.AUDIO.OFFSET` 的 `remux→transcode`）和 **10 处**。原因是 `plans/S35:765` 的判定列写的是 `|actual − ShotSpec.duration| > 1 帧` —— 绝对值符号是**裸管道符**，朴素 `split('|')` 把这一行切成 9 列，把动作列和复检列整体右移一格，于是相邻行被误判成"枚举外"。必须用 `(?<!\\|)\\|` 切分（[缺字段清单](check-registry-missing-fields-2026-11-05.md) §8 记了这条）。**这个错和上面那条 74 是同一类**：不是没数，是数错了没复核，而两次都是子会话的独立复算把它抓出来的。
 - **3 条 `check_id` 违反自己文件里定的命名规约**：`plans/S35-technical-qc.md:773-775` 的 `TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME` 只有两段，而同文件 157 行的规约是 `<LAYER>.<GROUP>.<NAME>`。这类缺陷不会出现在链接检查里，也不会出现在"check 总数"里 —— **它恰恰是让计数变成 20 而不是 23 的原因**，因为按三段式正则数就漏掉这 3 行。已记入 §7 第 7 条，待 owner 确认改名。
 - **派活时我自己差点犯 AGENTS.md 禁的那类错**：第一版任务单让子会话「没有出处就按语义给保守值」补 `window_scope`，直接撞上 `contracts/README.md:84` 的「不从散文推断这些值」。已撤回并改成产出「缺字段清单 + `NEEDS_OWNER` 标注」。**这条值得记下来**：`check-registry.v2.json` 的诱惑就是"看起来很接近完成"，补上就绿色了。但 `window_scope` 猜错会让 S39 把 20 帧的连续窗口交给逐帧修补 —— 一个绿色比一片诚实更贵。
+
+- **§1 表里两个数已就地改正（2026-11-08 复核）。** 记录格式同 [缺字段清单](check-registry-missing-fields-2026-11-05.md) §7：原写 → 正确 → 错因。
+
+  | # | 位置 | 原写 | 正确 | 错因 |
+  |---|---|---|---|---|
+  | 1 | §1「defect type 闭集」 | **99/99 合规**（98 行处又附「重数 TECH 23 / VIS 32 / AUD 20 / SUB 24」） | **97/99 合规**；2 条 `type` 是 `—` | 分层重数（23/32/20/24）是**行数**，与「闭集合规数」是两个量，我把前者的"全数都对"读成了后者。`set()` 出 14 个取值就当成"14 个合法取值"——第 14 个正是 `—`，它恰好占掉闭集里 `audio_mix` 的那个位置，于是"14 对 14"看起来严丝合缝。**同一目录的缺字段清单 §7 一直写的是 97/99，两份报告矛盾了 7 天没人发现**，因为它不在任何 check 的管辖里 |
+  | 2 | §1「脱敏契约 ↔ 消费点」 | 引的 **9 个**章节号（S45 ×4 / S46 ×5 / S47 ×2） | **13 个**：S45 ×5 / S46 ×5 / S47 ×3 | 原括号里的 4+5+2 就只有 **11**，和它自己写的 9 都没对上；实际逐条数 `§` 是 5/5/3=13。`applies_to` 共 4 条 `rule_ref`，其中 3 条是 `plans/Sxx §a, §b, §c…` 的**逗号列表**——我数的是列表项而不是章节号。**"几个 rule_ref"与"几个章节号"中间差一个列表展开因子**，和 §6.2 结尾那条"claim 条数 vs 失败行数"是同一族错 |
+
+  两处都已用 `§` 正则重新逐条核对：13 个 `plans/` 章节号 + `docs/04 §4` + `docs/14 §1` 全部命中真实标题，**没有一条是悬空的**——错的只是计数，不是引用。
 
 ---
 
