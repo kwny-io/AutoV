@@ -1390,7 +1390,8 @@ def check_payload_refs(name):
     This walks topics forward only. The other direction -- a `contracts/*.schema.json`
     that no topic names -- is not a failure: 8 of the 64 are request/response bodies,
     reached from `contracts/openapi.v2.yaml` (11 `$ref`, 5 of them a whole body) and
-    from sibling schemas (6 `$ref`). Every one of the 8 has at least one inbound
+    from `contracts/**/*.json` (6 `$ref`: 3 from sibling schemas, 3 from
+    `mcp-tools.v2.design.json`). Every one of the 8 has at least one inbound
     `$ref`, so "named by no topic" is not the same as "unused". The count goes in the
     note because nothing else reports it, and the layout block that describes this
     directory used to call all 64 "single-topic payload schema".
