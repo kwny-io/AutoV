@@ -2,7 +2,7 @@
 
 状态：实现方案（W5）。`maturity: design_only` 不变。按 docs/16 §3，"W5 S48 按客户需要训练"，所以本服务的开关默认全关，且**只在客户明确订购时启用**。
 
-上游依据：[docs/10 §资产](../docs/10-assets.md)、[docs/14 §2](../docs/14-enterprise-operations.md)（"训练样本与声音样本采取严格访问、保留和撤销流程"）、[docs/03 §容量](../docs/03-deployment-capacity.md)（"训练不允许挤占在线推理保底容量"）、[S48 规格](../docs/design-package/services/S48-adaptation-training.md)。
+上游依据：[docs/10 的资产定义](../docs/10-assets.md)、[docs/14 §2](../docs/14-enterprise-operations.md)（"训练样本与声音样本采取严格访问、保留和撤销流程"）、[docs/03 的容量约束](../docs/03-deployment-capacity.md)（"训练不允许挤占在线推理保底容量"）、[S48 规格](../docs/design-package/services/S48-adaptation-training.md)。
 
 配套：[S15 音色](S15-voice-assets.md)（授权撤销）、[S11/S12/S13/S14](S11-character-assets.md)（人物/服装/场景/道具授权）、[S24 模型注册](S24-model-registry.md)（基座兼容性）、[S28 制品](S28-artifact-ingest.md)（数据集来源）、[S22](S22-scheduler-quota.md)（`modality='training'`）、[S23](S23-budget-ledger.md)（训练额度）、[S45](S45-audit.md)（训练审计）。
 

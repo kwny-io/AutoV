@@ -922,7 +922,7 @@ Topic `drama.scheduler-quota.v2`，partition key `tenant_id:aggregate_id`，`agg
   - 每分钟：`DISPATCH_AUTHORIZED` + `INFLIGHT` 超过阈值的 permit 列表 → 告警队列；
   - 每日：`pool_usage_ledger` 与 `permit` 状态一致性；账号池与 S24 元数据一致性。
 - **runbook 必备**：Redis 丢失处置（§5.5）；账号被撤销（`:suspend` + 已有 permit 处理）；池容量下调；`DISPATCH_AUTHORIZED` 长期挂起；跨地域切换时 `pool_shard` 的写主确认。
-- **灾备**：docs/14 §恢复顺序——"恢复身份/租户home路由与数据→验证 S08/S16/S23/S26 权威版本→恢复事件与Temporal→**对账所有 SUBMITTING/UNKNOWN/INFLIGHT**→…→保守开放新准入"。S22 在这一步负责：所有 INFLIGHT permit 保持占用，直到 S26 对账完成；**不以 RTO 为由自动释放**。
+- **灾备**：docs/14 的恢复顺序——"恢复身份/租户home路由与数据→验证 S08/S16/S23/S26 权威版本→恢复事件与Temporal→**对账所有 SUBMITTING/UNKNOWN/INFLIGHT**→…→保守开放新准入"。S22 在这一步负责：所有 INFLIGHT permit 保持占用，直到 S26 对账完成；**不以 RTO 为由自动释放**。
 
 ---
 

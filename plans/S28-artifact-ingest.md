@@ -828,7 +828,7 @@ S28 `depends_on: [S01]`，但依赖面很窄：
 | tombstone/删除 | 同上（action=`artifact.delete`，高权限） | 同上 |
 | 租户 kill switch / suspension | S01 的租户状态（可随 authorization-context 一并返回） | 不可达 → fail closed |
 
-**不做降级放行。** 这与 S24 的 `AUTH_DEPENDENCY_UNAVAILABLE` 处理一致（S24 §"读 S01 超时"）。
+**不做降级放行。** 这与 S24 的 `AUTH_DEPENDENCY_UNAVAILABLE` 处理一致（S24 的"读 S01 超时"）。
 
 S28 不在本地缓存"谁能做什么"的完整授权——缓存只允许是**短期、有界、可按 revision 失效**的 decision，且记录 `source_revision`；S01 的 `access.grant.changed` 到达即失效（见 §12 的事件缺口）。
 
@@ -962,7 +962,7 @@ traceparent: 00-<trace>-<span>-01
 
 ### 6.3 `GET /artifacts/{id}/revisions/{revision}`
 
-返回该 revision 的不可变记录（hash、大小、探测元数据、发布人、`source_import_id`）。用于 S08/S40 复核"审的是不是这一版"（S40 §"所指 artifact 仍存在且 hash 匹配"）。
+返回该 revision 的不可变记录（hash、大小、探测元数据、发布人、`source_import_id`）。用于 S08/S40 复核"审的是不是这一版"（S40 的"所指 artifact 仍存在且 hash 匹配"）。
 
 已删除字节但未删行时返回 200 + `storage:{deleted:true}`；完全无此 revision → 404。
 

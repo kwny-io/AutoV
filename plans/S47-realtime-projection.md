@@ -2,7 +2,7 @@
 
 状态：实现方案（W4）。`maturity: design_only` 不变。
 
-上游依据：[docs/04 §4–§5](../docs/04-data-consistency.md)、[docs/13 §1](../docs/13-api-product.md)、[docs/03 §SLO](../docs/03-deployment-capacity.md)、[S47 规格](../docs/design-package/services/S47-realtime-projection.md)。
+上游依据：[docs/04 §4–§5](../docs/04-data-consistency.md)、[docs/13 §1](../docs/13-api-product.md)、[docs/03 的服务等级目标](../docs/03-deployment-capacity.md)、[S47 规格](../docs/design-package/services/S47-realtime-projection.md)。
 
 配套：[S21 编排](S21-orchestration.md)（`projection_watermark` 的定义方）、[S26](S26-generation-jobs.md)（`generation.job.state-changed`）、[S08](S08-revision-snapshot.md)（accepted pointer，**永远回源**）、[S44](S44-evaluation-analytics.md)（"数据截至"口径的同类问题）。
 
