@@ -304,7 +304,7 @@ for c in nn:
 |---|---|---|---|---|
 | 1 | schema `x-conflicts[PCA-5]` 初版 | 「`sse_cursor` 没有 `run_id` 列（§5.3 行 550–560）」 | 有，§5.3 行 554：`run_id text NOT NULL` | 凭「游标表只需要游标」的印象下结论，没打开 DDL |
 | 2 | 同上，第二版 | 「`subscription_registration` 也有 `run_id`（行 566），两表各存一遍同一事实、没有约束让它们相等」 | `subscription_registration` **没有 `run_id` 列**；行 566 是 `tenant_id`。范围由 `scope_kind IN ('run','tenant')`（行 568）+ 可空 `scope_id`（行 569）表达 | 第一版错后只回读了 `sse_cursor` 一半，把「另一张表应该有」当成了「另一张表有」 |
-| 3 | §4.5 错误码引用（PCA-6） | `SUBSCRIPTION_NOT_FOUND` 在行 466 | 行 465；行 466 是 `IDEMPOTENCY_KEY_REUSED` | 表里连续三行都以 `| 4` 开头（404/404/409），数行时按内容猜没按行号核 |
+| 3 | §4.5 错误码引用（PCA-6） | `SUBSCRIPTION_NOT_FOUND` 在行 466 | 行 465；行 466 是 `IDEMPOTENCY_KEY_REUSED` | 表里连续三行都以 `` `\| 4` `` 开头（404/404/409），数行时按内容猜没按行号核 |
 | 4 | 本节「复核口径」末段 | 「`118 − 49 = 69`，本轮变成 120 / 50，**差值仍是 70**」 | 差值从 69 变成 **70**，不是「仍是」 | 心算了两个两位数减法；前三条是没回读文档，这一条是没让脚本算 |
 
 **第 2 条把结论改反了，改出来的是一个比原结论更硬的冲突**：DDL 承认租户级订阅（`scope_kind='tenant'`，
@@ -1294,7 +1294,7 @@ schema`；`scaffold` 120 个生成物与 catalog 一致，本轮没有改 catalo
 | 3 | `delivery.package-sealed.v2` / `manifest_hash` | 「除非再 `GET /delivery-packages/{id}/manifest`（§6.2 行 645）」 | 行 645 的**表行**写的是路径 `/delivery-packages/{id}/manifest`，不带 `GET ` 前缀（方法在行 644 的「方法」列，按表行读是 `\| GET \|`）。两处都对得上，但引用里的字符串不是源文原文 | 我把 markdown 表格的两个单元格拼成了一个字符串。**表行不能当散文引用**——要么引单元格原文，要么引整行 |
 | 4 | `analytics.cost-projection-updated.v2` / `ci_low_micro` | 「`ci95` 这个名字出现在 `analytics.metric_snapshot_created.v2` 里（§5 行 416）」 | **`ci95 jsonb,` 在 §5 行 403**；行 416 是 `CREATE INDEX snapshot_lookup_idx ON analytics.metric_snapshot` | 我把「`ci95` 这一列」与「这张表的索引」两行看串了。行号落在 400 附近的同一张 DDL 里，肉眼扫过去很像 |
 | 5 | `analytics.cost-projection-updated.v2` / `x-needs-owner[2]` | 「§5 行 412–418（`metric_snapshot` 有 `allocation_policy_version` 列）」 | **`allocation_policy_version text,` 在 §5 行 408**；行 412–414 是同表两条 CHECK（`snapshot_n_nonneg` / `snapshot_value_null_iff_zero_n`），行 416–417 是索引 | 同一处病灶：我用「这张 DDL 的范围」代替了「那一列的行号」。**41X 那一段里没有 `allocation_policy_version`** |
-| 6 | `analytics.metric-snapshot-created.v2` / `snapshot_id` | 「与 §6.3 行 677（`aggregate_id`）」 | 行 677 是 `\| \`analytics.metric.snapshot.created\` \| \`snapshot_id\` \|` ——**`aggregate_id` 这个词在行 675 的表头**（`\| event_type \| aggregate_id \|`） | 我引了「那一行」，却在括号里承诺「`aggregate_id` 这个词」。**承诺一个 token 就必须确认那一行里有它** |
+| 6 | `analytics.metric-snapshot-created.v2` / `snapshot_id` | 「与 §6.3 行 677（`aggregate_id`）」 | 行 677 是 `` `analytics.metric.snapshot.created` \| `snapshot_id` `` ——**`aggregate_id` 这个词在行 675 的表头**（`` event_type \| aggregate_id ``） | 我引了「那一行」，却在括号里承诺「`aggregate_id` 这个词」。**承诺一个 token 就必须确认那一行里有它** |
 | 7 | `analytics.evaluation-completed.v2` / `evaluation_run_id` | 同上，「与 §6.3 行 678（`aggregate_id`）」 | 同上：`aggregate_id` 在行 675 表头，行 678 是本事件那一行 | 同 #6 |
 | 8 | `analytics.cost-projection-updated.v2` / `projection_id` | 同上，「与 §6.3 行 679（`aggregate_id`）」 | 同上：`aggregate_id` 在行 675 表头，行 679 是本事件那一行 | 同 #6 |
 | 9 | `post.mix-completed.v2` / `repair_plan_ref` 的 `description` | 「与仓内 **52 处**同形引用一致」 | 按四重条件（`type=object` + `properties`/`required` 恰为四键 + `additionalProperties: false`）数 `contracts/*.schema.json`（64 个文件）得 **53 处 / 31 个文件** | 52 是**上一轮写完 `post.mix-completed` 之前**的口径（`git show HEAD~3` 数得 52）。**在一个会随本轮改动的分母上引用了旧值**——与 §15.1 第 3 条同一类错，那一轮修了一次，这一轮又犯 |
@@ -4407,7 +4407,7 @@ ok    safety    4/4 gate(s) false, 1/1 shared_database_writes false,
 | provider `kling` 删掉 `enabled` 键 | `FAIL safety 2` / `7/8 provider(s) explicitly disabled` |
 | `financial_authority` → `S99` | `FAIL safety 1` / `4/5 authorities name a catalog service` |
 | `shared_database_writes` → true | `FAIL safety 1` / `0/1 shared_database_writes false` |
-| 把 `{enabled: true}` 的 provider 追加到 **`providers` 块外面** | `FAIL safety 1` / `0/1 no provider entry outside \`providers\`` |
+| 把 `{enabled: true}` 的 provider 追加到 **`providers` 块外面** | `FAIL safety 1` / `` 0/1 no provider entry outside `providers` `` |
 | 在 `providers` 里加第 9 个（disabled） | `safety` 绿、`readme` 红：`README says 8 for safety provider, safety says 9` |
 | README 把 8 改成 9 | `FAIL readme` / `README says 9 for safety provider, safety says 8` |
 | 全部还原 | 17 项注册、16 通过、1 跳过 |
@@ -5309,7 +5309,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 把 `plans/S21-orchestration.md` 的 `docs/01 §3` 改成 `§9`（正确引用改错被抓）、
 删掉 known 条目（要求补回）。
 
-**定稿自查又抓到二十处。前十二处是我这一轮自己写下的；第十三条不同——错在提交树里早就在，是我这一轮改对了报告却漏改了源文件；第十四、十五、十六条同样早就存在，都是照着旧状态或换个口径写的描述没跟着走；第十七条更糟，是我这一轮改坏提交树的；第十八条是照着旧口径列了一份未来的清单，没在新树上实测；第十九条更糟——它正是第十八条那次修改自己新引入的，标题里的总数又和下面列举的项数没对上；第二十条也在第十八条那句话里，把「claim 条数」写成了「失败行数」：**
+**定稿自查又抓到二十三处。前十二处是我这一轮自己写下的；第十三条不同——错在提交树里早就在，是我这一轮改对了报告却漏改了源文件；第十四、十五、十六条同样早就存在，都是照着旧状态或换个口径写的描述没跟着走；第十七条更糟，是我这一轮改坏提交树的；第十八条是照着旧口径列了一份未来的清单，没在新树上实测；第十九条更糟——它正是第十八条那次修改自己新引入的，标题里的总数又和下面列举的项数没对上；第二十条也在第十八条那句话里，把「claim 条数」写成了「失败行数」；第二十一、二十二、二十三条是另一族，**三格都在提交树里早就在**——表格单元格里的反引号与竖线没按 CommonMark 的规则处理，渲染出来 span 提前闭合，而它们的数字内容一直是对的；最后一行不是文档里的事，也不是第二十四条——它是另一类，是**我这一轮自己的误诊**：我先把这三格说成「多一列」，又用手写的切列器「验证」过——那个切列器错了，真解析器说两棵树都合法：**
 
 | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|
@@ -5333,6 +5333,10 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 | 本节「注意这九个数的时点」块 | 只列 `links` 1 + `plantopics` 4 + `planrefs` 4 = 9 条，称「这九个数」 | 实测 **12 条 claim 会红**：另有 `docrefs` 三条（ref / judged / pair），README 里那四个数从 468/444/488/484 变成 **469/445/489/485** | 在 `core.autocrlf=false` 的干净检出上把 S31 那笔改动拷进去实跑，`readme` 报 24 行失败（12 条 claim，每条在摘要段与枚举列表各一份副本；见第 20 条）；`docrefs` 也涨，因为 S31 新增了 1 处 `docs/NN §X`，而它指向真实标题，所以命中数同样 +1。**列「落地后会变」的清单，必须在那棵落地后的树上真跑一遍，不能从「这次变了哪几类」推。**（第一次补这一格时我还把第四个数写成 489——489 是段号对总数，命中标题是 485，485+3+1=489。**照着 note 的顺序抄数，会把两个相邻的量抄串。**） |
 | 本节「注意这十二个数的时点」那句（**第 18 条那次修改自己写下的**） | 「注意这**十二个数**的时点」，正文却按 README 的写法列了 `links` 1 + `plantopics` 4 + `planrefs` 4 + `docrefs` 4 = **13 个数** | 「注意这**十二处 claim、十三个数**的时点」 | 12 是 `README_CLAIMS` 里**取值会变的条目数**，13 是这些条目**捕获的数字槽数**；差的那一个在 `docrefs pair`——它一条正则有两个捕获组（`489` 段号对 / `485` 命中标题）。我把「条」直接写成了「个」。**与第十二、十六条同一族：标题里的总数和下面列举的项数没对上。**实测方法：两棵 `core.autocrlf=false` 的检出（HEAD 与 `HEAD`+S31），各用**自己那棵树**的 `README_CLAIMS` 去匹配**自己那棵树**的 README——整笔改动是自洽的（README 与 `check_all.py` 的模式一起改），所以交叉匹配会因字面前缀不同而误报，同一棵树内则是 **0 条 FAIL**。**整笔改动自洽时 FAIL 数恒为 0，它量不出「几个数会动」，只能逐条比捕获值。** |
 | 第 18 条里「`readme` 报 12 条 FAIL」 | 报 **12 条 FAIL** | 报 **24 行失败**：正文段值不符 10 行、正文段匹配不到 2 行、枚举列表 12 行 | 把「取值会变的 claim 条数」（12）当成了「检查打印的失败行数」。`check_readme_counts` 对同一批数字有**两份副本**——摘要段一句、下面的 `那 32 个数是…` 列表一份——所以一条 claim 通常报 2 行；只有 `planrefs pair` / `planrefs pair hit` 因正则绑了 `470 个段号对` 字面前缀，在 S31 的 README 上匹配不到，摘要段各报 1 行「no longer states」。合计 **10 + 2 + 12 = 24**。**「几条 claim」和「几行失败」是两个量，中间差一个副本因子。** 第 18 条正文里那句原话已就地改成 24 行，不再保留已知为错的说法 |
+| 本报告「补记八」的表行 4410（**提交树里早就错，不是本轮写下**） | 想把 `check_safety_switches` 拼出来的那条 note（`tools/check_all.py` 第 688–689 行）原文（**它本身就含一对字面反引号**）塞进单元格，用反斜杠转义了反引号 | 整段用**双反引号**围起来，里面的字面反引号直接写 | **代码 span 里反斜杠不是转义符**：span 断在反斜杠上，于是斜杠和两个反引号一起原样露在页面上，后半句还掉出了 span。`0/1` 这个数字一直是对的，坏的只是这一格怎么显示 |
+| 本报告 §16.1 的表行 1297（**提交树里早就错，不是本轮写下**） | 在**单**反引号 span 里同时用了反斜杠转义反引号和转义竖线 | 外层**双反引号**，竖线保留 `\|` | 两个错叠着：**反引号在 span 内不能被转义**（同上一条）；而**竖线在 span 内仍必须写 `\|`**——GFM 先解 `\|` 再切列，span 不保护竖线。只修其中一条，另一个还在 |
+| 顺带更正一处**诊断**（这不是报告某行的事实，是我这一轮的判断） | 我把上面三格说成「整行比表头多一列，从中间起错列」 | 这三格**列数一直合法**：GFM 给短行补空格、给长行截断，`markdown_it` 与 GitHub 都不报错 | 我拿自己手写的切列器当判据，而它没实现「`\|` 在切列前先解转义、span 不保护竖线」，把 `\|` 数成了分隔符才得出「多一列」。**换成真解析器（`markdown_it` 的 `table` 规则）后，`HEAD` 与工作区都是 0 ragged**——那个 ragged 是探针的 bug，不是文档的 bug。真错在渲染：三格里的 `<code>` 都提前闭合了 |
+| 本报告 §16.1 表行 307（**提交树里早就错，不是本轮写下**） | 单元格里直接写了竖线开头的字面串，没转义 | 外层**双反引号**，竖线写 `\|` | 裸竖线被当成列分隔符，这一格和后面几格全错位、后半句丢失。**单元格里的竖线一律写 `\|`**，哪怕它在 span 里——GFM 先解 `\|` 再切列 |
 
 其中 `482/481` 那一行要更正一次判断：**README 里的 `481/481` 一直是对的**，我看到 482 是因为停掉一个
 还在跑的变异脚本时它恰好把这一行改成了 `482/481`，而检查读到了那个中间态。用 `git show HEAD` 核过，
