@@ -5277,7 +5277,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 把 `plans/S21-orchestration.md` 的 `docs/01 §3` 改成 `§9`（正确引用改错被抓）、
 删掉 known 条目（要求补回）。
 
-**定稿自查又抓到十七处。前十二处是我这一轮自己写下的；第十三条不同——错在提交树里早就在，是我这一轮改对了报告却漏改了源文件；第十四、十五、十六条同样早就存在，都是照着旧状态或换个口径写的描述没跟着走；第十七条更糟，是我这一轮改坏提交树的：**
+**定稿自查又抓到十八处。前十二处是我这一轮自己写下的；第十三条不同——错在提交树里早就在，是我这一轮改对了报告却漏改了源文件；第十四、十五、十六条同样早就存在，都是照着旧状态或换个口径写的描述没跟着走；第十七条更糟，是我这一轮改坏提交树的；第十八条是照着旧口径列了一份未来的清单，没在新树上实测：**
 
 | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|
@@ -5299,6 +5299,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 | `check_all.py` 的 `check_examples` note | `contracts/examples/  [7 schema file(s) never loaded by the validator: 5 in domain-v1/, 2 in quality/]` | 数字对（7 = 5 + 2，回表复测过），**但目录写错了根**：那 7 个在 `contracts/domain-v1/` 与 `contracts/quality/`，是 `contracts/examples/` 的**兄弟**，不是它的子目录。note 现在把前缀紧贴在 `contracts/examples/` 后面，读起来像 `contracts/examples/domain-v1/`——那个路径不存在 | `unloaded` 的 glob 是 `contracts/**/*.schema.json`，而 `r.note` 一开头就设为 `"contracts/examples/"`，两段拼在一条线上。**同一条 note 里前半截和后半截数的是不同的根**，中间没写分界。已改成 `counting contracts/** not contracts/examples/:` + `contracts/domain-v1/` 全路径。**第一版修法在 `check_examples` 里加了 3 行注释，把 `check_payload_refs` 从 1383 顶到 1386，`citerefs` 立刻报 6 处失效引用（README 2 + 报告 4）——修好一个描述，反倒弄坏了六处线号。最终改成等长 3 行、线号不动** |
 
 | `check_all.py` 的 `check_plan_topics` docstring（**提交树里我自己改坏的**） | `...permission action names, so` 后面直接接 `Four pairing cells reach this branch` | `so` 后面缺了结论句。原文是 `the remainder cannot be separated either way.`，`Four pairing cells` 是**新的一句**，不是 `so` 的从句 | `b07dced` 补第四格时，我把这一句连同前面的 `The three such rows in S47 are recorded in its own §11` 一起换掉，替换区间起点取在了 `so` 之后、终点取在了旧结论句之后，**中间那句结论被一起删了**——改的是一段，但复述旧状态的那半句只在新文本里换了个说法，读者看不出条件句断了。**替换文档段落要读一遍改完的整句，不是只看 diff 里 `-` 那几行**。docstring 没有任何检查 pin，`docrefs`/`citerefs` 都不看它 |
+| 本节「注意这九个数的时点」块 | 只列 `links` 1 + `plantopics` 4 + `planrefs` 4 = 9 条，称「这九个数」 | 实测 **12 条 claim 会红**：另有 `docrefs` 三条（ref / judged / pair），README 里那四个数从 468/444/488/484 变成 **469/445/489/485** | 在 `core.autocrlf=false` 的干净检出上把 S31 那笔改动拷进去实跑，`readme` 报 12 条 FAIL；`docrefs` 也涨，因为 S31 新增了 1 处 `docs/NN §X`，而它指向真实标题，所以命中数同样 +1。**列「落地后会变」的清单，必须在那棵落地后的树上真跑一遍，不能从「这次变了哪几类」推。**（第一次补这一格时我还把第四个数写成 489——489 是段号对总数，命中标题是 485，485+3+1=489。**照着 note 的顺序抄数，会把两个相邻的量抄串。**） |
 
 其中 `482/481` 那一行要更正一次判断：**README 里的 `481/481` 一直是对的**，我看到 482 是因为停掉一个
 还在跑的变异脚本时它恰好把这一行改成了 `482/481`，而检查读到了那个中间态。用 `git show HEAD` 核过，
@@ -5383,8 +5384,9 @@ README 逐字节还原。方法也改了：上一版跑全量检查（每绕一�
 就被我停掉，这也是当初「31 个方向」那句话没依据的原因）；这版把除 `readme` 以外的 22 项检查结果
 **只算一次**再复用，单跑 `check_readme_counts`，两分钟内跑完。
 
-**注意这九个数的时点：** 一旦 S31 那笔改动落地，README 会变成 `links` 1188、
-`plantopics` 720/239/60/421、`planrefs` 502/467/481/481（末两个 481 是不同的量，只是恰好相等），
+**注意这十二个数的时点：** 一旦 S31 那笔改动落地，README 会变成 `links` 1188、
+`plantopics` 720/239/60/421、`planrefs` 502/467/481/481（末两个 481 是不同的量，只是恰好相等）、
+`docrefs` 469/445/489/485（S31 新增的 1 处 `docs/NN §X` 指向真实标题，所以命中数也跟着涨），
 这块基线得跟着再跑一遍。把它当常量抄下来就会重演上面那个错误。
 
 **回源重数时再抓到一个：`docrefs` 的失败信息把行号少报 1。** 起因是我按规则去核报告里点名的
