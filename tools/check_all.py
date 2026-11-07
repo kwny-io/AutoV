@@ -952,15 +952,15 @@ README_CLAIMS = [
      "planrefs", r"^(\d+) ref\(s\)"),
     ("planrefs judged", r"`planrefs`（[^）]*?其中 \*\*(\d+)\*\* 处受检",
      "planrefs", r"\((\d+) judged\)"),
-    # `481 个段号对，481/481 命中`: the two 481s are different quantities that
+    # `470 个段号对，470/470 命中`: the two 470s are different quantities that
     # happen to be equal (pairs, and resolved pairs). These two rows pin the
     # hits (before the slash) and the denominator (after it). Neither pins the
-    # leading `481 个段号对` -- that number is written into the pattern itself,
+    # leading `470 个段号对` -- that number is written into the pattern itself,
     # so editing only it in the README would go unnoticed. Left that way
     # deliberately: a third row matching the bare prefix would also match any
-    # other `481 个段号对` sentence anyone adds later.
-    ("planrefs pair", r"481 个段号对，(\d+)/\d+ 命中", "planrefs", r"(\d+)/\d+ resolve"),
-    ("planrefs pair hit", r"481 个段号对，\d+/(\d+) 命中", "planrefs", r"(\d+)/\d+ resolve"),
+    # other `470 个段号对` sentence anyone adds later.
+    ("planrefs pair", r"470 个段号对，(\d+)/\d+ 命中", "planrefs", r"(\d+)/\d+ resolve"),
+    ("planrefs pair hit", r"470 个段号对，\d+/(\d+) 命中", "planrefs", r"(\d+)/\d+ resolve"),
     # The two "其中 N 处受检" sentences differ only by their lead-in, so each
     # claim is anchored on text unique to its own paragraph. Matching the bare
     # phrase let planrefs' 467 be read as docrefs' value.
@@ -2316,11 +2316,11 @@ def check_docrefs(name):
     so `links` already proves the path resolves. This settles the other half
     -- that the section number exists -- which no other check looks at.
 
-    489 section pairs across 17 docs. They resolve three ways:
-      - 485 to a real heading;
+    488 section pairs across 17 docs. They resolve three ways:
+      - 484 to a real heading;
       - 3 as `<top section>.<ordered item>`, `docs/07 §1.5` meaning item 5 of
         §1. That is the same convention the corpus writes out in full as
-        `docs/07 §1 步骤 5` (9 occurrences), and the text at that position is
+        `docs/07 §1 步骤 5` (7 in plans/; 2 more elsewhere describe the form), and the text at that position is
         the sentence the citing line quotes, checked by hand. It is accepted
         as a list-item reference and counted separately in the note, not
         silently folded into "resolved to a heading".
