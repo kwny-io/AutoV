@@ -107,7 +107,7 @@ AuthContext = verify(credential)
 |---|---|---|---|---|
 | `episode.generate` | S21 `POST /runs` | `execute` | 是（S26 准入） | S21 → S26 |
 | `run.get` | S21 `GET /runs/{id}` | `read` | 否 | S21 |
-| `run.command` | S21 `POST /runs/{id}:pause|cancel|resume` | `execute` | 否（但会触发结算） | S21 |
+| `run.command` | S21 `POST /runs/{id}:pause\|cancel\|resume` | `execute` | 否（但会触发结算） | S21 |
 | `change.plan` | S07 `POST /change-plans` | `plan` | 否 | S07 |
 | `change.apply` | S07 `POST /change-plans/{id}:apply` | `execute` + 人工放行（S40） | 是 | S07 |
 | `review.decide` | S40 `POST /decisions` | `review` | 否 | S40 |

@@ -1631,5 +1631,5 @@ N 个候选的 span 必须是同一 trace 的兄弟 span，带 `candidate_index`
 | [S39](S39-repair-planning.md) | 上限计数；S34 不构造 `strategy_class`（§8） |
 | [S40](S40-human-review.md) | 选曲裁决、缺口 waive |
 | [S08](S08-revision-snapshot.md) | 接受权威；检查点推进 ≠ 接受 |
-| [docs/11 §2](../docs/11-quality-repair.md) | "BGM 盖对白 | ducking/重混音"——确认修复手段在 S42，不在 S34 |
+| [docs/11 §2](../docs/11-quality-repair.md) | "BGM 盖对白 \| ducking/重混音"——确认修复手段在 S42，不在 S34 |
 

@@ -1493,4 +1493,4 @@ api:
 | [S39](S39-repair-planning.md) | 上限计数；S33 不构造 `strategy_class`（§8.2） |
 | [S40](S40-human-review.md) | 缺口 waive、替代授权 |
 | [S08](S08-revision-snapshot.md) | 接受权威；检查点推进 ≠ 接受 |
-| [docs/11 §2](../docs/11-quality-repair.md) | "BGM 盖对白 | ducking/重混音"——这确认了音效/音乐的修复手段在 S42，不在 S33 |
+| [docs/11 §2](../docs/11-quality-repair.md) | "BGM 盖对白 \| ducking/重混音"——这确认了音效/音乐的修复手段在 S42，不在 S33 |

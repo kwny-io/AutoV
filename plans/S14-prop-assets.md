@@ -533,7 +533,7 @@ F16 是一个刻意的设计：如果有人试图 `GET /props/{id}/holder`，S14
 | POST | `/props/{id}/candidates/{cid}:reject` |
 | POST | `/props/{id}:set-canonical` |
 | POST | `/props/{id}:deprecate` / `:tombstone` / `:merge` |
-| POST | `/props/{id}/required-variants` | 外部登记必需变体 |
+| POST | `/props/{id}/required-variants`（外部登记必需变体） |
 
 ### 5.2 查询
 

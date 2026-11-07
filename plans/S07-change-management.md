@@ -892,7 +892,7 @@ Topic `drama.change-management.v2`，`aggregate_id = plan_id`，`aggregate_seque
 
 **`changed_node_epochs` 来自 S08 的 `:commit` 响应，不是 S09 的清单**（§4.4）。
 
-**`S21 消费这个事件吗？** 不。S21 消费 S08 的 `snapshot.manifest.committed`。`change.plan.applied` 给：
+**S21 消费这个事件吗？** 不。S21 消费 S08 的 `snapshot.manifest.committed`。`change.plan.applied` 给：
 
 | 消费者 | 用途 |
 |---|---|

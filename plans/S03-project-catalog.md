@@ -653,9 +653,9 @@ catalog 只声明了 `POST /projects/{id}/episodes`。其余四条是本文根�
 
 | 事件 | 何时发 | data |
 |---|---|---|
-| `project.episode.created` | 每个 episode 首次落库 | `{episode_id, series_id, project_id, release_ordinal|null, shooting_ordinal|null, spec_hash}` |
+| `project.episode.created` | 每个 episode 首次落库 | `{episode_id, series_id, project_id, release_ordinal\|null, shooting_ordinal\|null, spec_hash}` |
 | `project.episode.reordered`（**新增，待登记**） | 重排成功后 | `{series_id, order_kind, window_key, order:[episode_id...], head_revision}` |
-| `project.lifecycle.changed`（**新增，待登记**） | 任意 lifecycle 迁移 | `{scope:"project"|"series"|"episode", id, from, to, reason}` |
+| `project.lifecycle.changed`（**新增，待登记**） | 任意 lifecycle 迁移 | `{scope:"project"\|"series"\|"episode", id, from, to, reason}` |
 
 三个事件都用 `aggregate_seq` 单调，`aggregate_id` 分别是 `episode_id` / `series_id` / 对应 scope 的 id。
 

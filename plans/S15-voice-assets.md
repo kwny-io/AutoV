@@ -716,7 +716,7 @@ POST /voices/{id}/lexicon-binding
 | POST | `/voices/{id}:revoke` / `:suspend` / `:resume` / `:renew` |
 | POST | `/voices/{id}/provider-mappings` |
 | POST | `/voices/{id}/provider-mappings/{pk}:deprecate` / `:unavailable` / `:restore` |
-| POST | `/voices/{id}:check-eligibility` | **调用前资格检查** |
+| POST | `/voices/{id}:check-eligibility`（**调用前资格检查**） |
 | POST | `/lexicons` / `/lexicons/{id}/revisions` |
 | POST | `/voices/{id}/lexicon-binding` |
 
