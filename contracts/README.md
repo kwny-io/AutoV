@@ -1771,7 +1771,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    本表此前的"3 处动作 / 11 处复检"就是切错列数出来的，实为 **2 处 / 10 处**。
 
 5. **全仓的路径写法与 `openapi.v2.yaml` 是两套约定，一处都不重合。**
-   48 份方案里共 **100 个不同接口**（35 份方案，按参数名归一化后）用 `:verb` 子动作写法——
+   48 份方案里共 **113 个不同接口**（35 份方案，按参数名归一化后）用 `:verb` 子动作写法——
    `/change-plans/{id}:apply`、`/manifests/{id}:commit`、`/scripts/{id}/revisions/{rev}:seal`。
    `service-catalog.v2.json` 的 96 个端点里有 4 个是这种写法（S02 `:evaluate` / S07 `:apply` /
    S08 `:commit` / S22 `:acquire`），`service.yaml` 照抄，所以也是这种写法。
@@ -1787,7 +1787,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    | catalog 有、openapi 无 | **86** |
    | openapi 有、catalog 无 | **11** |
 
-   选哪一种写法是 API 设计决策，牵扯 100 个接口字面量，不在一份检查里替 owner 定。
+   选哪一种写法是 API 设计决策，牵扯 113 个接口字面量，不在一份检查里替 owner 定。
    `contracts/README.md:13` 自己写的是「21 个**核心**操作」，没有声称完整覆盖——
    真正的问题是**两套约定并存**，不是数量差。
    逐数字见 [§16.30](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
