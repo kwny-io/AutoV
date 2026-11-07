@@ -5277,7 +5277,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 把 `plans/S21-orchestration.md` 的 `docs/01 §3` 改成 `§9`（正确引用改错被抓）、
 删掉 known 条目（要求补回）。
 
-**定稿自查又抓到九处，都是我自己这一轮写下的：**
+**定稿自查又抓到十处，都是我自己这一轮写下的：**
 
 | 位置 | 原写 | 正确 | 错因 |
 |---|---|---|---|
@@ -5290,6 +5290,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 | `check_all.py` 的 `check_docrefs` docstring | 「486 section pairs…484 to a heading」 | 489 pairs / 485 heading / 3 listitem / 1 neither | 计数写在函数写完之前，之后又加了两条新引用，docstring 没跟着改 |
 | `contracts/README.md` 的 `docrefs` 段与枚举列表 | `docrefs ref` 457 | 463 | 457 是**这一节还没写进来时**的数；本节的 6 条新引用（原 12 条 → 18 条）把总数抬到 463，只改了 note 没改 README |
 | `contracts/README.md:1556` | **误判为** `482/481 命中` 是 README 的错 | HEAD 上是 `481/481`，README 没错 | 停掉变异脚本时它正好把该行改成 482/481，并发的检查读到中间态。**判定之前先 `git show HEAD` 核一遍**，别把别人文件被临时改写当成内容错误 |
+| 本节「反向测试 32 个方向」那块输出 | `links 1330->1331`、`plantopics 720/239/60/421`、`planrefs 502/467/481/481` | 提交树上按 README 现值实跑：`links 1184->1185`、`plantopics 709/231/59/419`、`planrefs 491/456/470` | 上一轮只把 `docrefs` 那三行改成了提交树口径，**其余九行原封不动**。那九行里后八个数取自带 S31 未提交改动的工作区，`1330` 更是两棵树都对不上（提交树 1184、带 S31 的 1188）。**改了一个计数就得把同一块里的兄弟计数一起回表**——否则测的是 README 里根本不存在的数 |
 
 其中 `482/481` 那一行要更正一次判断：**README 里的 `481/481` 一直是对的**，我看到 482 是因为停掉一个
 还在跑的变异脚本时它恰好把这一行改成了 `482/481`，而检查读到了那个中间态。用 `git show HEAD` 核过，
@@ -5320,7 +5321,7 @@ caught    topic field                          10->11
 caught    secret class                         6->7
 caught    MCP tool                            12->13
 caught    check_id                            99->100
-caught    links                             1330->1331
+caught    links                             1184->1185
 caught    stated invariant                     5->6
 caught    scaffold                           118->119
 caught    example                             71->72
@@ -5331,16 +5332,16 @@ caught    interaction step                    18->19
 caught    interaction endpoint                36->37
 caught    plantopics plan file                49->50
 caught    plantopics topic mention            58->59
-caught    plantopics unjudged tokens         720->721
-caught    plantopics filename tokens         239->240
-caught    plantopics versioned-doc tokens     60->61
-caught    plantopics event-or-action tokens  421->422
+caught    plantopics unjudged tokens         709->710
+caught    plantopics filename tokens         231->232
+caught    plantopics versioned-doc tokens     59->60
+caught    plantopics event-or-action tokens  419->420
 caught    docsreadme count                     9->10
 caught    citerefs citation                    8->9
-caught    planrefs ref                       502->503
-caught    planrefs judged                    467->468
-caught    planrefs pair                      481->482
-caught    planrefs pair hit                  481->482
+caught    planrefs ref                       491->492
+caught    planrefs judged                    456->457
+caught    planrefs pair                      470->471
+caught    planrefs pair hit                  470->471
 caught    docrefs ref                        468->469
 caught    docrefs judged                     444->445
 caught    docrefs pair                       488->489
@@ -5351,9 +5352,20 @@ caught    docrefs pair                       488->489
 这一轮开始前 README 已经写着「三十一次全部被抓到」，但那 31 个方向的后台测试是我自己中途停掉的，
 **没跑完就写了结论**。现在 32 个方向全部实跑过，那句话才有依据。
 
-这一版结果与上一版有三处不同：`docrefs` 那三条的基线从 469/445/489 改成 468/444/488（上一版是在
-含另一会话未提交 S31 改动的工作区里取的），所以**只改了这三条，其余 29 条数字一字未动**。上一版是跑全量检查判定的，本轮改成直接调
-`check_readme_counts` 单跑这一格——全量版每绕一个方向要跑三个生成器，32 个方向跑不完就被我停掉了。
+**这块基线本轮重跑过，不是沿用的。** 上一版那九行写的是 `links` 1330、`plantopics` 720/239/60/421、
+`planrefs` 502/467/481/481；其中后八个数正是**带 S31 未提交改动的那个工作区**的读数，`links` 的 1330
+则两棵树都对不上（提交树 1184、带 S31 的那棵 1188），是更早一轮留下的值、没人重取过。
+`docrefs` 那三行上一轮已改成提交树口径，其余九行没跟着改——**锚一换，反向测试就变成了对着
+README 里并不存在的数在测**，那九行即使全绿也不说明任何事。
+
+在 `core.autocrlf=false` 的干净检出（`1e37af5`）上按 README 现值重跑，32/32 全部被抓到，
+README 逐字节还原。方法也改了：上一版跑全量检查（每绕一个方向要跑三个生成器，32 个方向跑不完
+就被我停掉，这也是当初「31 个方向」那句话没依据的原因）；这版把除 `readme` 以外的 22 项检查结果
+**只算一次**再复用，单跑 `check_readme_counts`，两分钟内跑完。
+
+**注意这九个数的时点：** 一旦 S31 那笔改动落地，README 会变成 `links` 1188、
+`plantopics` 720/239/60/421、`planrefs` 502/467/481，这块基线得跟着再跑一遍。把它当常量抄下来
+就会重演上面那个错误。
 
 **回源重数时再抓到一个：`docrefs` 的失败信息把行号少报 1。** 起因是我按规则去核报告里点名的
 那 7 处 `docs/07 §3`，用 `split("\n")[ln-1]` 取行，`plans/S07-change-management.md:655` 取到空行——
