@@ -115,7 +115,7 @@ def check_links(name):
       in a dot-directory fails instead of going unread.
     """
     r = Result(name)
-    fence = re.compile(r"(?ms)^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[ \t]*$")
+    fence = re.compile(r"(?ms)^ {0,3}(`{3,})[^`\n]*$.*?(?:^ {0,3}\1`*[ \t]*$|\Z)|^ {0,3}(~{3,})[^\n]*$.*?(?:^ {0,3}\2~*[ \t]*$|\Z)")
     inline = re.compile(r"(?<!`)(`+)(?!`)(?:(?!\1).)+?\1(?!`)", re.S)
     link = re.compile(r"\[[^\]]*\]\(([^)\s]+?)(?:\s+\"[^\"]*\")?\)")
     total = 0
