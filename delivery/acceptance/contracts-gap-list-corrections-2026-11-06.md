@@ -1958,7 +1958,7 @@ ok    catalog    48 service(s), 55 topic(s)  [producer-only: no topic declares c
 
 顺带确认第三条**本来就是对的**：`contracts/README.md 行 206` 正是讲
 `continuity.check.completed` 的 `aggregate_id` 是 `series:branch:episode` 的那一句，
-`validate_examples.py:149` 与 §16.8 的表格里的引用都不用改。
+`validate_examples.py` 的 `AGGREGATE_EXEMPT` 里 `continuity.check.completed` 那条与 §16.8 的表格里的引用都不用改。
 
 **可以推广的一条**：改一份被按行号引用的文件之前，先
 
@@ -5372,6 +5372,7 @@ S37字级对齐确定对白长度……不创建空音频假成功」，正是�
 | 待交接：`check_all.py` 的 `check_docrefs` docstring 在 S31 落地后要改（**现在不是错，落地即错**） | 第 2323 行 `488 section pairs across 17 docs`、第 2343 行 `0 of the 488 pairs`——在 `5fb612f` 上是对的 | `plans/S31-speech-production.md` 那 94 行未提交改动落地后，`docrefs` 实测 **489 pairs / 485 heading / 3 listitem / 1 neither**（`485+3+1=489`），两处都要改成 489。S31 的改动不新增任何编号标题（HEAD 与工作区都是 51 个），所以 17 docs / 64 numbered headings 那两个数不动 | docstring 写的是**当前语料**的读数，语料一变它就旧。已把三份未提交文件复制到隔离克隆（`5fb612f` 基底、LF 归一化后 diff 仍 111+/22−）实跑确认：整套 22 passed / 1 skipped，`docrefs` 489/485。**S31 合并时改这两行，并同步 `contracts/README.md` 的 475/445/489/485** |
 | 「注意这十二处 claim、十三个数的时点」块、补记十三的差分表、以及补记十三更正表第 1 行 | `links` **1188**、`docrefs` **469/445/489/485**；差分表两列 **1188 / 1184**；更正表第 1 行「**1188 条 / 1184 条**」 | `links` **1190**、`docrefs` **475/445/489/485**；差分表 **1190 / 1186**；更正表第 1 行「**1190 条 / 1186 条**」。S31 落地树在 `c8e1d62` 上实测：`links` 1186→1190、`docrefs` 474→475（judged 444→445），`plantopics` 720/239/60/421 与 `planrefs` 502/467/481/481 未变，仍然对 | 这三处都是**对着 `64ecf78` 那棵树算的预测**，在那棵树上自洽（`links` 1184+4=1188、`docrefs` 468+1=469）。此后 `9690c31` 把 `links` 推到 1186、`e11d3e0` 把 `docrefs` 推到 474，**预测句没跟着重跑**。预测的分母一换，四个数里有三个旧了——只有 `docrefs pair` 489 碰巧没动，因为那 6 处新增引用全落在豁免的报告里、judged 一直是 444。**「落地后会变」的清单也有时点，写它的那一刻就欠一棵树的锚。** |
 | 本报告 §16.32 开头那行（`contracts/README.md:17` 的布局块） | `` `contracts/README.md:17` 的布局块是这么描述这一类文件的： ``，下面围栏里引的是 `  *.v2.schema.json             企业 schema + 单 topic 的 payload schema（见下）` | **`:18`**。第 17 行是 `  redaction-policy.v2.json     密钥脱敏规则表：secret 闭集、替换形态、兜底（见下）`，第 18 行才是引的那句 | **写着的时候就是错的，不是漂移**：写下这行的 `fb1ddfa`（2026-11-06）自己的树里，这句引文已经在第 18 行——同一个提交里引文位置和引用行同时写定，位置一开始就填错了。回表复测：`contracts/README.md` 的 100 个历史版本里，含**这句确切措辞**的有 88 个，88 个全部在第 18 行、且只出现一次，没有一个落在别处；另 12 个更早的版本用的是另一套措辞（`9 个企业 schema…` / `10 个 schema…`），其中 3 个在 17 行——但那是**还没有 `redaction-policy.v2.json` 这一行**的老布局块（`contracts/` 下只有 8 行），引文本身也不同，不构成「`:17` 曾经对过」。**逐字引文要按引文回表定位，不能凭「布局块里排第几」估。** |
+| §16.11「顺带确认第三条本来就是对的」 | `validate_examples.py:149` 与 §16.8 表格里的引用都不用改 | **结论没错，行号早已不对**：`AGGREGATE_EXEMPT` 里 `continuity.check.completed` 那条现在是**第 154 行**；第 149 行属于 `context.pack.created` 那条（它引的是 S18 的 §6.3 行 469–470） | 写下时是对的：`34525262`（2026-11-06 12:04，「Repoint three README line citations that had drifted」）引入时它确实在 149；一小时后 `b325e668`（13:02）把文件顶部 docstring 从 5 行扩到 10 行，整段下移 5 行，引用没跟着改。**这一节的标题就是「上一轮改 README 时把两份 schema 里的引用改成了过期行号」，而它自己最后这一句正是同一类引用**——按本节末尾那条推广（「要么写符号名，要么改完就回头核」），改成符号名 `AGGREGATE_EXEMPT` + 事件名，不再依赖行号。**行号引用在本文件里也会烂。** |
 
 其中 `482/481` 那一行要更正一次判断：**README 里的 `481/481` 一直是对的**，我看到 482 是因为停掉一个
 还在跑的变异脚本时它恰好把这一行改成了 `482/481`，而检查读到了那个中间态。用 `git show HEAD` 核过，
