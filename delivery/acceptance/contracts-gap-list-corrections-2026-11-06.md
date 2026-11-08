@@ -5864,18 +5864,31 @@ HEAD 的旧断言集；两侧各自内部自洽。这类红是「树在改动中
 
 **覆盖面怎么量的。** 48 个 plan 文件逐个改名——`Snn` 前缀保留，slug 换成
 一个不存在的词 `tmpslug`，不修任何引用——一次一个，每次都从干净检出重跑全量。
-**48/48 全部 exit 1**。但红的是哪一项，分四类：
+**48/48 全部 exit 1**。但红的是哪一项，分五类：
 
 | 抓到的检查 | 文件数 | 抓到它的是什么 | 报的是「名字不合规」吗 |
 |---|---|---|---|
 | 仅 `links` | 40 | 指向旧文件名的 markdown 链接断了 | **不是**——链接一并改成新名字即消 |
 | `checkids`（另带 `links`、`readme`） | 4（`S35`–`S38`） | 这 4 个文件名被硬编码在检查里 | **是，唯一一处** |
-| `links` + `redaction`（`S46`）；`links` + `redaction` + `docrefs`（`S31`） | 2 | 链接断，另加一处写死旧文件名/旧 allowlist 条目 | 不是 |
+| `links` + `redaction` | 2（`S45`、`S46`） | 链接断，另加 `redaction` 的 `rule_ref` 写死了旧文件名 | 不是 |
+| `links` + `docrefs` | 1（`S31`） | 链接断，另加 `docrefs` 的 allowlist 键写死了旧文件名 | 不是 |
 | **仅 `redaction`** | **1（`S47`）** | `redaction` 的 `rule_ref` 写死旧文件名，而这个文件**没有任何链接指向 `plans/`** | 不是 |
 
 计数核对：`links` 出现在 47 次（缺席的那 1 次就是 `S47`），`checkids` 4、
-`readme` 4、`redaction` 3、`docrefs` 1。40 + 4 + 2 + 1 = 47 个带 `links` 的，
-剩下 1 个（`S47`）带 `redaction`。
+`readme` 4、`redaction` 3、`docrefs` 1。带 `links` 的 47 个是
+40（仅链接）+ 4（`checkids`）+ 2（另带 `redaction`）+ 1（另带 `docrefs`）；
+不带 `links` 的 1 个是 `S47`。40 + 4 + 2 + 1 + 1 = 48。
+
+**`S31` 与 `S45`/`S46` 的失败消息长得一样，来源却是两项不同的检查。**
+三者都是「链接断 + 一处写死的旧文件名」，但写死它的：`S45`/`S46` 是
+`redaction-policy` 的 `applies_to[].rule_ref`（4 个条目里有 3 个各指向
+S45/S46/S47 之一，第 4 个指向 contracts 与 docs），
+`S31` 是 `docrefs` 的 allowlist 键——`S31` 第 5 行引用了 `docs/10` 里
+并不存在的编号标题，那个键为了豁免它，把文件名整串抄了进去。
+**所以把文件名整串抄进代码的检查是 3 项，不是 2 项**：`checkids`（4 个
+`QC_PLANS` 条目）、`redaction`（3 个 `rule_ref`）、`docrefs`（1 个 allowlist 键）。
+三者都只在被抄的那几个文件上生效，合计覆盖 48 个里的 8 个；剩下 40 个只由
+`links` 的「目标存在吗」兜着。
 
 **`S47` 那一行是本节的全部意义。** 48 个文件里，**恰好 1 个**没有任何 markdown
 链接解析到 `plans/S47-realtime-projection.md`（全仓 682 条链接指向 `plans/`，
@@ -5896,7 +5909,12 @@ HEAD 的旧断言集；两侧各自内部自洽。这类红是「树在改动中
 改名 + 改链接，对它是**一次合法改名**：它看到 N 个链接，N 个都能打开。
 `plans/README.md` 第 15 行的命名规则是这条约束的**唯一来源**，而它是散文——
 没有任何正则去比对文件名的 `<slug>` 段与 catalog 的 `slug`。
-全仓提到 `slug` 的 5 行都在 `catalog` 与 `maturity` 两项里，没有一行读 `plans/` 的文件名。
+`check_all.py` 里提到 `slug` 的 5 行全在 `catalog` 与 `maturity` 两项里
+（`check_maturity` 拿它去拼 `services/<slug>/src`），没有一行读 `plans/` 的文件名。
+生成器 `generate_services.py` 倒是拼过 `S<id>-<slug>.md`，但它只把这个字符串
+写进 `services/<slug>/service.md` 的一行链接里当**文本**用，从不拿它去核 `plans/`。
+用 `grep` 找「同一行里既有 `plans/` 又有 `slug`」的 `.py` 行：`check_all.py`
+一处都没有，生成器也没有——**没有任何一行同时看这两个字符串。**
 
 **前缀那一路也一样，只是被更早拦下。** `check_planrefs` 从文件名前缀建一张
 `Snn -> 文件` 的表，扫全仓的 `Snn §X` 引用；表里没有就报「`plans/` has no `Snn-*.md`」。
@@ -5935,3 +5953,17 @@ HEAD 的旧断言集；两侧各自内部自洽。这类红是「树在改动中
 **这节同样不引用任何 `check_all.py` 行号**，原因和 §16.33 末尾那条一样：
 本节说的是**行为**，不是某一行代码，所以只写函数名不带行号。
 `citerefs` 的实际值以写完后干净检出为准。
+
+**更正表。**
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 表格第 3 行：「`links` + `redaction`（`S46`）；`links` + `redaction` + `docrefs`（`S31`）」 | **`links` + `redaction` 是 `S45` 与 `S46`；`S31` 是 `links` + `docrefs`，与 `redaction` 无关** | **把「失败消息长得像」当成了「同一项检查」。**`redaction-policy` 的 4 个 `applies_to` 只提到 S45/S46/S47，S31 一个字都没有。S31 那处写死的是 `docrefs` 的 allowlist 键。两处都是「旧文件名被写死」，但写死它的是两项不同的检查——混成一格，`redaction` 的 3 次就被数成了 2 次，S45 整条消失 |
+| 2 | 「分四类」 | **五类** | 第 1 条的连带：S45 与 S46 同类、S31 自成一类，本来就不是同一格 |
+| 3 | 「40 + 4 + 2 + 1 = 47 个带 `links` 的，剩下 1 个（`S47`）」 | 40 + 4 + 2 + **1** = **47** 带 `links`，再加 1 个（`S47`）= **48** | 算式左边漏了 `docrefs` 那 1 个，于是 47 被说成「带 links 的全部」；它其实是「48 里的 47」。分母是 48 而不是 47 |
+| 4 | 「全仓提到 `slug` 的 5 行都在 `catalog` 与 `maturity` 两项里」 | **`check_all.py` 里**是 5 行、在这两项里；全仓 `.py` 里共 **9 行**，另 **4 行**在 `generate_services.py` | **把「一个文件里数的」写成了「全仓」。**生成器那 4 行拼过 `S<id>-<slug>.md`，虽然只当文本写进链接、不参与核对，但「全仓只有 5 行」是事实错误。结论不变（没有一行同时看 `plans/` 与 `slug`），但支撑它的事实说错了 |
+
+**这次怎么发现的。** 写完之后重跑 `sweep_out.txt` 的分类统计：把 48 行按「命中了哪几项」
+分桶求和，桶里出现了一个 `docrefs+links` 单独一类，而表里没有这一格；
+`redaction` 那 3 行（S45/S46/S47）对照表里只剩 2 行。**是分桶之和与分母对不上**，
+不是重读正文想起来的——正文里那句话读起来是通的。
