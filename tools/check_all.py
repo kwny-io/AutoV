@@ -115,8 +115,8 @@ def check_links(name):
       in a dot-directory fails instead of going unread.
     """
     r = Result(name)
-    fence = re.compile(r"```.*?```", re.S)
-    inline = re.compile(r"`[^`\n]*`")
+    fence = re.compile(r"(?ms)^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[ \t]*$")
+    inline = re.compile(r"(?<!`)(`+)(?!`)(?:(?!\1).)+?\1(?!`)", re.S)
     link = re.compile(r"\[[^\]]*\]\(([^)\s]+?)(?:\s+\"[^\"]*\")?\)")
     total = 0
     skipped_files = 0

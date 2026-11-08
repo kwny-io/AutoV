@@ -1545,7 +1545,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 读起来像一段校对过的文字）、
 `citerefs`（正文里引用 `check_all.py` 行号的地方，必须**连函数名一起写**，如
 `check_all.py:check_payload_refs:1383-1422`，且那个函数确实覆盖这几行；扫 139 个 md，
-今天共 **11** 处引用、11 处都指名。
+今天共 **12** 处引用、12 处都指名。
 补这一格的理由是本轮实测到的：一批引用早已漂进**旁边的**函数里，而文件长度还够，任何只看
 「行号存在」的检查都会放过它们；其中一处就在本文件的 `links` 那一格里，是描述 `payloads`
 今天做什么的活文字，不是历史注记。只查「落在某个 `check_*` 里」也不够——变异测试里
@@ -1589,7 +1589,7 @@ topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1186、s
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
 plantopics unjudged tokens 709、plantopics filename tokens 231、
 plantopics versioned-doc tokens 59、plantopics event-or-action tokens 419、docsreadme count 9、
-citerefs citation 11、planrefs ref 491、planrefs judged 456、planrefs pair 470、planrefs pair hit 470、
+citerefs citation 12、planrefs ref 491、planrefs judged 456、planrefs pair 470、planrefs pair hit 470、
 docrefs ref 474、docrefs judged 444、docrefs pair 488。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
