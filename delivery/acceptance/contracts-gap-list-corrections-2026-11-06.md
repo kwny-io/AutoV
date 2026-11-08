@@ -3944,7 +3944,7 @@ YAML 那 11 处逐条：
 所以上面那个 8 从来没人报过，它也就一直被那行说明文字盖着。
 
 **`openapi.v2.yaml` 的 `$ref` 更是完全没人核。** 全仓对这个文件只做了两件事：
-`readme` 检查用正则数它有几个 `get:` / `post:`（`tools/check_all.py:check_readme_counts:1110`），
+`readme` 检查用正则数它有几个 `get:` / `post:`（`tools/check_all.py:check_readme_counts:1135`），
 缺口 5 记过它一个 `:verb` 都不用。**没有任何检查解析它的 `$ref`**——
 把 11 条里任意一条改成不存在的文件名，十项检查照样全绿。这是本轮真正测到的空洞，
 比那 8 个文件怎么归类重要得多。
@@ -4960,7 +4960,7 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 | `contracts/README.md` 的 `links` 一格 | `check_all.py:` 后跟 763-772 两行 | `check_interactions` | `check_payload_refs` |
 | 报告 3795 | `check_all.py:` 后跟 240-252 两行 | `check_topics` 的守卫段 | `check_catalog` 里那段「topic 不是唯一键」注释（272-276） |
 | 报告 3910 | `tools/` 前缀版、同样 763-772 | `check_interactions` | 同第一行 |
-| 报告 3915 | `tools/` 前缀版、单行 666 | `check_safety_switches` | `check_readme_counts` 里数 get/post 那行（1110） |
+| 报告 3915 | `tools/` 前缀版、单行 666 | `check_safety_switches` | `check_readme_counts` 里数 get/post 那行（当时 1110，现 1135——见更正表第 5 行） |
 | 报告 3929 | `check_all.py:` 后跟单行 1346 | `check_payload_refs` 的**当时**位置 | 同上，但注释说它漂过 |
 | 报告 3941 | `tools/` 前缀版、同样是 1346 | 同上 | 同上 |
 
@@ -5016,6 +5016,7 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 | 2 | 六处匿名引用，典型的一处是 `check_all.py:` 后只跟 763-772 | 六处全部改成带函数名的写法（`citerefs` 今天数到 8 处，后来几处是本补记与 `contracts/README.md` 新增说明时自己引入的） | 只记行号不记函数名；文件被改写后行号整体漂移而长度不变，任何只查行号的判据都会放过 |
 | 3 | `citerefs` 第一版「落在某个 `check_*` 里即可」 | 必须是指名的那一个 | 判据比声称的弱一档。「在某个 check 里」和「在它说的是那个 check 里」差着整整一类真实错误，而变异测试里那两条正好落在缝里 |
 | 4 | 本节初稿写「`check_payload_refs` 这一轮换了四个位置：1346 / 1454 / 1480 / 1366」 | 函数这一轮只待过**两个**位置：HEAD 的 1346，和插入 `check_citerefs` 后的 1460。1454、1480 是我**自己敲错的引用值**（先按未插入时的印象写 1454，把 citeefs 挪走后又按错的边界写 1480），不是函数待过的地方 | 把「我写错的引用数」和「函数的实际位置」混成一列。**凡是写「某物在 A/B/C」之前，每个值都要回文件里数出来**，不能把中间的手误当成历史位置 |
+| 5 | 上一行修好之后，`1110` 这个值被当成了"已核对"的正确答案，留在了正文两处：§16.32 的 `check_readme_counts:1110` 与本节错位表第 4 行「数 get/post 那行（1110）」 | 数 `get:` / `post:` 的那行现在是 **1135**（`check_all.py:check_readme_counts:1135`）。`1110` 现在落在 `("services", r"(\d+) 服务元数据", len(services)),` 上 | 这个值在父提交 `231bad7` 里**确实**是 1110，而被同一次修改插入的那条 `README_CLAIMS`（`citerefs citation`）把它推到了 1115——**改它的人正是写 1110 的人**。`citerefs` 抓不到：1110 和 1135 都在 `check_readme_counts` 里，而它只校验"行号落在所指名的函数内"，不校验"这行是不是说的那件事"。**带函数名只挡住了跨函数漂移，挡不住同函数内的滑行** |
 
 #### 写这一节本身，又给 `citerefs` 喂了两次反例
 
