@@ -423,6 +423,31 @@ schema 的 `check_id` pattern 也强制三段：
 
 建议改 §4.3 的文案（`SUB.LAYOUT` → `SUB.TIMING`），不是改表。**同样要 owner 确认。**
 
+**这一节只写了一处，套件报的是三处。** `check_check_ids` 的 `KNOWN_DANGLING_REFS` 里有三个值，
+上面的主节覆盖了第一个；另外两个此前**没有任何地方记过**，补在下面。三个都只是记录，不做取舍。
+
+**（二）`SUB.TIMING.CPS`——截断了 ID 的简称**
+
+[S38:241](../../plans/S38-subtitles.md) 写「需要重新检查 `SUB.TIMING.CPS` 与 `SUB.TIMING.OVERLAP`」。
+`SUB.TIMING.OVERLAP` 是 §5 登记的第 288 行，而 `SUB.TIMING.CPS` **不是任何 ID**——登记的是
+`SUB.TIMING.CPS_EXCEEDED`（第 292 行）。同一句里一个全名、一个简称，读者容易以为前者也是 id。
+**检查器判它未解析是对的**：它是一个被反引号包起来、写着「id」形状但不存在的名字。
+改法只有一种：写全 `SUB.TIMING.CPS_EXCEEDED`。**要不要改、以及「三段的简称算不算 id」这个口径，
+仍是 owner 的。**本条不改检查器，也不改正文。
+
+**（三）`SUB.CUE.VERSION`——校验器实测里用的反例**
+
+[S35:1056](../../plans/S35-technical-qc.md) 写「校验器已实测：把 `SUB.CUE.VERSION` 的
+`default_action` 写成 `regenerate_video`……退出 1」。这一条和前两条**性质不同**：它不是在声称
+某个登记项，而是**引用一个不存在的 id 来说明校验器会拒绝它**。S38 的登记表里没有
+`SUB.CUE.VERSION`（24 个 `SUB.*` 行，逐个核过），所以这段描述本身是自洽的——正因为不存在，
+才能拿它当反例。
+
+但检查器看不到这个区别：`check_check_ids` 只问「这个 id 形状的字符串在 owner 的表里吗」，不问
+「这句话是在陈述还是举例」。**这是已知的假阳性，不是正文的错。** 若要消掉，得让检查器能读出一句
+话的语气——做不到，或者把例子挪进围栏（但那会让它不再是「实测记录」）。**所以这一条留给 owner：
+要么接受套件里那 1 条假阳性，要么改这句话的写法。**
+
 ### 5.3 `promotion_windows` 不是 schema 字段
 
 [S36:174](../../plans/S36-semantic-qc.md) 写「阈值记在 `check-registry` 的 `promotion_windows`」，
