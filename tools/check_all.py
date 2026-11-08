@@ -2340,7 +2340,7 @@ def check_docrefs(name):
     Two heading-reading bugs were made and fixed while measuring, and both are
     the same mistake -- requiring more punctuation than the corpus writes:
       - requiring `.` or `、` after the number cost nothing measurable: every
-        one of the 64 numbered headings in docs/ uses `.`, so 0 of the 489
+        one of the 64 numbered headings in docs/ uses `.`, so 0 of the 488
         pairs change verdict under that reading. Kept in the record anyway,
         because "it happened to cost nothing" is not the same as "it was
         right", and the shipped pattern is the one that states the real rule.
