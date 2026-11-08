@@ -1497,7 +1497,7 @@ topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 
 `len(tools)`：12 个工具的 `readOnlyHint` 必须与 `required_scope` 在只读/写入上一致、
 `required` 的键必须在 `properties` 里、3 处跨文件 `$ref` 必须指向真实 schema；6 个 scope
 取值只报不判——`publish` 不在 `docs/13` 的五档闭集内是授权决策，见缺口 2）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1184 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数；
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1186 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数；
 还走遍全树核对「有多少 md 被 `glob` 藏起来」——点目录里只允许 `.claude/worktrees/` 里的 md 不被扫，
 别处出现一个就报错，此前这是 `glob` 的副作用而非断言）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
@@ -1584,7 +1584,7 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
 那 32 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
-topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1184、stated invariant 5、
+topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1186、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
 plantopics unjudged tokens 709、plantopics filename tokens 231、

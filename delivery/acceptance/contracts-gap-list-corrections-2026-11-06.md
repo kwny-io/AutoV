@@ -5578,3 +5578,73 @@ files checked：                  139                  139
 **单列的理由。** 一个「今天恰好没踩到」的边界，和上一节「排除条件写了却没生效」是同一族：
 **覆盖面是被语料被动证明的，不是被断言主动证明的**。这条尤其值得记——我第一次的 0/0 是探针顺序
 写错得到的假绿，和第五节的 `268` 是同一个错误结构：**数对了，问错了**。
+
+### 补记十四：`check_docrefs` 遇到「带点的未解析引用」会崩，不是报错（已修）
+
+上一节收尾时我去追 `docrefs` 那行 `1 resolve to neither`，顺带查了它怎么处理未解析项，
+发现它不是「报告并继续」。**它在一种输入上直接抛异常，整项变成 ERROR，连 `readme` 一起带下去。**
+
+**缺陷。** `unresolved` 这个列表里装的是两种东西：不带点的分支塞 `(key, msg)` 二元组，
+带点的分支塞一条**裸字符串**。消费它的循环按二元组解包：
+
+- 塞二元组：`check_all.py:check_docrefs:2449`（不带点，`docs/10 §1` 走这条）
+- 塞裸字符串：`check_all.py:check_docrefs:2443`（带点，既不是标题也不是列表项时走这条）—— 修前
+- 消费：`check_all.py:check_docrefs:2457` `for key, msg in unresolved:`
+
+裸字符串被解包成二元组，于是 `ValueError: too many values to unpack (expected 2)`。
+
+**触发条件，实测（在干净检出里注入引用再跑）。**
+
+| 注入的引用 | 走向 | 结果 |
+|---|---|---|
+| `docs/07 §1.999`（带点，非标题非列表项） | 2443 裸字符串 | **崩溃** `ValueError` |
+| `docs/07 §9`（不带点，无此标题） | 2449 二元组 | 正常报 1 个失败 |
+| `docs/07 §1.5`（带点，命中列表项） | 解析成功 | 0 失败 |
+
+**影响面。** 注入 `§1.999` 后跑全套：`ERROR docrefs`、`ERROR readme`（它为了比对数字重跑
+`check_docrefs`），退出码 **2**（`environment problem; at least one check did not run`），
+不是 1。修复后同样输入：`FAIL docrefs 1 problem(s)`，退出码 **1**，`2 resolve to neither`。
+
+**今天为什么是绿的。** 语料里唯一一处未解析引用是 `docs/10 §1`，它**不带点**，走 2449。
+带点分支（2443）在今天的语料上**一次都没有被执行过**——不是被断言证明没事，是没有输入走到。
+
+**已修。** 把 2443 改成和 2449 同形：先拼 `base`，再追 `(base, base + …)`。修法只动这一处，
+两个分支现在都塞二元组。修复后复测：注入 `§1.999` → `FAIL docrefs`，不再 ERROR。
+
+**附带的第二个发现（未改，留给 owner）。** docstring 说未解析的 `docs/10 §1`「is reported
+as a failure with the open-decision wording」。实际上它在 `KNOWN_UNRESOLVED_DOCREFS`
+（`check_all.py` 里紧跟 `check_registry` 之后的模块级常量，不在任何函数内）里，
+2449 之后的循环命中它就 `continue`，**不调 `r.fail`**。
+所以它既不是失败、也不进失败列表，只体现在 note 的 `1 resolve to neither` 里。
+文档说的「报为失败」和代码的「静默放行」不一致。这是措辞问题，不是行为缺陷——放行本身是
+owner 决策（是否允许「第一段」这种写法），我不替 owner 裁决，只记下这处不一致。
+
+**同一轮的另一个更正：`links` 1184 → 1186。** 这不是发现，是**我自己上一轮改坏的**。
+`9690c31` 在 §5.2 补了两个链接（`[S35:1056]`、`[S38:241]`），把提交树上的 `links` 从
+1184 抬到 1186，却没回填 `contracts/README.md`。逐提交实测（`check_links` scope）：
+
+| 提交 | 实测 links | README 写的 |
+|---|---|---|
+| `1e37af5` | 1184 | 1184 |
+| `6ee2a14` | 1184 | 1184 |
+| `64ecf78` | 1184 | 1184 |
+| `9690c31`（我加的 2 条链接） | **1186** | **1184** |
+
+干净检出 `1e37af5` = 22 ok / 1 skip / 0 fail；干净检出 `9690c31` = `FAIL readme`，
+「README says 1184 for links, links says 1186」。**是我引入的回归，本轮修正为 1186。**
+
+| 原写 | 正确 | 错因 |
+|---|---|---|
+| `contracts/README.md` 两处 `links` 1184 | **1186** | `9690c31` 加了 2 条链接，没同步这两处计数；且我当时用工作树测得 1184，而工作树含 `_inbox/` 的 142 条链接，不是 README 该锚定的口径 |
+| 「干净检出的 HEAD 22 ok / 0 fail」可作为当前结论 | **只对 `1e37af5` 成立；`9690c31` 起是 21 ok / 1 FAIL** | 上一轮把 `1e37af5` 的健康状态当成了当时的 HEAD 状态，之后自己的提交把它打破却没复测 |
+| 本节把四处行号写成 `check_all.py:NNNN` | **`check_all.py:check_docrefs:NNNN`** | `citerefs` 要求引用必须带函数名，裸行号会让它从 8 升到 12 而失败。`KNOWN_UNRESOLVED_DOCREFS` 是模块级常量，无函数可名，改为不引行号的描述 |
+
+**本节自己也抬高了两项计数。** 上面的例子写的是 `docs/NN §X` 形态，本文件虽然在
+`check_docrefs` 的 `EXEMPT` 里**不判定**，但**仍计入 ref 总数**；同理本节新增的
+`check_all.py:check_docrefs:NNNN` 引用也计入 `citerefs`。**本节每改一次，这两个数就变一次**，
+所以这里只记方向、不记终值：`docrefs` 的 ref 总数与 `citerefs` 的 citation 总数，都比写这一节
+之前高，**精确值以 `contracts/README.md` 里回填的、干净检出上实测的那个为准**。
+
+这类自我指涉值得单独说一句：**报告里为了举证而写的例子，会推高报告所引用的那个计数**。
+上一节 `check_links` 的 9 处双反引号 span 也是同一结构——例子在语料里，语料在被数。
+本节的第一版就是把 474 写进正文，随后又因为补写一句变成 478，追不上的正是这个循环。

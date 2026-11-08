@@ -2440,9 +2440,10 @@ def check_docrefs(name):
                     if top in heads and sub.isdigit() and int(sub) <= items.get(top, 0):
                         listitem += 1
                     else:
-                        unresolved.append(
-                            f"{rel}:{line} cites docs/{num} §{x}: docs/{num}-*.md "
-                            f"has no such heading or list item")
+                        base = f"{rel}:{line} cites docs/{num} §{x}"
+                        unresolved.append((base,
+                            base + f": docs/{num}-*.md has no such heading or "
+                            f"list item"))
                 else:
                     base = f"{rel}:{line} cites docs/{num} §{x}"
                     unresolved.append((base,
