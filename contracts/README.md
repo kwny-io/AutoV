@@ -1545,7 +1545,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 读起来像一段校对过的文字）、
 `citerefs`（正文里引用 `check_all.py` 行号的地方，必须**连函数名一起写**，如
 `check_all.py:check_payload_refs:1383-1422`，且那个函数确实覆盖这几行；扫 139 个 md，
-今天共 **8** 处引用、8 处都指名。
+今天共 **11** 处引用、11 处都指名。
 补这一格的理由是本轮实测到的：一批引用早已漂进**旁边的**函数里，而文件长度还够，任何只看
 「行号存在」的检查都会放过它们；其中一处就在本文件的 `links` 那一格里，是描述 `payloads`
 今天做什么的活文字，不是历史注记。只查「落在某个 `check_*` 里」也不够——变异测试里
@@ -1561,7 +1561,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 它的更正表故意把错误写法放进单元格，而没有任何词法特征能把它和活引用分开，实测过两种都不成立
 （遮行内代码会连 11 处真引用一起遮掉，遮 `「」` 又漏掉反引号里的那一处）。
 这是真缺口：报告之外的错引用会被拦住，报告里的不会。）、
-`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **468** 处引用，其中 **444** 处受检，
+`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **474** 处引用，其中 **444** 处受检，
 488 个段号对：484 个命中标题、3 个命中有序列表项、1 个两样都不是（见下）。
 和 `planrefs` 同一族，但这类引用**几乎都写在 markdown 链接里**（`[docs/07 §1.5](../docs/07-…)`），
 路径由 `links` 验，这里只验段号——此前没有任何检查看这一段。
@@ -1589,8 +1589,8 @@ topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1186、s
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
 plantopics unjudged tokens 709、plantopics filename tokens 231、
 plantopics versioned-doc tokens 59、plantopics event-or-action tokens 419、docsreadme count 9、
-citerefs citation 8、planrefs ref 491、planrefs judged 456、planrefs pair 470、planrefs pair hit 470、
-docrefs ref 468、docrefs judged 444、docrefs pair 488。
+citerefs citation 11、planrefs ref 491、planrefs judged 456、planrefs pair 470、planrefs pair hit 470、
+docrefs ref 474、docrefs judged 444、docrefs pair 488。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
