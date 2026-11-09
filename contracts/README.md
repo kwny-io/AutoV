@@ -1835,12 +1835,14 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `contracts/**/*.json` 6 处（`execution-context` 5、`automation-policy` 1）。
    其中 6 个的唯一引用入口就是那 11 条 YAML。
 
-   `payloads` 检查只做正向：topic 指到的文件必须存在（`check_all.py:check_payload_refs:1383-1422`）。
-   **反向那一半没有**——从不问「`contracts/` 下有没有 schema 没被任何 topic 指到」，
-   所以这 8 个一直没人报。**`openapi.v2.yaml` 的 `$ref` 更是完全没有检查**：
-   全仓只对它数过几个 `get:` / `post:`，把 11 条 `$ref` 里任意一条改成不存在的文件名，
-   十项检查照样全绿。它该不该有独立目录属于 owner 决定（`contracts/README.md:733`
-   已记「payload schema 一律平铺」是既有约定）。逐数字见
+   `payloads` 检查两个方向都报（`check_all.py:check_payload_refs:1383-1423`）：topic 指到的文件
+   必须存在，反向则数「`contracts/*.schema.json` 里几个没被任何 topic 指到」，今天印
+   `8 of them named by no topic`。**反向只报数不判红**——这 8 个不是错误，是接口的请求/响应体，
+   每一个都有入向 `$ref`（见上表）。`openapi.v2.yaml` 的 `$ref` 也有检查（注册名 `openapi`，
+   `check_all.py:check_openapi_refs`）：43 处里 11 处是文件名、必须存在，32 处本地指针必须命中
+   `components/schemas` 下的 3 个组件，21 处 `x-service-id` 必须是 catalog 服务。把 11 条里任意
+   一条改成不存在的文件名会 `FAIL openapi`，exit 1。它该不该有独立目录属于 owner 决定
+   （`contracts/README.md:733` 已记「payload schema 一律平铺」是既有约定）。逐数字见
    [§16.32](../delivery/acceptance/contracts-gap-list-corrections-2026-11-06.md)。
 
 ## schema 管不到什么
