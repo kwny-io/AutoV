@@ -3666,6 +3666,7 @@ schema_owner service_id slug
 | 1 | 本节初稿「点名的渠道是 **10 类**」 | **12 个**：Volcengine、BytePlus、Kling、Wan官方API、Wan自托管、Veo、Sora历史、Vidu、MiniMax、图像、TTS、LLM/VLM | **10 是 `body.split("、")` 的碎片数，不是条目数。**首片 `Volcengine和BytePlus分开Deployment；Kling` 一个碎片里塞了两件事（Seedance 的两个 Deployment + Kling），按 `、` 切只数出一片。10 和 12 之差正好是首片没拆开的那两个。**按分隔符切之前先看清分隔符的语义**——这句里 `和`、`；`、`、` 三种都在用 |
 | 2 | 同上「仓库里是 **7 个 provider 目录、9 个 connector**」 | 两个数都对，但它们不是同一个缺口的两面：9 个 connector 分布在 7 个 provider 下（`seedance`、`wan` 各两个渠道）。写在一起容易被读成「7 对 9 差了 2」 | 没写清单位。按目录数和文件数分别说，或者直接给映射表 |
 | 3 | 本节初稿脚本「mapped dirs that do not exist: 9 个全缺」 | **假阳性，0 个缺** | 路径解析写成 `rsplit("/", 2)` 再拼第 1、2 段，把 `connectors/seedance/volcengine/connector.yaml` 解成了 `volcengine/connector.yaml`，丢掉了 provider 那一层。改成 `'/'.join(path.split('/')[1:3])` 后 9 个全部命中。**脚本报「全都不存在」时，先怀疑解析，不是先怀疑数据** |
+| 4 | 本轮复核时我把本节测出的事实（`agents/`、`connectors/` 都不从 catalog 派生）直接改进 `AGENTS.md`，把「三者都从 catalog 派生」换成一张三行来源表 | **已回退，`AGENTS.md` 保持 HEAD 原样。** 本节「没做什么」已明确写了不改它，理由是「改哪一边都等于替 owner 选边」——那条限制没有过期 | 我复现出了本节的一半结论（`generate_services.py` 读 catalog 5 处，`generate_agents.py`/`generate_connectors.py` 各 0 处），就当成「发现了一处没人修的错误」动手改文档，**没有先读本节已经记下的处置决定**。错在把「查实了事实」当成「有权改动」：事实成立，而改哪一边是契约设计决策，正属于 NEEDS_OWNER。**复核别人的结论时，先读它的「没做什么」段——那里写着它为什么停手** |
 
 ## 16.30 全仓 113 个接口用 `:verb` 子动作写法，唯一的 OpenAPI 文件一个都没用
 
