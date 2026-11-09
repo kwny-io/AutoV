@@ -1948,6 +1948,149 @@ ARCHIVE_KNOWN_DIVERGENT = {
 }
 
 
+# The 61 MANIFEST rows that name files imported out of the package. Each row is
+# resolved to its real home by the prefixes below, and pinned to the hash it has
+# in the tree this set was built from. The check does not compare these against
+# MANIFEST.md -- see the docstring for why that is the right call -- but it does
+# compare them against this baseline, so a later edit to one of them is still
+# caught rather than merely not looked at.
+#
+# Pinned per file, not counted: a count would be satisfied by any 57 files
+# matching, and the four that had already legitimately moved (the two generated
+# catalogs, docs/02, and the memory example) would absorb an edit to any of the
+# other 57 without the number changing.
+IMPORT_PREFIXES = (
+    ("examples/", "contracts/examples/"),
+    ("diagrams/", "docs/diagrams/"),
+    ("layout.html", "apps/studio-web/layout.html"),
+)
+
+ARCHIVE_IMPORTED_BASELINE = {
+    'contracts/admission-record.v2.schema.json': (5020,
+        '66477e967cb12d55e62d111ff49d2c0cb2eb4a0bccdb00831cec2ad17eba5272'),  # contracts/admission-record.v2.schema.json
+    'contracts/automation-policy.v2.schema.json': (4472,
+        'd49d1807836b4c270479cdd85692c81a9e29aba654671fa6f96cf92becc50930'),  # contracts/automation-policy.v2.schema.json
+    'contracts/context-pack.v2.schema.json': (3693,
+        '03c5dd1e0aa0e541eea78903012f7395ce7219a5e39cd881cecc57445fd3037b'),  # contracts/context-pack.v2.schema.json
+    'contracts/domain-v1/README.md': (651,
+        '6dfeacb599efcf688ffd1196b49882dbe3d46e833c855999a78d6f51b8affb6a'),  # contracts/domain-v1/README.md
+    'contracts/domain-v1/change-plan.v1.schema.json': (6980,
+        '29ecd36cda7dfab69be17ae01134900fc7b2f273f18da3f08d9f96fa743f6879'),  # contracts/domain-v1/change-plan.v1.schema.json
+    'contracts/domain-v1/event-envelope.v1.schema.json': (1410,
+        'f3ad8ac0d88a0d128fbe88a3eb3ea292e22cff82dd7e8087d2435ca38da22988'),  # contracts/domain-v1/event-envelope.v1.schema.json
+    'contracts/domain-v1/generation-request.v1.schema.json': (11768,
+        '358dcbc9c889821940b2f73f78df003a59aaea87698a15fc54786b078e3c73c3'),  # contracts/domain-v1/generation-request.v1.schema.json
+    'contracts/domain-v1/qc-report.v1.schema.json': (7068,
+        'b7708a0609c0e004b1a3839d4bba5e3b5717ef1fe4b549151ec26f5fc0f782cf'),  # contracts/domain-v1/qc-report.v1.schema.json
+    'contracts/domain-v1/shot-spec.v1.schema.json': (12833,
+        'e76a90386587eb7cd0f28d6e148f34ae6eb7d5e7368c05557e9ee20fed4fcdac'),  # contracts/domain-v1/shot-spec.v1.schema.json
+    'contracts/enterprise-change-plan.v2.schema.json': (7015,
+        'e445d1a9e49bd2ea046b0a4319b4685b22c865c761bc461725c1c4ed780ae352'),  # contracts/enterprise-change-plan.v2.schema.json
+    'contracts/episode-manifest.v2.schema.json': (6094,
+        '30e8106652717169075266d314ba0be6b39f15d9d7b34041df7f133eab05a4aa'),  # contracts/episode-manifest.v2.schema.json
+    'contracts/event-envelope.v2.schema.json': (2333,
+        '9f70984c27885afdf3af68e76ba3cac84e11e5611deb5de7f02c08a7a4b3a9eb'),  # contracts/event-envelope.v2.schema.json
+    'contracts/event-topics.v2.json': (25073,
+        'db2c8a144b0cb4e24d55a9e765dc030c0387e3a269f3ab8959eb2fd263ef504f'),  # contracts/event-topics.v2.json
+    'contracts/execution-context.v2.schema.json': (3768,
+        '1763c0e45c1b166aa1a47e13a02801153fe9c0041fe6a533d5ee543fa8a504db'),  # contracts/execution-context.v2.schema.json
+    'contracts/generation-command.v2.schema.json': (27272,
+        'b89e3ab6183753c6bce99379b1c76a70d951ae21498f2bd5dfdecc236cb1ba31'),  # contracts/generation-command.v2.schema.json
+    'contracts/mcp-tools.v2.design.json': (11587,
+        '56d4e14358cbd2fd85f9f7d30f3166d167ef5bfcfa52267f7d8c9bb0bc73204e'),  # contracts/mcp-tools.v2.design.json
+    'contracts/memory-claim.v2.schema.json': (6665,
+        '8eac005d62271d188244088173738078966386ddd700641a7e5bbb0031ae4c13'),  # contracts/memory-claim.v2.schema.json
+    'contracts/openapi.v2.yaml': (24416,
+        'bd0d0878fa271f9e7ea8eb2cf939efaa0842a4f50bb62575c609f467270617ac'),  # contracts/openapi.v2.yaml
+    'contracts/service-catalog.v2.json': (43573,
+        '320b2a261dbe668fc873a32be0dc8e9829248fba9cfce1af9facca19abca9bec'),  # contracts/service-catalog.v2.json
+    'diagrams/01-enterprise-architecture-1.mmd': (1148,
+        '34c0d13d987c3c6c58960182f44209c07577a09cb3fa233ababff7b1e38a224e'),  # docs/diagrams/01-enterprise-architecture-1.mmd
+    'diagrams/03-admission-saga.mmd': (942,
+        '0712d8e22d322181bf44e83274e4881c8f19966d900712e7deeccfcc8f0a63b5'),  # docs/diagrams/03-admission-saga.mmd
+    'diagrams/03-deployment-capacity-1.mmd': (433,
+        'd648d2dcfbc65a41b9c15ff4ac9b4c264d89e90b904a7dd316d034688df8359a'),  # docs/diagrams/03-deployment-capacity-1.mmd
+    'diagrams/04-memory-commit.mmd': (651,
+        'ceb4e8279d2bf3acf11963132958275ea1ab7f485bbe72dfb656c87f981a6336'),  # docs/diagrams/04-memory-commit.mmd
+    'docs/01-enterprise-architecture.md': (5442,
+        'd16e5746d28545048cd9d988826c91797ed5e5f08062a944796c3fe5d7d3f06b'),  # docs/01-enterprise-architecture.md
+    'docs/02-service-catalog.md': (5618,
+        '0bc3f802527b588b16ea63d46c67b506468a784e0c3d3570e87af0ccd155de93'),  # docs/02-service-catalog.md
+    'docs/03-deployment-capacity.md': (4380,
+        'cd3cd8ba8622bd177093b910308106763f962020870bbd29bcdd4c313f453781'),  # docs/03-deployment-capacity.md
+    'docs/04-data-consistency.md': (5502,
+        '98daa321b0082b23e6cd114640e12fdaefcd50fd1f549c57c1f9ac953456f801'),  # docs/04-data-consistency.md
+    'docs/05-cross-episode-memory.md': (5338,
+        '0aacb8d4ebb2e7cfa550edaf189c00ebf8606073f0852bf6fd0d6a6b806a5b2a'),  # docs/05-cross-episode-memory.md
+    'docs/06-automation-governance.md': (3889,
+        '023ae3cba4d3b9809ec3c90740cedc26a58ae105a8e7627220f3289993a14cc8'),  # docs/06-automation-governance.md
+    'docs/07-production-workflows.md': (3652,
+        'd0813ae215cf970f8505abfe6dae2fedc16302c10a2c68618631c270e0f57dfe'),  # docs/07-production-workflows.md
+    'docs/08-agents-prompts.md': (2821,
+        '0adcbceddfdf080ce6952c745d3827d7272fc874d5b118470365881d13d768e1'),  # docs/08-agents-prompts.md
+    'docs/09-model-execution.md': (3474,
+        'a95aafb721684495a4755a1189e81694762bc0879907abbd1dd575eab81eac15'),  # docs/09-model-execution.md
+    'docs/10-assets.md': (2475,
+        'ee878d1f0f43cf4486e264740e9b77604a633a9f53aa8f84b8e5b64103d9c9c9'),  # docs/10-assets.md
+    'docs/11-quality-repair.md': (2726,
+        'f185f8f3618f898ecbbb5bbd4677f2921c86a73f2d6e2b460d4e3f7bc04f9774'),  # docs/11-quality-repair.md
+    'docs/12-budget-scheduling.md': (2974,
+        'ae7971ded454246026b67d3cb608cb1f5bd6cd6bbd1b8e5c54962805b7670a88'),  # docs/12-budget-scheduling.md
+    'docs/13-api-product.md': (3344,
+        '8f8cc48fa1804b11553ea208daa2741eef3f45367b173fb30793737e9a019c6f'),  # docs/13-api-product.md
+    'docs/14-enterprise-operations.md': (4476,
+        '048e556f42c78922e439753f9ddab0b6ccabc490ccf7fb6f78eeb2abf0531bc6'),  # docs/14-enterprise-operations.md
+    'docs/15-fde-business-evaluation.md': (3332,
+        '3b4065c871cc0d6ada04d5f047adbb20aad338ab66f27758cfe1c700349eb451'),  # docs/15-fde-business-evaluation.md
+    'docs/16-migration-acceptance.md': (7357,
+        '4ac74dc45bd8848fffe5d80c4d84cc034114d532d99871b71ac495016bb29a6b'),  # docs/16-migration-acceptance.md
+    'docs/17-provider-evidence-baseline.md': (3366,
+        '45233dbc91a98eff6770acbd450542afe2af9b66ec3a58841274e7ce2d17230f'),  # docs/17-provider-evidence-baseline.md
+    'examples/admission-unknown.json': (2064,
+        '666d072b936b49effd29788040ef47caeaecdec875122a1e0f04b4d4633d315f'),  # contracts/examples/admission-unknown.json
+    'examples/automation-policy.json': (1205,
+        '6cd8bc8aa1edb5dcdbe01c27cff69d4b7cc01489f9ff6faea3170a56671ee692'),  # contracts/examples/automation-policy.json
+    'examples/capacity-plan.json': (805,
+        '25a9ce9903d257e1e80fb31065917bb46a4e99199b3eecc39d4b2d074db9986b'),  # contracts/examples/capacity-plan.json
+    'examples/context-pack.json': (1107,
+        '3498c669c1194c3f94c749fb1262c96e2ebabdede8134feed1b607bd3f52dc44'),  # contracts/examples/context-pack.json
+    'examples/enterprise-change-plan.json': (3329,
+        'cad511d1c9cf167a40de0b4883818c74b92fdd53c5e1cd4079269d085baa548a'),  # contracts/examples/enterprise-change-plan.json
+    'examples/episode-manifest.json': (1880,
+        'd78217fc3896859b5a3d6ea13a623614744e859fd0715d79d3fe81d64b1c2ee7'),  # contracts/examples/episode-manifest.json
+    'examples/execution-context.json': (1071,
+        '2ab69b576409bc88518b6042fb6afb621a5b5c8d0356986be8f3d3f4fbbdcdce'),  # contracts/examples/execution-context.json
+    'examples/generation-command.image.json': (2181,
+        'b3dff465b3ecb221ddaf1cc9ab97054982d0b70d166a489f8fa29d3ebb2ad9f5'),  # contracts/examples/generation-command.image.json
+    'examples/generation-command.lipsync.json': (2475,
+        'a063ef5ee8c2747fd5f703c2986e8036d3f6aeaca7ba691b7ff28d7408ffe862'),  # contracts/examples/generation-command.lipsync.json
+    'examples/generation-command.music.json': (2120,
+        '00f996a0494e0f9f972a38be85eb0a6e738abc104124b7d34cc5062c8542e6d7'),  # contracts/examples/generation-command.music.json
+    'examples/generation-command.sound_effect.json': (2125,
+        '949e8c924519a879751195260090deafd333cdc3f08bb0fd9089f93087698ccb'),  # contracts/examples/generation-command.sound_effect.json
+    'examples/generation-command.speech.json': (2128,
+        '78918d563b77f5993215773f23a8cd9ed8a2b95e2144e1fe7cd128b55375ea32'),  # contracts/examples/generation-command.speech.json
+    'examples/generation-command.text.json': (2185,
+        '95bd646fbdc0e188c1243e68120a1d35de585044dc383567d7ea98853a4b84ff'),  # contracts/examples/generation-command.text.json
+    'examples/generation-command.training.json': (2341,
+        'a5828c67bd12e202188a89dc0d352ba598d93f7c1936c7b4ca3f43b49732e9df'),  # contracts/examples/generation-command.training.json
+    'examples/generation-command.understanding.json': (2364,
+        'b841ef1256fc3c3a897fc3e4f7d4134d2066fdaa014400a416a8ae1debfe2d25'),  # contracts/examples/generation-command.understanding.json
+    'examples/generation-command.video.json': (2492,
+        '498632238534fdebdc4ae1913977785e06901a2fb8bc96b69b46e41d6edef271'),  # contracts/examples/generation-command.video.json
+    'examples/memory-claim.json': (1248,
+        '57df655dcc08aa0d9f87aa73a03d87562267ee8dc9630d17dbaef1b8d6bc73c2'),  # contracts/examples/memory-claim.json
+    'examples/memory-committed-event.json': (1892,
+        'c3d497dae06b2bb1c8f54995ec598f80a42ed67ad1bb720a3109d02e09d5b2ac'),  # contracts/examples/memory-committed-event.json
+    'examples/runtime-safety.yaml': (1049,
+        '000ac6e6fd3ea36e166408cd27a2cc8e920d749a19fef602e532c8638b9f67f8'),  # contracts/examples/runtime-safety.yaml
+    'examples/service-interactions.yaml': (1278,
+        'b9d404ff65b94bcca15cc4ac5f7b289ca997399888297b6e2f84070f5b1defe9'),  # contracts/examples/service-interactions.yaml
+    'layout.html': (14709,
+        'f59808b3c9bab45c27233754bdb9c40e69c732cbae21c1ce165487336c71a9d7'),  # apps/studio-web/layout.html
+}
+
+
 def check_archive(name):
     """The read-only design package still matches the checksums in its MANIFEST.
 
@@ -1960,8 +2103,10 @@ def check_archive(name):
     115 rows but only 54 files live inside the package: the rest were imported to
     their real homes on scaffolding (contracts/, docs/, contracts/examples/,
     docs/diagrams/, apps/studio-web/layout.html), and those are expected to keep
-    changing. So only the 54 in-package rows are compared -- checking the other 61
-    would flag every legitimate doc edit and bury the signal.
+    changing. So the 54 in-package rows are compared against MANIFEST.md, and the
+    other 61 against ARCHIVE_IMPORTED_BASELINE instead -- comparing them against
+    MANIFEST.md would flag every legitimate doc edit and bury the signal, but not
+    looking at them at all would leave an edit there invisible.
 
     The comparison uses the bytes on disk, not `git cat-file`, after confirming
     the working tree is LF here: the manifest was built from LF files and a CRLF
@@ -1986,16 +2131,39 @@ def check_archive(name):
             rows.append((m.group(1), int(m.group(2)), m.group(3)))
 
     inside = 0
+    inside_ok = 0
     known = 0
+    imported = 0
     bad = []
     for rel, size, sha in rows:
         p = os.path.join(pkg, rel)
         if not os.path.exists(p):
+            # Imported out of the package on scaffolding -- not compared against
+            # MANIFEST.md, but still compared against the pinned baseline, so an
+            # edit to one of them does not pass just because it is not looked at.
+            dest = rel if os.path.exists(rel) else None
+            if dest is None:
+                for pre, home in IMPORT_PREFIXES:
+                    if rel.startswith(pre) and os.path.exists(home + rel[len(pre):]):
+                        dest = home + rel[len(pre):]
+                        break
+            want = ARCHIVE_IMPORTED_BASELINE.get(rel)
+            if want is None:
+                bad.append((rel, "a pinned baseline", "not in ARCHIVE_IMPORTED_BASELINE"))
+            elif dest is None:
+                bad.append((rel, "an imported file", "no file at any known home"))
+            else:
+                b = open(dest, "rb").read()
+                if (len(b), hashlib.sha256(b).hexdigest()) != want[:2]:
+                    bad.append((rel, f"{want[0]}B pin", f"{len(b)}B at {dest}"))
+                else:
+                    imported += 1
             continue
         inside += 1
         b = open(p, "rb").read()
         h = hashlib.sha256(b).hexdigest()
         if len(b) == size and h == sha:
+            inside_ok += 1
             continue
         if rel in ARCHIVE_KNOWN_DIVERGENT:
             # Pinned to the hash reviewed here, not merely skipped -- see the set.
@@ -2014,11 +2182,15 @@ def check_archive(name):
     stale = set(ARCHIVE_KNOWN_DIVERGENT) - {rel for rel, _, _ in rows}
     for rel in sorted(stale):
         r.fail(f"{rel} is listed as known-divergent but MANIFEST.md has no row for it")
+    # Counted directly rather than derived from `len(bad)`: `bad` mixes in-package
+    # failures with imported-row failures and orphan pins, so subtracting them back
+    # out is error-prone in exactly the way the note is meant to expose.
     r.note = (f"{inside} in-package file(s) checksummed, "
-              f"{inside - known - len(bad)}/{inside} match MANIFEST.md"
+              f"{inside_ok}/{inside} match MANIFEST.md"
               + (f", {known} known divergences (see the set in this file)" if known else "")
-              + f"; {len(rows) - inside} row(s) name files imported elsewhere "
-                f"and are not compared")
+              + f"; {len(rows) - inside} row(s) name files imported elsewhere, "
+                f"{imported}/{len(rows) - inside} still match the pinned baseline "
+                f"and are no longer unexamined")
     return r
 def check_citerefs(name):
     """A citation into `check_all.py` names the function it means:

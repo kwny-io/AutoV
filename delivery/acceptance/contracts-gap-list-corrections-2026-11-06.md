@@ -4276,8 +4276,10 @@ outside rows: still identical 57 / changed 4 / gone 0
 **只有 54 行指的是包里的文件，不能全比。** 另外 61 行指向的是导入时搬到真身的文件
 （`contracts/`、`docs/`、`contracts/examples/`、`docs/diagrams/`、`apps/studio-web/layout.html`）。
 那 61 个**本来就会**随正常开发变——实测 57 个搬完仍逐字节相同、4 个已经合法改动、
-0 个丢失。把它们也纳入比对，等于每次改文档都报红，真正要抓的信号会被淹没。
-所以 `check_archive` 只比对落在包内的 54 行。
+0 个丢失。把它们也拿去比 MANIFEST.md，等于每次改文档都报红，真正要抓的信号会被淹没。
+所以 `check_archive` 对包内 54 行比 MANIFEST.md，对包外 61 行改比**基线快照**
+（`ARCHIVE_IMPORTED_BASELINE`，逐文件钉住上面那 57 个的哈希）：比 MANIFEST 会误报，
+完全不看则这 61 个改了也发现不了——后者是本段原本就有的洞。
 
 反向也有一个洞，顺手补上：包里有 57 个文件，但只有 54 个有 MANIFEST 行，
 缺的是 `00-阅读顺序.txt`、`MANIFEST.md` 自己、`contracts/domain-v1-README.md`。
@@ -4307,7 +4309,8 @@ outside rows: still identical 57 / changed 4 / gone 0
 ```
 ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
                  3 known divergences (see the set in this file);
-                 61 row(s) name files imported elsewhere and are not compared
+                 61 row(s) name files imported elsewhere, 61/61 still match
+                 the pinned baseline and are no longer unexamined
 ```
 
 比对用的是磁盘字节而不是 `git cat-file`——先确认过工作区是 LF：MANIFEST 是从 LF 文件
@@ -4320,6 +4323,9 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 | 改一个匹配文件，同时把它的新哈希写进 allow-list | `archive` **绿**（`50/54 match`、`4 known divergences`），只有 `readme` 报 `README says 51 for archive match, archive says 50` |
 | allow-list 写一个 MANIFEST 里没有的名字 | `FAIL archive 1` / `NOT-A-REAL-FILE.md is listed as known-divergent but MANIFEST.md has no row for it` |
 | README 把 51 改成 52 | `FAIL readme 1` / `README says 52 for archive match, archive says 51` |
+| 包外一个文件尾部加 1 个换行（`docs/diagrams/01-enterprise-architecture-1.mmd`） | `FAIL archive 1` / 包内仍 `51/54` / 尾部 `60/61` |
+| 包外一个文件删掉（同上） | `FAIL archive 1` / 包内仍 `51/54` / 尾部 `60/61` |
+| 从 `ARCHIVE_IMPORTED_BASELINE` 删掉一条 pin（首、中、尾各测一次） | 三次都 `FAIL archive 1` / 包内仍 `51/54` / 尾部 `60/61`，报 `not in ARCHIVE_IMPORTED_BASELINE` |
 | 全部还原 | 16 项注册、15 通过、1 跳过 |
 
 第 2、3 行合起来才是完整结论。**allow-list 本身不带防护**：只要改动的人顺手把
@@ -4337,6 +4343,11 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 同步改成「十六项检查 / 14 个数 / 十五个方向」，`README_CLAIMS` 加了一行
 `archive match`，把 51 钉进 `readme` 检查。`archive` 的 note 里 51 与 54 都是
 本次实算，`known divergences` 由冻结集逐条比对得出，不是写死的字面量。
+
+> 后续补上了包外 61 行的基线（`ARCHIVE_IMPORTED_BASELINE`，逐文件 pin）。note 尾部那句
+> 「61/61 still match the pinned baseline」同样是实算：探针表后 3 行就是让它分别变成
+> `60/61` 的三种改法，且三种都**不动**包内的 `51/54`——两段计数互不污染。基线 pin 本身
+> 由上面「57 个逐字节相同」那批快照生成，并非另算一遍。
 
 ### 补记八：`runtime-safety.yaml` 是 AGENTS.md「生产开关默认关闭」的机器可读版，此前零校验
 
@@ -5642,9 +5653,9 @@ files checked：                  139                  139
 **缺陷。** `unresolved` 这个列表里装的是两种东西：不带点的分支塞 `(key, msg)` 二元组，
 带点的分支塞一条**裸字符串**。消费它的循环按二元组解包：
 
-- 塞二元组：`check_all.py:check_docrefs:2449`（不带点，`docs/10 §1` 走这条）
-- 塞裸字符串：`check_all.py:check_docrefs:2443`（带点，既不是标题也不是列表项时走这条）—— 修前
-- 消费：`check_all.py:check_docrefs:2457` `for key, msg in unresolved:`
+- 塞二元组：`check_all.py:check_docrefs:2621`（不带点，`docs/10 §1` 走这条）
+- 塞裸字符串：`check_all.py:check_docrefs:2615`（带点，既不是标题也不是列表项时走这条）—— 修前
+- 消费：`check_all.py:check_docrefs:2629` `for key, msg in unresolved:`
 
 裸字符串被解包成二元组，于是 `ValueError: too many values to unpack (expected 2)`。
 
