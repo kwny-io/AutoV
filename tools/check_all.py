@@ -100,13 +100,13 @@ def check_json(name):
 def check_links(name):
     """Every relative markdown link resolves.
 
-    Scope has two invisible edges, and both are stated in the note because a
+    Scope has three invisible edges, and the note states all three because a
     count that quietly covers less than it appears to is the failure this
-    module's docstring warns about:
+    module's docstring warns about -- archive, `_inbox/`, dot-directories:
 
-    - `docs/design-package/` is skipped on purpose. It is the archived original
-      design package, read-only by AGENTS.md, so a broken link in it is not
-      something this repo may repair. Counted below so the skip is visible.
+    - `docs/design-package/` (read-only archive) and `_inbox/` (gitignored
+      scratch, absent from any clone, so counting it made one commit tree
+      report two totals) are skipped on purpose. Both counted below.
     - `glob("**/*.md")` does not descend into dot-directories. That happens to
       exclude `.claude/worktrees/` -- other sessions' checkouts, which are not
       this checkout's content -- but it is an accident of the glob, not a
