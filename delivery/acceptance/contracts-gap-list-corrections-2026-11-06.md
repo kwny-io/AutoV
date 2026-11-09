@@ -3506,6 +3506,8 @@ FAIL  catalog    3 problem(s)  [48 service(s), 55 topic(s), 55 published_event(s
 
 **顺带记一条操作教训（不算本节缺陷，是我这轮的返工）。** 上面那个负向测试用 `json.dumps(...)` 回写 catalog，缩进被我改成 2 空格、文件从 43573 涨到 44717 字节；`git diff --numstat` 显示 0/0 行变更（因为确实是同一份数据换排法），差点当成「干净」放过。**`--numstat` 全零不等于文件没变**——字节数变了、格式变了，它一样报 0。用 `git checkout --` 从 HEAD 恢复，现在 `contracts/service-catalog.v2.json` 与 HEAD 完全一致。以后改配置文件做负向测试，应该先复制到临时路径改副本，或者在 `finally` 里从 `git show HEAD:` 恢复，而不是自己 `dumps` 回去。
 
+这条教训还有后半段，记在这里免得下次只读到前半段就以为够用：**污染过的读数会一路流进别的表格。** 恢复文件之后我没有回头检查「污染期间写下的数字」，`补记七` 的 `outside rows` 快照就把 44717B 当成了 catalog 的当前大小，直到更正表第 9 行才发现。光把文件恢复干净不够——同一轮里用旧文件测出来的数也得一并作废重测。
+
 全量：10 项通过、1 项 skip（`registry`），exit 0。
 
 ## 16.28 `required_scope` 有四个各自独立的枚举，其中 S19 那个会把两个工具挡在外面
@@ -4266,7 +4268,7 @@ manifest rows                : 115
 
 outside rows: still identical 57 / changed 4 / gone 0
     contracts/event-topics.v2.json      18584B -> 25073B (+6489)
-    contracts/service-catalog.v2.json   43310B -> 44717B (+1407)
+    contracts/service-catalog.v2.json   43310B -> 43573B (+263)
     docs/02-service-catalog.md           5426B -> 5618B (+192)
     examples/memory-committed-event.json  797B -> 1892B (+1095)
 ```
@@ -4384,6 +4386,7 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 | 6 | 更正表第 1 行写「这一版**没有**补上」（指那 3 个无 MANIFEST 行的文件） | 「这一版**补上了**」，补法是 `ARCHIVE_UNLISTED_BASELINE` 逐文件 pin | 第 1 行当时记的是当时的真实状态，但同一轮里洞被补上了，那一行就变成陈旧值。**更正表的每一行都会被之后的事实改写——补完洞要回头看它自己的记录** |
 | 7 | 本轮 `check_archive` 里 `bad.append((rel, "an ARCHIVE_UNLISTED_BASELINE entry", ...))` 与 `bad.append((rel, f"{want[0]}B pin", ...))` | 这两类改为直接 `r.fail(...)`，不再走 `bad` | `bad` 的格式是 `expected {want}B/SHA-256`，而 `want` 列已经带了 `B pin` / `entry`，拼出来是 `expected an ARCHIVE_UNLISTED_BASELINE entryB/SHA-256` 和 `expected 74502B pinB/SHA-256`。**探针打印出的是拼错的句子，只有逐字读探针输出才看得见；只读 `FAIL archive 3` 看不出来** |
 | 8 | 本轮 `check_archive` 的 note 分母取 `len(on_disk - listed)`，即磁盘上「无 MANIFEST 行的文件数」 | 分母固定为 `len(ARCHIVE_UNLISTED_BASELINE)`（= 3） | 删掉一个未列文件时它同时从 `on_disk` 里消失，分子分母一起减，note 显示 `2/2 still match` ——**文件丢了反而读成「全对」**。改法是把 pin 集合当分母，磁盘上缺的文件单独报 `pinned at NB but the file is gone` |
+| 9 | 上文 `outside rows` 快照里 `service-catalog.v2.json 43310B -> **44717B (+1407)**` | `43310B -> **43573B (+263)**` | 44717 是本报告 §16.27 自己记下的那次返工产物：负向测试用 `json.dumps` 改了缩进，文件涨到 44717B，随后从 HEAD 恢复。**这张快照是在工作树尚未恢复时跑的**，于是把污染后的字节数当成了「当前值」。`git cat-file -s 4395eb0:contracts/service-catalog.v2.json` 与 `4395eb0^` 都是 **43573**，44717 在 `git rev-list --all` 里一次都没出现过。基线 pin 写的是 43573（正确），错的只是报告里的这句描述；`+1407` = 44717−43310，算术自洽但被乘数不对 |
 
 ### 补记八：`runtime-safety.yaml` 是 AGENTS.md「生产开关默认关闭」的机器可读版，此前零校验
 
