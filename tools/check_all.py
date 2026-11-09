@@ -2192,6 +2192,8 @@ def check_archive(name):
                 f"{imported}/{len(rows) - inside} still match the pinned baseline "
                 f"and are no longer unexamined")
     return r
+
+
 def check_citerefs(name):
     """A citation into `check_all.py` names the function it means:
     `check_all.py:check_payload_refs:1454-1464`, not `check_all.py:1454-1464`.

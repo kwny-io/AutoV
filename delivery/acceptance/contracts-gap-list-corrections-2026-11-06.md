@@ -4281,10 +4281,11 @@ outside rows: still identical 57 / changed 4 / gone 0
 （`ARCHIVE_IMPORTED_BASELINE`，逐文件钉住上面那 57 个的哈希）：比 MANIFEST 会误报，
 完全不看则这 61 个改了也发现不了——后者是本段原本就有的洞。
 
-反向也有一个洞，顺手补上：包里有 57 个文件，但只有 54 个有 MANIFEST 行，
+反向还有一个洞，这一版**没有**补上：包里有 57 个文件，但只有 54 个有 MANIFEST 行，
 缺的是 `00-阅读顺序.txt`、`MANIFEST.md` 自己、`contracts/domain-v1-README.md`。
-这三个**改了什么都不会被发现**——它们是只读规则下的真实缺口，但要不要补行是
-归档流程的事，检查只报这个数，不替 owner 决定。
+这三个**改了什么都不会被发现**——它们是只读规则下的真实缺口。`archive` 的 note 里
+既没有 57 也没有 3（它报的是 `54`、`51/54`、`3 known divergences`、`61/61`），
+上面这两个数是普查时另跑一次探针数的。要不要补行是归档流程的事，不替 owner 决定。
 
 **3 个对不上的，是导入时就注定的，不是有人改过。** 三个文件全都只被 `8c94e5f`
 （scaffold 那一次）碰过，之后再没动过：
@@ -4348,6 +4349,14 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 > 「61/61 still match the pinned baseline」同样是实算：探针表后 3 行就是让它分别变成
 > `60/61` 的三种改法，且三种都**不动**包内的 `51/54`——两段计数互不污染。基线 pin 本身
 > 由上面「57 个逐字节相同」那批快照生成，并非另算一遍。
+
+**更正表。**
+
+| # | 原写 | 正确 | 错因 |
+|---|---|---|---|
+| 1 | 「检查只报这个数」（指包里那 3 个无 MANIFEST 行的文件） | 改成「这一版没有补上」+ 明说 note 里既无 57 也无 3 | `archive` 的 note 自写下起就只报 `54`/`51/54`/`3 known divergences`/`61/61`，57 和 3 是另跑探针数的。把探针的输出说成检查的输出 |
+| 2 | `4395eb0` 的 note 尾部「and are not compared」，以及结论段「只比对落在包内的 54 行」（`ed67305` 已随基线一起改掉） | 61 行改比 `ARCHIVE_IMPORTED_BASELINE` 基线快照 | 加了基线之后，这两处描述与 note 不符。**这两处在 `ed67305` 里已不存在**，引文出自 `4395eb0` |
+| 3 | 三处 `check_docrefs` 引用行号：`2615` / `2621` / `2629`（`ed67305` 里提交的版本） | 按补齐函数间空行后实测：`2617` / `2622` / `2631` | 每次在 `check_archive` 之上插入代码都会下移。原值 `2443`/`2449`/`2457` 在 `23d6706` 上本来都对；我把「删除已知偏差集合 + 61 条基线」插在 `check_archive` 之上后，三处一起下移，两次凭估算换算都落在别处，第三次逐行核对才对 |
 
 ### 补记八：`runtime-safety.yaml` 是 AGENTS.md「生产开关默认关闭」的机器可读版，此前零校验
 
@@ -5653,9 +5662,9 @@ files checked：                  139                  139
 **缺陷。** `unresolved` 这个列表里装的是两种东西：不带点的分支塞 `(key, msg)` 二元组，
 带点的分支塞一条**裸字符串**。消费它的循环按二元组解包：
 
-- 塞二元组：`check_all.py:check_docrefs:2621`（不带点，`docs/10 §1` 走这条）
-- 塞裸字符串：`check_all.py:check_docrefs:2615`（带点，既不是标题也不是列表项时走这条）—— 修前
-- 消费：`check_all.py:check_docrefs:2629` `for key, msg in unresolved:`
+- 塞二元组：`check_all.py:check_docrefs:2622`（不带点，`docs/10 §1` 走这条）
+- 塞裸字符串：`check_all.py:check_docrefs:2617`（带点，既不是标题也不是列表项时走这条）—— 修前
+- 消费：`check_all.py:check_docrefs:2631` `for key, msg in unresolved:`
 
 裸字符串被解包成二元组，于是 `ValueError: too many values to unpack (expected 2)`。
 
