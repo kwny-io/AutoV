@@ -2161,11 +2161,16 @@ def check_archive(name):
             # Imported out of the package on scaffolding -- not compared against
             # MANIFEST.md, but still compared against the pinned baseline, so an
             # edit to one of them does not pass just because it is not looked at.
-            dest = rel if os.path.exists(rel) else None
+            # Resolved against ROOT, not the cwd: a bare `rel` made every one of
+            # these 61 resolve to "no file at any known home" whenever the suite
+            # was launched from anywhere but the repo root, turning the whole
+            # imported half of this check red for a reason that is not the tree's.
+            dest = os.path.join(ROOT, rel) if os.path.exists(os.path.join(ROOT, rel)) else None
             if dest is None:
                 for pre, home in IMPORT_PREFIXES:
-                    if rel.startswith(pre) and os.path.exists(home + rel[len(pre):]):
-                        dest = home + rel[len(pre):]
+                    cand = os.path.join(ROOT, home + rel[len(pre):])
+                    if rel.startswith(pre) and os.path.exists(cand):
+                        dest = cand
                         break
             want = ARCHIVE_IMPORTED_BASELINE.get(rel)
             if want is None:
