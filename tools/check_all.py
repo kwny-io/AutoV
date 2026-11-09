@@ -2584,10 +2584,10 @@ def check_docrefs(name):
         all (one `# 10` title and seven flat paragraphs), so `§1` can only mean
         "the first paragraph". That form appears exactly once in the corpus and
         the paragraph it names is not the one whose sentence is quoted, so it
-        is not treated as a convention. It is reported as a failure with the
-        open-decision wording, the way `planrefs` reports `Snn §行号`: the
-        owner has not said paragraph numbering is legal, and this check does
-        not decide that for them.
+        is not treated as a convention. It sits in KNOWN_UNRESOLVED_DOCREFS:
+        counted in the note, never sent to `r.fail`; the entry itself fails
+        once the ref resolves or vanishes. `planrefs` fails on its own form,
+        this one does not -- both name the same owner decision either way.
 
     Two heading-reading bugs were made and fixed while measuring, and both are
     the same mistake -- requiring more punctuation than the corpus writes:
