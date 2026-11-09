@@ -1934,7 +1934,7 @@ def check_check_ids(name):
                f"any more; remove the entry")
 
     r.note = (f"{total} check_id(s), {len(seen_bad)} known non-conforming "
-              f"(owner decision, see contracts/README.md gap 4); "
+              f"(owner decision, see contracts/README.md:1690); "
               f"{full_refs} citation(s), {len(dangling_seen)} unresolved "
               f"(owner decision, see check-registry-missing-fields §5.2)")
     return r
