@@ -931,7 +931,7 @@ trace 维度：`tenant/episode/branch/timeline_revision/render_job_id/segment_no
 | C5 | 渲染产物的可复现性无定义 | docs/04 要求"不可变内容按 hash 寻址"；但 GPU 编码本就非比特可复现 | 本方案区分"字节 hash（S28 事实）"与"语义复现（graph_hash + render_env_hash）"。若验收要求比特级复现，需要固定编码器与硬件 |
 | C6 | S42 是否消耗 S23 预算无明文 | docs/12 §2 说 CPU 媒体与自托管 GPU"另配"；未说是否从 S23 预算扣 | 本方案上报用量但不预留；若需扣预算，应在 S22 许可阶段一并预留 |
 | C7 | `depends_on` 未含 S41 | service.yaml 的 `depends_on` 与实现需要的 S41 timeline 读取不一致 | 本方案按事件 + 只读 API 依赖；需 owner 确认依赖表 |
-| C8 | 方案发布 3 条事件，事件目录只登记 1 条 | `event-topics.v2.json` 的 S42 条目只有 `post.master.rendered`；本方案 §6.3 另有 `post.mix.completed` / `post.render.failed`，两条不在目录 | **已裁决（2026-11-05，补登，commit `4f1bdcb`）**：三条全部登记进 `contracts/event-topics.v2.json`，topic `drama.composition.v2`。选补登而非搭车，因为 `post.mix.completed` 是 S35/S39 的独立触发器，塞进 `post.master.rendered` 的 `data.outcome` 会让「没有 master」的情况没有事件可发。**payload schema 仍缺**（与 [S43 §11 C8](S43-delivery.md)、[S44 §11 C8](S44-evaluation-analytics.md) 同一条） |
+| C8 | 方案发布 3 条事件，事件目录只登记 1 条 | `event-topics.v2.json` 的 S42 条目只有 `post.master.rendered`；本方案 §6.3 另有 `post.mix.completed` / `post.render.failed`，两条不在目录 | **已裁决（2026-11-05，补登，commit `4f1bdcb`）**：三条全部登记进 `contracts/event-topics.v2.json`，topic `drama.composition.v2`。选补登而非搭车，因为 `post.mix.completed` 是 S35/S39 的独立触发器，塞进 `post.master.rendered` 的 `data.outcome` 会让「没有 master」的情况没有事件可发。**payload schema 仍缺**（与 [S43 §11 C8](S43-delivery.md)、[S44 §11 C8](S44-evaluation-analytics.md) 同一条）——**已于 2026-11-06 补齐**（`5b26e07` + `3aeeb22`）；这条后半句留着是为了记录当时的状态，不是今天的实况 |
 
 ---
 
