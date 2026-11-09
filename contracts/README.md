@@ -1544,7 +1544,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 另外 6 个数当时都是对的，这正是要补检查的理由——6 个对的和 1 个错的花在同一段里，
 读起来像一段校对过的文字）、
 `citerefs`（正文里引用 `check_all.py` 行号的地方，必须**连函数名一起写**，如
-`check_all.py:check_payload_refs:1383-1422`，且那个函数确实覆盖这几行；扫 139 个 md，
+`check_all.py:check_payload_refs:1401-1440`，且那个函数确实覆盖这几行；扫 139 个 md，
 今天共 **13** 处引用、13 处都指名。
 补这一格的理由是本轮实测到的：一批引用早已漂进**旁边的**函数里，而文件长度还够，任何只看
 「行号存在」的检查都会放过它们；其中一处就在本文件的 `links` 那一格里，是描述 `payloads`
@@ -1835,7 +1835,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `contracts/**/*.json` 6 处（`execution-context` 5、`automation-policy` 1）。
    其中 6 个的唯一引用入口就是那 11 条 YAML。
 
-   `payloads` 检查两个方向都报（`check_all.py:check_payload_refs:1383-1423`）：topic 指到的文件
+   `payloads` 检查两个方向都报（`check_all.py:check_payload_refs:1401-1441`）：topic 指到的文件
    必须存在，反向则数「`contracts/*.schema.json` 里几个没被任何 topic 指到」，今天印
    `8 of them named by no topic`。**反向只报数不判红**——这 8 个不是错误，是接口的请求/响应体，
    每一个都有入向 `$ref`（见上表）。`openapi.v2.yaml` 的 `$ref` 也有检查（注册名 `openapi`，

@@ -3966,7 +3966,7 @@ YAML 那 11 处逐条：
 | 接口的请求/响应体 | 8 | `openapi.v2.yaml` 11 处 + 别的 schema 6 处，全部被引用 |
 
 **`check_payload_refs` 只查正向，查不出这个。** 它遍历 55 个 topic、把 `schema_ref` /
-`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:check_payload_refs:1383-1422`），
+`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:check_payload_refs:1401-1440`），
 从不反向问「contracts/ 下有没有哪个 schema 没被任何 topic 指到」。两个方向里缺了反向那一个，
 所以上面那个 8 从来没人报过，它也就一直被那行说明文字盖着。
 
@@ -3985,7 +3985,7 @@ YAML 那 11 处逐条：
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
 | 1 | 本节初稿「`contracts/*.schema.json` 有 63 个 payload schema，而 README 说 55 个，差 8 个」 | 63 里 55 个是 payload、8 个是接口的请求/响应体；被 topic 引用的共 56 个（多出的 1 个是 envelope）。两个数都没错，错的是把 64 个归成一类 | 先数了「文件数减 envelope」，再拿它直接和「payload schema 数」比。**两个口径的数相减之前，要先确认它们是不是同一类东西** |
-| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:check_payload_refs:1383-1422`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
+| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:check_payload_refs:1401-1440`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
 | 3 | 本节初稿「`execution-context` 被 13 个 JSON 引用、`episode-manifest` 被 16 个引用」 | 文件名被提到的次数是 **11** 和 **6**；`memory-claim` 是 **0**（只被 S16 方案与一个 example 用到）。但这仍是「提到」，不是「`$ref`」，见第 5 行 | 13 / 16 是上一轮 `grep -rl` 的**文件命中数**（含 md 与自引用），不是 `contracts/**/*.json` 里的引用数。两个口径混用了一次 |
 | 4 | 本节初稿「55 个 payload schema 全是过去分词或事件名词」 | 末段分布里 `ready` 有 8 个（形容词），`prompt.compiled` 的末段还带点号；只能说"绝大多数是过去分词" | 先下了"全是"这个强判断，再去找例子印证。**枚举类判断必须先数分布再写程度词** |
 | 5 | 上一轮修正后写「被别的 schema 用 `$ref` 挂着」并给出 11 / 6 / 3 / 3 / 2 / 2 / 1 / 0 | **真正 `$ref` 进去的只有 2 个目标文件**：`execution-context` 与 `automation-policy`，其余 6 个一条都没有。那 11/6/3… 是「文件正文里提到该文件名的次数」，多数是 `description` 里写「与 `episode-manifest` 的 `accepted_artifact_ref` 完全相同」这类散文对照 | **数引用边必须解析 JSON 取 `$ref` 的值，不能在原文里搜文件名。** 上一轮的更正已经指出过「两个口径混用」，我却把同一类错误又犯了一次：换成"数引用"这个动作，用的还是字符串搜索 |
@@ -3999,7 +3999,7 @@ YAML 那 11 处逐条：
 ### 补记：让 `payloads` 的绿说出这个数
 
 上面写了「`check_payload_refs` 只查正向，所以这 8 个从来没人报过」。把反向那一半补成**报数**
-（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:check_payload_refs:1383-1422`）
+（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:check_payload_refs:1401-1440`）
 现在顺带算一遍 `contracts/*.schema.json` 里没有出现在任何 topic 的 `schema_ref` /
 `data_schema_ref` 上的文件：
 
@@ -5056,7 +5056,7 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 | `99999` / `0` / 跨两个函数 / 反向区间 | FAIL，各自报自己的话 |
 
 漏掉的两条都是「漂进了旁边的 `check_*`」——**这恰恰是真实发生的那种错**。
-所以判定标准改成：**引用必须带函数名**，`check_all.py:check_payload_refs:1383-1422`，
+所以判定标准改成：**引用必须带函数名**，`check_all.py:check_payload_refs:1401-1440`，
 并核对该函数确实覆盖整个区间；匿名行号直接 FAIL，不给后门（注释里写明「别为了让
 陈旧数字通过而削弱它——数字才是错的那一半」）。
 
@@ -5795,7 +5795,7 @@ owner 决策（是否允许「第一段」这种写法），我不替 owner 裁�
 **改法。** 围栏正则同时认 `~~~` 与三反引号；行内改成「按等长反引号串配对」，而不是只配一对单反引号。
 
 **为什么改成行数中性。** 第一版是 2 行换 8 行（加了一段说明注释），干净克隆上立刻 `FAIL citerefs 6`：
-`contracts/README.md` 与本节共 6 处引用 `check_all.py:check_payload_refs:1383-1422`，插入 8 行把
+`contracts/README.md` 与本节共 6 处引用 `check_all.py:check_payload_refs:1401-1440`，插入 8 行把
 该区间推进了 `check_registry`。这正是 `citerefs` 存在的理由，也说明**在这个仓库里，改动一个被行号
 引用的文件时，行号中性是硬约束**。最终版 2 行换 2 行，`wc -l` 前后都是 **2564**，注释写进本节而不进代码。
 
@@ -6340,5 +6340,6 @@ S45/S46/S47 之一，第 4 个指向 contracts 与 docs），
 | 10 | 第 8 行把 240 锚成「数于 `d17e5c1`」 | **240 是 `d17e5c1` 的父提交（`19e2a57`）**；`d17e5c1` 自己那棵树上是 **241**（`git rev-list --count d17e5c1`） | 第 9 行说「落这一笔之后就是 241」，我照着这句话**把锚也顺延了一格**——但这句话预言的是「下一笔之后」，而 240 是在动手之前用 `git rev-list` 数出来的。**锚必须指向数出这个值的那棵树，不是写下它的那棵树。**同族的第 3 行第 5 行都锚对了，因为它们的值不随提交增长；这一个随提交增长，才把「数的时候」和「写的时候」之间的那一笔暴露出来 |
 | 11 | 正文那三句「这 138 个」「这 138 个里」「这 138 个提交里」，以及第 7 行纠正后的「实为 **138 / 24 / 114**」——**都没写是哪棵树** | 这三个数**数于 `8c0c716`**（本节首次写下它们的那棵树）。复核时我在另一棵树 `4325818` 上重数同一口径，得 **150 / 24 / 126**：注册 11 项的那 24 个没变，注册 12…23 的从 114 涨到 126 | **和第 9 行是同一个错，而且隔着一行就是它。**第 9 行刚说「240 随提交增长、必须锚」，我在正文里把同样会增长的 138 当常量写了，且没给任何时点——**读者无从判断这是本节写作时的读数还是当前值。**138 当时之所以对，只因为 `8c0c716` 恰好是数出它的那棵树。修法同第 8、9 行：**每个值都锚到数出它的那棵树**，两个值就是两棵树 |
 | 12 | 第 11 行末尾「留到**今天**它已是 150」 | **「今天」不是时点**，且 150 在第 11 行提交的那棵树（`eccbd9d`）上已经不是这个数了：同一口径在该树上是 **151 / 24 / 127**（`4325818` 那棵树才是 150 / 24 / 126，它本身就随提交增长）。已删掉「留到今天它已是 150」，只保留两个锚点：`8c0c716` → 138、`4325818` → 150 | **同一行前半句在给每个值锚树，后半句又用了一个会漂移的词。**我写 150 时脑子里是复核那棵树（`4325818`），但落笔的「今天」指向的是提交之后——而提交本身就使计数 +1，于是这句话在被提交的那一刻已经是错的。**与第 3 行同源：任何随提交增长的量，只能存在于「数于 `<sha>`」的句式里，不能出现在「今天」「当前」这类词后面** |
+| 13 | `check_links` 的排除规则只有 `docs/design-package/`、`.git/`、`node_modules/`，没有 `_inbox/` | 把 `_inbox/` 一并排除，并在 note 里报出它的 md 与链接数（与存档同样的写法）。`_inbox/` 是 `.gitignore:33` 排除的解压产物，任何干净克隆都没有它 | **这是「同一棵提交树，本地有没有一个 gitignored 目录，结论相反」。**在 `742a540` 上实测：干净克隆 `links` 报 1186 条、`readme` 绿；同一个克隆把 `_inbox/` 解压进去（73 个 md、142 条链接），`links` 报 1328 条，`FAIL readme` 立刻红（`README says 1186 for links, links says 1328`）。`_inbox/` 里 142 条链接**没有一条是断的**，所以它只污染分母，不污染结论——正因为如此，多出来的 142 才是纯噪声。同族的 `citerefs` / `planrefs` / `docrefs` 早就排除了 `_inbox/`，只有 `check_links` 漏了，而它的 docstring 头一句正是「scope 的每一条隐形边都要在 note 里报出来」。**修后双向验证**：有 `_inbox/` 时 `links` 回到 1186 且 note 多出 `_inbox/ (73 md, 142 link(s))`，无 `_inbox/` 时 note 不提它，两侧都是 `rc=0`。**连带代价**：`check_links` 在文件第 100 行，插入 18 行把 `check_payload_refs` 从 1383 推到 1401，7 处 `check_payload_refs:1383-1422` 引用（README 2 处、本报告 5 处）一并改成 `1401-1440`，`citerefs` 才回到 13/13 |
 
 全量：22 项通过、1 项 skip（`registry`），exit 0；五个钉住的计数未变。

@@ -122,12 +122,20 @@ def check_links(name):
     skipped_files = 0
     skipped_links = 0
     skipped_broken = []
+    inbox_files = 0
+    inbox_links = 0
     for p in sorted(glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True)):
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
-        if rel.startswith(("docs/design-package/", ".git/")) or "node_modules/" in rel:
+        if (rel.startswith(("docs/design-package/", ".git/", "_inbox/"))
+                or "node_modules/" in rel):
             # Read-only archive: counted, not checked. A broken link here is
             # reported in the note rather than failed, so it stays visible
             # without turning the suite red for something nobody may edit.
+            # `_inbox/` is gitignored scratch (see .gitignore), so it is not in
+            # any checkout that merely cloned this repo -- counting it here made
+            # the link total depend on whether the machine running the suite
+            # happened to have that directory, which is the same tree reporting
+            # two numbers. The other three checks already skip it.
             if rel.startswith("docs/design-package/"):
                 skipped_files += 1
                 text = inline.sub("", fence.sub("", _utf8(p)))
@@ -142,6 +150,14 @@ def check_links(name):
                     skipped_links += 1
                     if not os.path.exists(os.path.normpath(os.path.join(base, t))):
                         skipped_broken.append(rel)
+            elif rel.startswith("_inbox/"):
+                inbox_files += 1
+                for m in link.finditer(inline.sub("", fence.sub("", _utf8(p)))):
+                    t = m.group(1)
+                    if t.startswith(("http://", "https://", "mailto:", "#")):
+                        continue
+                    if t.split("#")[0]:
+                        inbox_links += 1
             continue
         text = _utf8(p)
         # A link inside a fenced block or inline code is an example, not a
@@ -183,6 +199,8 @@ def check_links(name):
               f"; docs/design-package/ ({skipped_files} md, {skipped_links} link(s)) "
               f"is read-only archive, not checked"
               + (f" -- {len(skipped_broken)} broken there" if skipped_broken else "")
+              + (f"; _inbox/ ({inbox_files} md, {inbox_links} link(s)) is gitignored "
+                 f"scratch, not checked" if inbox_files else "")
               + f"; {len(walked)} md walked, {len(hidden)} hidden by dot-dirs "
                 f"({len(hidden) - len(stray)} under .claude/worktrees/, {len(stray)} elsewhere)")
     return r
