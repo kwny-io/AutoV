@@ -734,9 +734,9 @@ def check_interactions(name):
 
     The last one is checked by name rather than by a rule, because there is no
     action registry to derive ownership from: `docs/04` describes the saga in
-    prose and `plans/S22:516-527` tabulates it. The map below is those two steps
-    that have a single declared owner in `runtime-safety.yaml`; the remaining
-    action names have none declared and are counted, not guessed at.
+    prose and `plans/S22:516-527` tabulates it. The map below holds every action
+    name with one declared owner in `runtime-safety.yaml`; the remaining names
+    have none declared and are counted, not guessed at.
     """
     r = Result(name)
     path = os.path.join(CONTRACTS, "examples", "service-interactions.yaml")
