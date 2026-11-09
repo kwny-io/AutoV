@@ -39,6 +39,33 @@ C45-7 的脱敏规则表也已落（§2.6，`status: proposal`）。
 | E01–E40 覆盖 | 全量扫描 | **40/40** 被引用 |
 | 方案内细分编号唯一性 | 按「每篇方案的字母」逐条比对 | **不通过**：42 个编号在 2 篇以上方案里重复定义，且**行文全不相同**（同名不同事）。两套命名空间并存：16 篇用方案内局部编号（`E05-01`，306 个），S41–S44 用全局编号（`E05-S41-01`，114 个，0 冲突）。**S15 是唯一字母混用的方案**——自己的 22 条用 `F`，另 10 条 `E30-C1..C10` 用了 S12 的 `C`；其中 `E30-C1`/`E30-C2` 与 S12 的 `plans/S12-costume-assets.md:634-635` 真正撞号。见 §6.2 末条与 §7 第 9 条 |
 
+### 1.1 2026-11-09 第十六轮的尺子与复算
+
+§1 共 19 行。本节写下其中 **10 行**的尺子并重算，让下一个人不必重猜；§1.2 另附 4 项紧邻 §1 的契约核对。
+不放进来的 9 行（原始设计包零改动、方案未残留进 `services/`、内部相对链接、服务 ID 引用、动作族 14/14、QCReport 唯一性、permit 状态机、reservation 状态机、发布事件名）由 `tools/check_all.py` 自动覆盖，本轮没有另用手工尺子重数，也不在下面冒充复算。
+
+| 项 | 尺子（可复现） | 复算 | 结论 |
+|---|---|---|---|
+| 文件名 ↔ 目录 ↔ `service_id` | `plans/Sxx-slug.md` 取 `slug`，读 `services/<slug>/service.yaml` 的 `service_id:` 与编号比对 | **48/48**，0 问题 | 一致 |
+| 幂等键 47/48 | 三列名 `tenant_id` / `command_id` / `request_hash` **同文件内均出现**（不要求字面拼接成一句） | **47/48**，缺的唯一一篇是 S27 | 一致。若用「字面串 `tenant_id + command_id + request_hash`」这把尺子只有 **14/48** —— 本表当初量的就是"三列都点名"，不是"原样拼写" |
+| E01–E40 覆盖 | 逐个 `E` 后两位数字归一到 1..40 取并集 | **40/40**，缺集为空 | 一致 |
+| outbox DDL 46/46 六列 | `CREATE TABLE … outbox … ;` 逐段查六列名 | **46 段，46 段六列齐全** | 一致 |
+| defect type 97/99 | 四份 QC 方案的 check 表按**表头**对列取 `type` / `defect type`，`—` 计不合规 | **99 行**（23/32/20/24），**2 行 `type` 为 `—`**，**97/99**；闭集 14 值用上 **13**，未用 `audio_mix` | 一致。**踩过两个坑**：① `plans/S35:765` 的判定列写有**转义竖线**（`\|actual − ShotSpec.duration\|`），朴素 `split('\|')` 切成 9 列、整行被丢掉，总数读成 98；② S35 表头写 `defect type`（带空格），其余三份写 `type`，只按键名 `type` 取会漏掉 S35 全部 23 行 |
+| check_id 96/99 | 首格按 `.` 分段，非三段计不合规 | **3 条两段式**（`TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME`），其余 96 三段 | 一致 |
+| 细分编号 42 / 306 / 114 | 局部编号 = `E` + 两位 + `-` + 字母或 1–2 位数字尾；全局编号 = `E` + 两位 + `-S` + 两位 + `-` + 两位 | **42 个局部编号落在 ≥2 篇方案**（40 个数字尾 + 2 个 `E30-C1/C2`）；**局部 distinct 并集 306**（16 篇）；**全局 114 个、0 冲突** | 一致。**306 是去重后的并集**，不是出现次数 —— 出现次数是 362、逐篇 distinct 相加是 361。`E30-C1/C2` 在 **S12 与 S15** 各定义一次，正是这 42 里那 2 个字母尾的代表 |
+| JOIN 6 命中 | 先用整词边界量，再补 `JOINT` 的子串命中 | **5 + 1 = 6** | 一致。整词匹配只到 5，因为漏掉 `JOINT_ARTIFACT` 里的 `JOINT`；但补子串后这 1 处正是 §1 表里点名的分词误命中 |
+| 脱敏 13 个章节号 | 读 `redaction-policy.v2.json` 的 `applies_to[].rule_ref`，展开逗号列表 | **13**（S45 ×5 / S46 ×5 / S47 ×3），逐个回表**全部命中真实标题**；另有第 4 条 `applies_to` 是 `any producer`，引 `docs/04` 的「事件标准」与 `docs/14` 的「身份、权限与凭证」两处，标题都实在 | 一致。展开后 `rule_ref` 共 **16** 项，13 项在方案里、3 项是契约与文档 —— 只数 13 会漏掉后者 |
+| `execution_fence` / `node_epoch` 混用 | 两个名各全文扫（48 篇方案 + `services/**` 共 97 个文件）：**266 行**提到其一，**48 行**同现。同现的行读语义，看有没有把 run/branch 级的 fence 用到单节点、或反过来 | **48 行逐行读过，0 处互代**。S21 两行是**明令禁止**（「把 `node_epoch` 当 `execution_fence` 用」「这不是把 node_epoch 当 execution_fence」），S40:428 是**分开失效**的正例，其余是同 JSON 里并列两个字段 | 一致。这一行不能只看计数：两个名同现 48 次是**正常**的，判据是语义，读之前不能先按「同现」报警 |
+
+### 1.2 同轮顺手核掉的 4 项（不在 §1 表里）
+
+| 项 | 尺子 | 结果 |
+|---|---|---|
+| `human_review` 在 `action-families.v2.json` 里的位置 | 只取 `families[*].chain`，不扫整个族对象 | **0 个族的 chain 含它**；8 个族拿它当 `fallback`（`costume` / `prop` / `continuity` / `camera_adherence` / `action_adherence` / `subtitle` / `lipsync` / `voice`），另有 `fatal_fallback` 也是它。契约 invariant 明写「`human_review` MUST NOT appear in any chain」，所以「当 fallback 出现 8 次」是合规的，不是缺陷。第一把尺子扫了整个族对象，8 个命中全是 `fallback` |
+| 动作枚举两边是否同一份 | `action-families.v2.json` 的 `action_enum`（12 值）对 `qc-report.v2.schema.json` 的 `$defs.defect.properties.recommended_actions.items.enum` | **12 == 12，逐项同序**：`reingest` / `transcode` / `keyframe_edit` / `regenerate_video` / `temporal_edit` / `redo_lipsync` / `realign_subtitles` / `re_render_subtitles` / `remix` / `re_synthesize_speech` / `human_review` / `change_spec` |
+| `defect_type` 闭集与 `closed_type_set` | `qc-report.v2.schema.json` 的 `$defs.defect.properties.defect_type.enum` 对 `action-families.v2.json` 的 `closed_type_set` | **两边都是 14 值、逐项相同** |
+| 四个落地文件大小 | `os.path.getsize()` 十进制 KB | 7603B=7.6KB、23989B=24.0KB、8340B=8.3KB、7024B=7.0KB |
+
 ---
 
 ## 2. C1（已按方向 1 收敛，2026-11-01）：S39 到底按什么维度做修复路由
