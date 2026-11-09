@@ -4383,7 +4383,7 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 |---|---|---|---|
 | 1 | 「检查只报这个数」（指包里那 3 个无 MANIFEST 行的文件） | 改成「这一版没有补上」+ 明说 note 里既无 57 也无 3 | `archive` 的 note 自写下起就只报 `54`/`51/54`/`3 known divergences`/`61/61`，57 和 3 是另跑探针数的。把探针的输出说成检查的输出 |
 | 2 | `4395eb0` 的 note 尾部「and are not compared」，以及结论段「只比对落在包内的 54 行」（`ed67305` 已随基线一起改掉） | 61 行改比 `ARCHIVE_IMPORTED_BASELINE` 基线快照 | 加了基线之后，这两处描述与 note 不符。**这两处在 `ed67305` 里已不存在**，引文出自 `4395eb0` |
-| 3 | 三处 `check_docrefs` 引用行号：`2615` / `2621` / `2629`（`ed67305` 里提交的版本） | `2672` / `2677` / `2686`（本轮补完 `ARCHIVE_UNLISTED_BASELINE` 后实测；`check_citerefs` 要求`check_all.py:<函数>:<行号>` 的形式，只写函数名会把 `citerefs` 计数从 13 降到 10 而让 `readme` 报红） | 每次在 `check_archive` 之上插入代码都会下移。原值 `2443`/`2449`/`2457` 在 `23d6706` 上本来都对；我把「删除已知偏差集合 + 61 条基线」插在 `check_archive` 之上后，三处一起下移，两次凭估算换算都落在别处，第三次逐行核对才对 |
+| 3 | 三处 `check_docrefs` 引用行号：`2615` / `2621` / `2629`（`ed67305` 里提交的版本） | 当时改成 `2672` / `2677` / `2686`；**那三个数只在 `23dd8e3` 的树上成立**，此后 `bc5736a` 把它推到 2549、`971e5ff` 再推到 2567（合计 +23 行），HEAD 上是 `2695-2698` / `2700-2707` / `2709-2713`（见第 21 行）。`check_citerefs` 要求`check_all.py:<函数>:<行号>` 的形式，只写函数名会把 `citerefs` 计数从 13 降到 10 而让 `readme` 报红 | 每次在 `check_archive` 之上插入代码都会下移。原值 `2443`/`2449`/`2457` 在 `23d6706` 上本来都对；我把「删除已知偏差集合 + 61 条基线」插在 `check_archive` 之上后，三处一起下移，两次凭估算换算都落在别处，第三次逐行核对才对。**但这次核对只对到 `23dd8e3` 的树为止，下一笔改 `check_archive` 就又把它推走了**——见第 21 行 |
 | 4 | 三个文件的行数 `850` / `40` / `16` | `849` / `39` / `15` | 三个文件末行都有换行，按换行符数（`wc -l`）与 `splitlines()` 都是后一组数。原写多 1，像是把末尾空行也算成了一行 |
 | 5 | `contracts/README.md:1511` 仍写「其余 61 行……不比」 | 应改成「比基线快照」 | **本轮未改**：该文件有另一会话的未提交改动（`links 1190` 等 12 处）。我若按 blob 提交，工作区仍是他们的版本、索引是我的版本，他们下次提交就会把这句覆盖掉。留待两处改动合并时一并改 |
 | 6 | 更正表第 1 行写「这一版**没有**补上」（指那 3 个无 MANIFEST 行的文件） | 「这一版**补上了**」，补法是 `ARCHIVE_UNLISTED_BASELINE` 逐文件 pin | 第 1 行当时记的是当时的真实状态，但同一轮里洞被补上了，那一行就变成陈旧值。**更正表的每一行都会被之后的事实改写——补完洞要回头看它自己的记录** |
@@ -5700,9 +5700,9 @@ files checked：                  139                  139
 **缺陷。** `unresolved` 这个列表里装的是两种东西：不带点的分支塞 `(key, msg)` 二元组，
 带点的分支塞一条**裸字符串**。消费它的循环按二元组解包：
 
-- 塞二元组：`check_all.py:check_docrefs:2677`（不带点分支，`docs/10 §1` 走这条）
-- 塞裸字符串：`check_all.py:check_docrefs:2672`（带点分支，既不是标题也不是列表项时走这条）—— 修前
-- 消费：`check_all.py:check_docrefs:2686` `for key, msg in unresolved:`
+- 塞二元组：`check_all.py:check_docrefs:2700-2707`（不带点分支，`docs/10 §1` 走这条）
+- 塞裸字符串：`check_all.py:check_docrefs:2695-2698`（带点分支，既不是标题也不是列表项时走这条）—— 修前
+- 消费：`check_all.py:check_docrefs:2709-2713` `for key, msg in unresolved:`
 
 裸字符串被解包成二元组，于是 `ValueError: too many values to unpack (expected 2)`。
 
@@ -5710,24 +5710,24 @@ files checked：                  139                  139
 
 | 注入的引用 | 走向 | 结果 |
 |---|---|---|
-| `docs/07 §1.999`（带点，非标题非列表项） | 2443 裸字符串 | **崩溃** `ValueError` |
-| `docs/07 §9`（不带点，无此标题） | 2449 二元组 | 正常报 1 个失败 |
+| `docs/07 §1.999`（带点，非标题非列表项） | 2695 裸字符串 | **崩溃** `ValueError` |
+| `docs/07 §9`（不带点，无此标题） | 2700 二元组 | 正常报 1 个失败 |
 | `docs/07 §1.5`（带点，命中列表项） | 解析成功 | 0 失败 |
 
 **影响面。** 注入 `§1.999` 后跑全套：`ERROR docrefs`、`ERROR readme`（它为了比对数字重跑
 `check_docrefs`），退出码 **2**（`environment problem; at least one check did not run`），
 不是 1。修复后同样输入：`FAIL docrefs 1 problem(s)`，退出码 **1**，`2 resolve to neither`。
 
-**今天为什么是绿的。** 语料里唯一一处未解析引用是 `docs/10 §1`，它**不带点**，走 2449。
-带点分支（2443）在今天的语料上**一次都没有被执行过**——不是被断言证明没事，是没有输入走到。
+**今天为什么是绿的。** 语料里唯一一处未解析引用是 `docs/10 §1`，它**不带点**，走 2700。
+带点分支（2695）在今天的语料上**一次都没有被执行过**——不是被断言证明没事，是没有输入走到。
 
-**已修。** 把 2443 改成和 2449 同形：先拼 `base`，再追 `(base, base + …)`。修法只动这一处，
+**已修。** 把 2695 改成和 2700 同形：先拼 `base`，再追 `(base, base + …)`。修法只动这一处，
 两个分支现在都塞二元组。修复后复测：注入 `§1.999` → `FAIL docrefs`，不再 ERROR。
 
 **附带的第二个发现（未改，留给 owner）。** docstring 说未解析的 `docs/10 §1`「is reported
 as a failure with the open-decision wording」。实际上它在 `KNOWN_UNRESOLVED_DOCREFS`
 （`check_all.py` 里紧跟 `check_registry` 之后的模块级常量，不在任何函数内）里，
-2449 之后的循环命中它就 `continue`，**不调 `r.fail`**。
+2709-2713 的循环命中它就 `continue`，**不调 `r.fail`**。
 所以它既不是失败、也不进失败列表，只体现在 note 的 `1 resolve to neither` 里。
 文档说的「报为失败」和代码的「静默放行」不一致。这是措辞问题，不是行为缺陷——放行本身是
 owner 决策（是否允许「第一段」这种写法），我不替 owner 裁决，只记下这处不一致。
@@ -6354,5 +6354,6 @@ S45/S46/S47 之一，第 4 个指向 contracts 与 docs），
 | 19 | `check_check_ids` 的 note：「3 known non-conforming (owner decision, see contracts/README.md gap 4)」 | 指向改成 `contracts/README.md:1690`。那三个 `TECH.*_FRAME` （`TECH.BLACK_FRAME` / `TECH.FREEZE_FRAME` / `TECH.FLASH_FRAME`）确实登记在 `contracts/README.md`，但位置是 §「一个入口跑完所有仓库级检查」里的第 1690–1693 行，**不是「缺口 4」**。缺口 4 是 `contracts/README.md:1744` 那一条，讲的是 `quality/check-registry.v2.json` 数据文件还没建、99 条 check 的 schema 必填字段没写 | **引用没坏，但指错了内容。**先确认「gap 4」不是死引用：`git show HEAD:contracts/README.md | grep -n '缺口 4'` 命中第 1688 行，说明 note 里的英文 `gap 4` 是中文「缺口 4」的转写，指向真实存在。**再读那一节讲什么**：缺口 4 的正文写「`registry` 这一项现在报 `skip`……因为 99 条 check 的字段确实还没补齐（缺口 4）」，讲的是 registry 数据缺失，和这三个两段式 id 的改名决策无关。三个 id 的说明在同一份文件的第 1690–1693 行：「`checkids` 里三条 `TECH.*_FRAME` 走白名单放行——改名要动 `E24-T4/T5` 验收项，是 S35 owner 的决定」。**同时核过 note 里另一半**：`check-registry-missing-fields §5.2` 确实存在（该文件第 412 行起），标题「S38:278 引用了一个不存在的 `check_id`」，正文明确写「这一节只写了一处，套件报的是三处」并补齐后两处，与 note 报的 `3 unresolved` 一一对应，那一半引用是对的、不改。**行数不变**（2816 → 2816、−1 字节），`check_links` 仍 100、`check_interactions` 仍 713、`check_payload_refs` 仍 1401、`check_topic_fields` 仍 1442，`citerefs` 仍 13/13、全量仍 22 ok / 1 skip / rc=0 |
 
 | 20 | `check_docrefs` 的 docstring：「It is **reported as a failure** with the open-decision wording, the way `planrefs` reports `Snn §行号`」 | 它是**只计数、不报失败**：条目在模块级常量 `KNOWN_UNRESOLVED_DOCREFS` 里（`check_all.py`中紧跟 `check_registry` 的位置），`2709-2713` 的循环命中就 `continue`，不调 `r.fail`；它只出现在 note 的 `1 resolve to neither` 里。改写成「`It sits in KNOWN_UNRESOLVED_DOCREFS: counted in the note, never sent to `r.fail`; the entry itself fails once the ref resolves or vanishes.` `planrefs` fails on its own form, this one does not -- both name the same owner decision either way.」 | **文档说的和代码做的相反，而代码这一侧才是对的。**反证：把 `KNOWN_UNRESOLVED_DOCREFS` 清成 `set()` 再跑 `--only docrefs`，同一棵树立刻变成 `FAIL docrefs 1 problem(s)` 并打印 `plans/S31-speech-production.md:5 cites docs/10 的 §1: docs/10-*.md has no §1 (… an open owner decision, like `Snn §行号`)`——说明**正是那个集合把它挡住的**，不是别的分支；复原后回到 `ok`、`1 resolve to neither`。两句是同一个提交 `6b7028c` 一起写下的（`git log -S` 只命中它），所以这句「报为失败」从写下起就没成立过，不是后来改坏的。**`planrefs` 那半边也要分开说**：它对同类写法确实调 `r.fail`（`2529-2541`），但当前语料 0 处走那个分支（note 报 `no integer ref names a non-heading`），所以「类比 planrefs」只在代码路径上成立、在当下输出上不成立。**为什么这次不再留成 owner 决策**：本报告 §14 末尾已经记过这处不一致，当时的判断是「放行与否是 owner 决策，只记下不一致」。那个判断混淆了两件事——**放行**是 owner 的，**把放行说成失败**不是；后者只是描述错误，改它不替 owner 裁决任何事。`contracts/README.md:1570-1572` 早就把真实行为写对了（「单列为 `KNOWN_UNRESOLVED_DOCREFS`……既不写进检查也不替 owner 认下来」），所以同一份仓库里，README 说对了、docstring 说反了。**行数不变**（2816 → 2816，4 行换 4 行、+39 字节），`check_links` 仍 100、`check_interactions` 仍 713、`check_payload_refs` 仍 1401、`check_topic_fields` 仍 1442，`citerefs` 仍 13/13、全量仍 22 ok / 1 skip / rc=0。**同段其余数字逐个核过、都成立**：64 个编号标题全部用 `.`；`docs/07` 的 §3 共 7 处引用；`docs/10` 一块 `# 10` 标题加七块非标题内容（1 表格 + 6 段落）。**唯一没核的**是「0 of the 488 pairs change verdict under that reading」——那是关于另一套读法的反事实，要改写解析器重跑才能验，本轮未做，保留原文。**下一轮已补验**：把标题正则从 `[.、]?\s*` 收紧成必须给标点，488 对里 **0 对**判定变化（`484 标题 / 3 列表项 / 1 都不是` 三项全同），docstring 那句成立；同时验了第二个反事实——要求数字后必须是空格，`docs/07` 的编号标题集合直接变成空，`docs/07` 的 §3 那 7 处引用全部落空，488 对里 487 对变化，docstring 说的「7 correct refs then looked like misses」也对 |
+| 21 | 补记十四里同一段代码**并存两套行号**：5703–5705 行写 `check_docrefs` 的 `2677` / `2672` / `2686`，5713–5730 行写裸 `2443` / `2449`。两套都不指向 HEAD 上那段代码 | 统一到 HEAD：`check_docrefs` 的 `2695-2698`（带点/修前裸字符串）、`2700-2707`（不带点/二元组）、`2709-2713`（消费循环）。改用区间形式，不再用裸单行号 | **两套行号在各自的提交树上都是对的，所以没有任何一次核对会红。**逐树实测：`2443`/`2449` 在 `e11d3e0`（写入它们的那棵树）上确实指那两个分支，但循环已在 **2457**、不是文中说的「2449 之后的循环」；`2672`/`2677`/`2686` 在 `23dd8e3`（写入它们的那棵树）上三项全对，可 `bc5736a` 把 `check_docrefs` 推到 2549、`971e5ff` 再推到 2567，HEAD 上 2672 已是 `rel = os.path.relpath(...)`、2677 是 `n_this = 1`、2686 是 `xs = [m.group(2)] + re.findall(...)`。**`23dd8e3` 只回填了 5703–5705 那三处，没有回头找同一节里讲同一段代码的另外四行**——与第 8 行「改正文时只搜索了正文，没回头核种子段落」同一个毛病，只是这次漏的是同一节内部。**`citerefs` 抓不到它**：正则 `(\d+)(?:-(\d+))?` 确实匹配裸单行号，但它只验「该行落在被命名的函数内」（`enclosing()` 只比较 `def` 边界），而 `check_docrefs` 现在从 2567 行起、2731 才结束，2672/2677/2686 全部落在里面，13/13 依旧通过。它自己的 docstring 第 2306–2308 行写明了这个边界：「Whether the prose and the cited code say the same thing is not decidable here and is not attempted」。**所以修法不是换个数字再赌一次，是换形式**：区间形式至少让「这段代码整体搬家」可被肉眼比对，且两处引用的代码块形状（4 行 `base`+`append` / 8 行 `else` 分支 / 5 行循环）本身就是校验式。**验证方式（本轮实跑）**：三个新区间逐行打印确认——`2695-2698` 是带点分支的 `base` + `unresolved.append((base,` + 两行 `list item`，`2700-2707` 是不带点分支的 `base` + `append` + 六行 `no §x` 说明，`2709-2713` 正是 `for key, msg in unresolved:` 到 `r.fail(msg)`；旧三行在 HEAD 上打印出来确实是 `rel = os.path.relpath(p, ROOT)` / `n_this = 1` / `xs = [m.group(2)] + re.findall(...)`。区间落在函数内这件事也独立验过：`check_docrefs` 从 2567 行起、到 2730 行（下一顶层定义 `CHECKS` 在 2731）止，三组区间都在其中，所以 `citerefs` 给出 13/13、`docrefs` 仍 474/444——**计数不动的反证是它们本来就一个都没被剔除**。**未改的**：第 4386 行那张表也记着 `2672`/`2677`/`2686`，它记的是「第 3 行当时改成了什么」这个历史事实，保留原值并在其后加一句说明它们只在 `23dd8e3` 成立 |
 
 全量：22 项通过、1 项 skip（`registry`），exit 0；五个钉住的计数未变。
