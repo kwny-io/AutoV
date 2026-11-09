@@ -1965,6 +1965,21 @@ IMPORT_PREFIXES = (
     ("layout.html", "apps/studio-web/layout.html"),
 )
 
+
+# The three files inside the package that MANIFEST.md has no row for. Nothing
+# compared them, so an edit to any of them -- including to MANIFEST.md itself --
+# looked exactly like a clean tree. Pinned per file for the same reason as
+# ARCHIVE_IMPORTED_BASELINE: a count of three would be satisfied by any three
+# files existing, which is not the same statement as these three being unedited.
+ARCHIVE_UNLISTED_BASELINE = {
+    '00-阅读顺序.txt': (433,
+        'e53d8d41c479040982142cb26bf9a398c32633ea4a57537cc399ee89c12a95b0'),
+    'MANIFEST.md': (12978,
+        '39fa3ac3e66043b360047a2bb6688e742c3abe8c26bbf95550a9d7a83adfea8d'),
+    'contracts/domain-v1-README.md': (651,
+        '6dfeacb599efcf688ffd1196b49882dbe3d46e833c855999a78d6f51b8affb6a'),
+}
+
 ARCHIVE_IMPORTED_BASELINE = {
     'contracts/admission-record.v2.schema.json': (5020,
         '66477e967cb12d55e62d111ff49d2c0cb2eb4a0bccdb00831cec2ad17eba5272'),  # contracts/admission-record.v2.schema.json
@@ -2122,7 +2137,12 @@ def check_archive(name):
     pkg = os.path.join(ROOT, "docs", "design-package")
     man = os.path.join(pkg, "MANIFEST.md")
     if not os.path.exists(man):
-        r.note = "no MANIFEST.md; nothing to compare"
+        # MANIFEST.md is itself pinned, so its absence is a finding, not a reason to
+        # return quietly: with no manifest to compare against, every other row would
+        # go unexamined and the check would still look clean.
+        r.fail("docs/design-package/MANIFEST.md is missing; no row can be compared")
+        r.note = ("no MANIFEST.md; 0 rows compared, and its own absence is reported "
+                  "rather than passed")
         return r
     rows = []
     for line in _utf8(man).splitlines():
@@ -2175,13 +2195,45 @@ def check_archive(name):
             continue
         bad.append((rel, size, len(b)))
 
-    for rel, want, got in bad:
-        r.fail(f"{rel}: expected {want}B/SHA-256, file is {got}B")
+    # Files present in the package that no MANIFEST row names. Reported and
+    # pinned, not silently ignored: this is the one hole left by comparing only
+    # what MANIFEST.md lists.
+    listed = {rel for rel, _, _ in rows}
+    on_disk = set()
+    for dirpath, _, filenames in os.walk(pkg):
+        for fn in filenames:
+            on_disk.add(os.path.relpath(os.path.join(dirpath, fn), pkg).replace(os.sep, "/"))
+    # Denominator is the pin set, not whatever happens to be on disk: a deleted file
+    # drops out of `on_disk`, and a denominator that shrinks with it would report
+    # "2/2 match" for a package that just lost a file.
+    unlisted = sorted(ARCHIVE_UNLISTED_BASELINE)
+    unlisted_ok = 0
+    for rel in unlisted:
+        want = ARCHIVE_UNLISTED_BASELINE[rel]
+        p = os.path.join(pkg, rel)
+        if not os.path.exists(p):
+            r.fail(f"{rel}: pinned at {want[0]}B but the file is gone")
+            continue
+        b = open(p, "rb").read()
+        if (len(b), hashlib.sha256(b).hexdigest()) != want:
+            r.fail(f"{rel}: pinned at {want[0]}B/SHA-256, file is {len(b)}B")
+        else:
+            unlisted_ok += 1
+    for rel in sorted(on_disk - listed - set(unlisted)):
+        # Its own message rather than a `bad` row: `bad` is formatted as
+        # "expected {want}B", and "an ARCHIVE_UNLISTED_BASELINE entryB" is nonsense.
+        r.fail(f"{rel}: in the package with no MANIFEST row and no "
+               f"ARCHIVE_UNLISTED_BASELINE pin")
+    for rel in sorted(set(unlisted) & listed):
+        r.fail(f"{rel} is pinned as unlisted but MANIFEST.md has a row for it now; "
+               f"remove it from ARCHIVE_UNLISTED_BASELINE")
     # A stale entry is itself a finding: if an owner regenerates MANIFEST.md, these
     # three start matching and the set should shrink with it.
     stale = set(ARCHIVE_KNOWN_DIVERGENT) - {rel for rel, _, _ in rows}
     for rel in sorted(stale):
         r.fail(f"{rel} is listed as known-divergent but MANIFEST.md has no row for it")
+    for rel, want, got in bad:
+        r.fail(f"{rel}: expected {want}B/SHA-256, file is {got}B")
     # Counted directly rather than derived from `len(bad)`: `bad` mixes in-package
     # failures with imported-row failures and orphan pins, so subtracting them back
     # out is error-prone in exactly the way the note is meant to expose.
@@ -2190,7 +2242,10 @@ def check_archive(name):
               + (f", {known} known divergences (see the set in this file)" if known else "")
               + f"; {len(rows) - inside} row(s) name files imported elsewhere, "
                 f"{imported}/{len(rows) - inside} still match the pinned baseline "
-                f"and are no longer unexamined")
+                f"and are no longer unexamined"
+              + (f"; {unlisted_ok}/{len(unlisted)} file(s) with no MANIFEST row "
+                 f"still match their pin" if unlisted else
+                 "; no file in the package lacks a MANIFEST row"))
     return r
 
 

@@ -4282,11 +4282,20 @@ outside rows: still identical 57 / changed 4 / gone 0
 它们钉的是当前哈希，不是 MANIFEST 哈希）：比 MANIFEST 会误报，
 完全不看则这 61 个改了也发现不了——后者是本段原本就有的洞。
 
-反向还有一个洞，这一版**没有**补上：包里有 57 个文件，但只有 54 个有 MANIFEST 行，
+反向还有一个洞，这一版**补上了**：包里有 57 个文件，但只有 54 个有 MANIFEST 行，
 缺的是 `00-阅读顺序.txt`、`MANIFEST.md` 自己、`contracts/domain-v1-README.md`。
-这三个**改了什么都不会被发现**——它们是只读规则下的真实缺口。`archive` 的 note 里
-既没有 57 也没有 3（它报的是 `54`、`51/54`、`3 known divergences`、`61/61`），
-上面这两个数是普查时另跑一次探针数的。要不要补行是归档流程的事，不替 owner 决定。
+这三个**改了什么都不会被发现**——它们是只读规则下的真实缺口。补法是
+`ARCHIVE_UNLISTED_BASELINE`：这三个文件逐个钉字节数与 SHA-256，note 尾部多一句
+`3/3 file(s) with no MANIFEST row still match their pin`。
+
+`MANIFEST.md` 自己也在其中，这一点是刻意的：**不加这一钉，改 MANIFEST.md 就能让其余
+54 行全部「对得上」**。另外 `check_archive` 原先在 `MANIFEST.md` 不存在时直接
+`return`（`no MANIFEST.md; nothing to compare`），等于文件被删反而全绿；现在缺它本身
+就是一条 `FAIL`。
+
+三个数 57 / 54 / 3 在 note 里只体现为最后一句的分母 `3`；`54` 与 `51/54` 仍是
+包内那一段，两者各自独立计数。要不要把这三个正式补进 MANIFEST 仍是归档流程的事，
+不替 owner 决定——这里只是让它们在被补进去之前也受检查。
 
 **3 个对不上的，是导入时就注定的，不是有人改过。** 三个文件全都只被 `8c94e5f`
 （scaffold 那一次）碰过，之后再没动过：
@@ -4328,6 +4337,13 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 | 包外一个文件尾部加 1 个换行（`docs/diagrams/01-enterprise-architecture-1.mmd`） | `FAIL archive 1` / 包内仍 `51/54` / 尾部 `60/61` |
 | 包外一个文件删掉（同上） | `FAIL archive 1` / 包内仍 `51/54` / 尾部 `60/61` |
 | 从 `ARCHIVE_IMPORTED_BASELINE` 删掉一条 pin（首、中、尾各测一次） | 三次都 `FAIL archive 1` / 包内仍 `51/54` / 尾部 `60/61`，报 `not in ARCHIVE_IMPORTED_BASELINE` |
+| `00-阅读顺序.txt` 尾部加 1 个换行 | `FAIL archive 1` / 包内仍 `51/54` / 尾部 `2/3 file(s) with no MANIFEST row still match their pin` |
+| `00-阅读顺序.txt` 删掉 | 同上 `FAIL archive 1` / `2/3`（分母不跟文件消失而缩小） |
+| `MANIFEST.md` 尾部加 1 个换行 | `FAIL archive 1` / 包内仍 `51/54` / `2/3` |
+| `MANIFEST.md` 删掉 | `FAIL archive 1` / note 变成 `no MANIFEST.md; 0 rows compared, and its own absence is reported rather than passed` |
+| `contracts/domain-v1-README.md` 改 / 删 | 各自 `FAIL archive 1` / `2/3` |
+| 往包里塞一个没有 pin 的新文件 | `FAIL archive 1` / 报 `in the package with no MANIFEST row and no pin` |
+| 把 `ARCHIVE_UNLISTED_BASELINE` 的键换成 MANIFEST 已有的名字（如 `DESIGN.md`） | `FAIL archive 3`，报 `is pinned as unlisted but MANIFEST.md has a row for it now; remove it from ARCHIVE_UNLISTED_BASELINE` |
 | 全部还原 | 16 项注册、15 通过、1 跳过 |
 
 第 2、3 行合起来才是完整结论。**allow-list 本身不带防护**：只要改动的人顺手把
@@ -4347,9 +4363,14 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 本次实算，`known divergences` 由冻结集逐条比对得出，不是写死的字面量。
 
 > 后续补上了包外 61 行的基线（`ARCHIVE_IMPORTED_BASELINE`，逐文件 pin）。note 尾部那句
-> 「61/61 still match the pinned baseline」同样是实算：探针表后 3 行就是让它分别变成
-> `60/61` 的三种改法，且三种都**不动**包内的 `51/54`——两段计数互不污染。基线 pin 本身
-> 由上面「57 个逐字节相同」那批快照生成，并非另算一遍。
+> 「61/61 still match the pinned baseline」同样是实算：探针表里 `60/61` 的那三行就是让它
+> 分别变成 `60/61` 的三种改法，且三种都**不动**包内的 `51/54`——两段计数互不污染。基线 pin
+> 本身由上面「57 个逐字节相同」那批快照生成，并非另算一遍。
+
+> 再后来补上了包内无 MANIFEST 行的 3 个文件（`ARCHIVE_UNLISTED_BASELINE`）。它和上面两段
+> 也是独立的：探针表里 `2/3` 的六行只动这一段，包内 `51/54` 与包外 `61/61` 都不变。
+> 这一段的分母固定为 pin 集合（3），**不随磁盘上的文件数变化**——否则删掉一个文件，
+> 分母跟着变小，note 会显示 `2/2`，看上去反而「全对」。
 
 **更正表。**
 
@@ -4357,9 +4378,12 @@ ok    archive    54 in-package file(s) checksummed, 51/54 match MANIFEST.md,
 |---|---|---|---|
 | 1 | 「检查只报这个数」（指包里那 3 个无 MANIFEST 行的文件） | 改成「这一版没有补上」+ 明说 note 里既无 57 也无 3 | `archive` 的 note 自写下起就只报 `54`/`51/54`/`3 known divergences`/`61/61`，57 和 3 是另跑探针数的。把探针的输出说成检查的输出 |
 | 2 | `4395eb0` 的 note 尾部「and are not compared」，以及结论段「只比对落在包内的 54 行」（`ed67305` 已随基线一起改掉） | 61 行改比 `ARCHIVE_IMPORTED_BASELINE` 基线快照 | 加了基线之后，这两处描述与 note 不符。**这两处在 `ed67305` 里已不存在**，引文出自 `4395eb0` |
-| 3 | 三处 `check_docrefs` 引用行号：`2615` / `2621` / `2629`（`ed67305` 里提交的版本） | 按补齐函数间空行后实测：`2617` / `2622` / `2631` | 每次在 `check_archive` 之上插入代码都会下移。原值 `2443`/`2449`/`2457` 在 `23d6706` 上本来都对；我把「删除已知偏差集合 + 61 条基线」插在 `check_archive` 之上后，三处一起下移，两次凭估算换算都落在别处，第三次逐行核对才对 |
+| 3 | 三处 `check_docrefs` 引用行号：`2615` / `2621` / `2629`（`ed67305` 里提交的版本） | `2672` / `2677` / `2686`（本轮补完 `ARCHIVE_UNLISTED_BASELINE` 后实测；`check_citerefs` 要求`check_all.py:<函数>:<行号>` 的形式，只写函数名会把 `citerefs` 计数从 13 降到 10 而让 `readme` 报红） | 每次在 `check_archive` 之上插入代码都会下移。原值 `2443`/`2449`/`2457` 在 `23d6706` 上本来都对；我把「删除已知偏差集合 + 61 条基线」插在 `check_archive` 之上后，三处一起下移，两次凭估算换算都落在别处，第三次逐行核对才对 |
 | 4 | 三个文件的行数 `850` / `40` / `16` | `849` / `39` / `15` | 三个文件末行都有换行，按换行符数（`wc -l`）与 `splitlines()` 都是后一组数。原写多 1，像是把末尾空行也算成了一行 |
 | 5 | `contracts/README.md:1511` 仍写「其余 61 行……不比」 | 应改成「比基线快照」 | **本轮未改**：该文件有另一会话的未提交改动（`links 1190` 等 12 处）。我若按 blob 提交，工作区仍是他们的版本、索引是我的版本，他们下次提交就会把这句覆盖掉。留待两处改动合并时一并改 |
+| 6 | 更正表第 1 行写「这一版**没有**补上」（指那 3 个无 MANIFEST 行的文件） | 「这一版**补上了**」，补法是 `ARCHIVE_UNLISTED_BASELINE` 逐文件 pin | 第 1 行当时记的是当时的真实状态，但同一轮里洞被补上了，那一行就变成陈旧值。**更正表的每一行都会被之后的事实改写——补完洞要回头看它自己的记录** |
+| 7 | 本轮 `check_archive` 里 `bad.append((rel, "an ARCHIVE_UNLISTED_BASELINE entry", ...))` 与 `bad.append((rel, f"{want[0]}B pin", ...))` | 这两类改为直接 `r.fail(...)`，不再走 `bad` | `bad` 的格式是 `expected {want}B/SHA-256`，而 `want` 列已经带了 `B pin` / `entry`，拼出来是 `expected an ARCHIVE_UNLISTED_BASELINE entryB/SHA-256` 和 `expected 74502B pinB/SHA-256`。**探针打印出的是拼错的句子，只有逐字读探针输出才看得见；只读 `FAIL archive 3` 看不出来** |
+| 8 | 本轮 `check_archive` 的 note 分母取 `len(on_disk - listed)`，即磁盘上「无 MANIFEST 行的文件数」 | 分母固定为 `len(ARCHIVE_UNLISTED_BASELINE)`（= 3） | 删掉一个未列文件时它同时从 `on_disk` 里消失，分子分母一起减，note 显示 `2/2 still match` ——**文件丢了反而读成「全对」**。改法是把 pin 集合当分母，磁盘上缺的文件单独报 `pinned at NB but the file is gone` |
 
 ### 补记八：`runtime-safety.yaml` 是 AGENTS.md「生产开关默认关闭」的机器可读版，此前零校验
 
@@ -5665,9 +5689,9 @@ files checked：                  139                  139
 **缺陷。** `unresolved` 这个列表里装的是两种东西：不带点的分支塞 `(key, msg)` 二元组，
 带点的分支塞一条**裸字符串**。消费它的循环按二元组解包：
 
-- 塞二元组：`check_all.py:check_docrefs:2622`（不带点，`docs/10 §1` 走这条）
-- 塞裸字符串：`check_all.py:check_docrefs:2617`（带点，既不是标题也不是列表项时走这条）—— 修前
-- 消费：`check_all.py:check_docrefs:2631` `for key, msg in unresolved:`
+- 塞二元组：`check_all.py:check_docrefs:2677`（不带点分支，`docs/10 §1` 走这条）
+- 塞裸字符串：`check_all.py:check_docrefs:2672`（带点分支，既不是标题也不是列表项时走这条）—— 修前
+- 消费：`check_all.py:check_docrefs:2686` `for key, msg in unresolved:`
 
 裸字符串被解包成二元组，于是 `ValueError: too many values to unpack (expected 2)`。
 
