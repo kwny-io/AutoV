@@ -1200,11 +1200,11 @@ def check_docs_readme(name):
     # incremented counter would report a smaller number when an anchor vanished,
     # which reads as "fewer things to check" rather than "one of them did not
     # run" -- the 0/0 failure this module has made before.
-    total = agreed = 0
+    total = agreed = numeric = 0
 
     def assert_count(stated, actual, what):
-        nonlocal total, agreed
-        total += 1
+        nonlocal total, agreed, numeric
+        total += 1; numeric += 1
         if stated == actual:
             agreed += 1
         else:
@@ -1314,9 +1314,9 @@ def check_docs_readme(name):
         assert_count(int(mm.group(1)), len(specs), "the raw service specs")
 
     r.note = (f"{agreed}/{total} assertion(s) in docs/README.md agree with the "
-              f"files on disk (7 numeric statements: {len(docs)} doc(s), {n_svc} "
-              f"service(s) x2 rows, {len(agents)} agent(s), {len(specs)} raw "
-              f"spec(s); plus 2 structural assertions)")
+              f"files on disk ({numeric} numeric, {total - numeric} structural: "
+              f"{len(docs)} doc(s), a row-per-doc table, {n_svc} service(s) in {len(rows)} "
+              f"rows, {len(agents)} agent(s), {len(specs)} raw spec(s), and archive counts)")
     return r
 
 
