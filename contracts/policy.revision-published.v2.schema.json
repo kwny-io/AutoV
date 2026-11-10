@@ -84,7 +84,7 @@
     },
     {
       "field": "本 topic 的订阅方名单——`consumers` 键在 55 个 topic 里一个都没有，名单只活在六篇方案的散文里，且与本服务 `depends_on` 不一致",
-      "demanded_by": "`contracts/event-topics.v2.json` 的注册项、`tools/check_all.py` 的 `check_catalog`（L134–136 有校验 `t.get(\"consumers\", [])` 的分支，因该键恒缺而从未执行过）、docs/02 的消费关系图",
+      "demanded_by": "`contracts/event-topics.v2.json` 的注册项、`tools/check_all.py` 的 `check_catalog`（有校验 `consumers` 的分支，因该键恒缺而从未执行过）、docs/02 的消费关系图",
       "s02_status": "未决，且两边都对不上。`event-topics.v2.json` 全部 55 个 topic **0 个**声明 `consumers`。散文侧：提到本 topic 的有 6 篇（S07 L911、S08 L679、S29 L818、S33 L1135、S34 L1270、S40 L653）。`service-catalog.v2.json` 里 `depends_on` 含 S02 的有 7 个服务（S07 / S19 / S21 / S25 / S39 / S40 / S46），其中**只有 S07 与 S40 提到本 topic**，S19 / S21 / S25 / S39 / S46 零命中；反过来 **S08（`depends_on=['S03']`）/ S29（`['S26','S28','S10']`）/ S33（`['S26','S28']`）/ S34（`['S26','S28']`）四个消费方都没有声明 S02 依赖**。见 POL-5。"
     },
     {
@@ -154,7 +154,7 @@
       "id": "POL-5",
       "summary": "55 个 topic 一个都没声明 `consumers`，本 topic 的消费方名单只活在六篇散文里；而 `depends_on: S02` 与「提到这个 topic」两边互不覆盖——5 个声明依赖的零命中，4 个消费的没声明依赖",
       "no_consumers_key": "`contracts/event-topics.v2.json` 全部 55 个 topic 的键集是 `event_type` / `topic` / `producer` / `schema_ref` / (可选 `data_schema_ref`) / `partition_key` / `delivery` / `normal_retention_days` / `replay_side_effects` / `pii_payload`。**`consumers` 出现 0 次。** 消费关系只存在于 `docs/02` 的散文与各篇方案的消费表里。",
-      "dead_check": "`tools/check_all.py` 的 `check_catalog`（L135–140）有：`consumers = t.get(\"consumers\")` / `if consumers:` / `for c in consumers: if c not in known: r.fail(...)`。因为这个键恒缺，这个分支从未进入过一次——`catalog` 检查现在把这些话说在 note 里（`[producer-only: no topic declares consumers]`），但在那之前它只报「48 service(s), 55 topic(s)」，其中「消费方是合法 service_id」这一半是空转的。这不是本事件独有的问题，但本事件正好是那个本该最需要它的 topic（它的六个消费方横跨生产、审核、快照、授权四条线）。",
+      "dead_check": "`tools/check_all.py` 的 `check_catalog` 里有：`consumers = t.get(\"consumers\")` / `if consumers:` / `for c in consumers: if c not in known: r.fail(...)`。因为这个键恒缺，这个分支从未进入过一次——`catalog` 检查现在把这些话说在 note 里（`[producer-only: no topic declares consumers]`），但在那之前它只报「48 service(s), 55 topic(s)」，其中「消费方是合法 service_id」这一半是空转的。这不是本事件独有的问题，但本事件正好是那个本该最需要它的 topic（它的六个消费方横跨生产、审核、快照、授权四条线）。",
       "mentions": "提到 `policy.revision.published` 的六篇：S07（L911，消费表）、S08（L679，消费表）、S29（L818，消费表）、S33（L1135 消费表 + L507 散文）、S34（L1270，消费表）、S40（L653，消费表一行并入三个 topic）。S02 自己 5 次（行 607 / 718 / 812 及散文）。",
       "declares_depends_on_S02": "`service-catalog.v2.json` 里 `depends_on` 含 `S02` 的 7 个：S07 `['S08','S09','S18','S02']`、S19 `['S02','S26']`、S21 `['S08','S02','S22','S23']`、S25 `['S24','S20','S02']`、S39 `['S35','S36','S37','S09','S02']`、S40 `['S01','S02','S08']`、S46 `['S01','S02','S07','S21']`。**其中提到本 topic 的只有 S07 与 S40；S19 / S21 / S25 / S39 / S46 零命中**——它们依赖 S02 是为了 `evaluate` 决策（同步 API），不是为了这个事件，这本身没错，但说明「depends_on 含 S02」不能推出「消费本 topic」。",
       "consumes_without_depends_on": "反过来，四个消费方没有声明 S02 依赖：S08 `['S03']`、S29 `['S26','S28','S10']`、S33 `['S26','S28']`、S34 `['S26','S28']`。其中 **S08 是最重的一个**——它的消费行（L679）写「失效本地政策缓存；已在使用旧版本的接受提交保持有效（证据固定）」，即它要在本地维护一份 policy 副本并处理「旧版本仍然有效」这条语义，而它连 `depends_on: S02` 都没有。这与 POL-3 的 `scope_binding` 缺口叠加：它既没有依赖声明，也没有可用的 scope 键。",
