@@ -70,7 +70,7 @@ docs/                 17 篇设计文档 + 设计包存档（后者只读）
 
 ## 本地开发
 
-目前只有 S01 有可运行的构建。`service.yaml` / `agent.yaml` / `connector.yaml` 均由 `contracts/service-catalog.v2.json` 派生，改动请改 catalog 后重新生成，不要手改生成物。
+目前 S01、S08、S09 有可运行的构建，其余 45 个服务的 `src/` 为空。`service.yaml` / `agent.yaml` / `connector.yaml` 均由 `contracts/service-catalog.v2.json` 派生，改动请改 catalog 后重新生成，不要手改生成物。
 
 ```bash
 python -m pytest -q
