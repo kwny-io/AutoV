@@ -7,5 +7,7 @@ pythonpath = [
     "platform/auth-sdk/src",
     "services/tenant-access/src",
     "services/tenant-access/api",
+    "services/revision-snapshot/src",
+    "services/revision-snapshot/api",
 ]
 testpaths = ["services", "platform"]

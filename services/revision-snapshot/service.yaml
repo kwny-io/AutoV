@@ -4,7 +4,7 @@
 service_id: S08
 slug: revision-snapshot
 name: 版本快照与接受状态
-maturity: design_only
+maturity: implemented
 
 domain: control
 owner_team: workflow

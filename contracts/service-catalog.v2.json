@@ -180,7 +180,7 @@
       "acceptance": "旧结果、旧审核、旧QC不能切换当前指针；回滚生成新manifest而非改历史",
       "deployment_unit": "revision-snapshot",
       "schema_owner": "revision_snapshot",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {

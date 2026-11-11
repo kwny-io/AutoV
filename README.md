@@ -4,13 +4,13 @@
 
 短剧 / 漫剧企业级生产平台的工程仓库。
 
-本仓库当前处于 **骨架阶段向实现过渡**：目录、服务元数据、契约与设计文档已经就位。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次逐个实现，目前 `tenant-access`（S01）已有可运行的最小内核与测试，其余 47 个服务仍为 `design_only`。
+本仓库当前处于 **骨架阶段向实现过渡**：目录、服务元数据、契约与设计文档已经就位。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次逐个实现，目前 `tenant-access`（S01）与 `revision-snapshot`（S08）已有可运行的最小内核与测试，其余 46 个服务仍为 `design_only`。
 
 ## 现在有什么
 
 | 内容 | 位置 | 状态 |
 |---|---|---|
-| 48 个服务目录与元数据 | `services/<slug>/` | 元数据完整；1 个有实现（S01），47 个 `src/` 为空 |
+| 48 个服务目录与元数据 | `services/<slug>/` | 元数据完整；2 个有实现（S01、S08），46 个 `src/` 为空 |
 | 共享 SDK（幂等 / 事件 / TCT） | `platform/*-sdk/src/` | 已实现，有单测 |
 | 13 个 Agent 角色 | `agents/<role>/` | 定义待填，限额未分配 |
 | 9 个供应商连接器 | `connectors/<provider>/<channel>/` | 全部 `disabled` |
