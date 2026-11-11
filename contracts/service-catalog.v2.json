@@ -553,7 +553,7 @@
       "acceptance": "七家渠道能力按版本与地区建模；不把历史端点当active",
       "deployment_unit": "model-registry",
       "schema_owner": "model_registry",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "models"
     },
     {

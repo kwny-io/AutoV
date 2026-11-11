@@ -13,5 +13,7 @@ pythonpath = [
     "services/lineage-impact/api",
     "services/artifact-ingest/src",
     "services/artifact-ingest/api",
+    "services/model-registry/src",
+    "services/model-registry/api",
 ]
 testpaths = ["services", "platform"]

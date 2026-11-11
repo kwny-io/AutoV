@@ -4,7 +4,7 @@
 
 短剧 / 漫剧企业级生产平台的工程仓库。
 
-本仓库当前处于 **骨架阶段向实现过渡**：目录、服务元数据、契约与设计文档已经就位。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次逐个实现，目前 `tenant-access`（S01）、`revision-snapshot`（S08）、`lineage-impact`（S09）与 `artifact-ingest`（S28）已有可运行的最小内核与测试，其余 44 个服务仍为 `design_only`。
+本仓库当前处于 **骨架阶段向实现过渡**：目录、服务元数据、契约与设计文档已经就位。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次逐个实现，目前 `tenant-access`（S01）、`revision-snapshot`（S08）、`lineage-impact`（S09）、`model-registry`（S24）与 `artifact-ingest`（S28）已有可运行的最小内核与测试，其余 43 个服务仍为 `design_only`。
 
 ## 现在有什么
 
