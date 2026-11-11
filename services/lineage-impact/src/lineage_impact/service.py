@@ -518,11 +518,21 @@ class LineageImpactService:
         for node in nodes:
             if not isinstance(node, dict):
                 continue
-            ref = node.get("ref") or node.get("accepted_artifact_ref") or {}
-            service_id = ref.get("service_id") or node.get("service_id") or "S06"
-            object_id = ref.get("id") or node.get("node_id")
-            object_revision = ref.get("revision") or node.get("node_epoch") or 1
-            if not isinstance(object_id, str) or not object_id:
+            # 只认真正的接受制品引用。S08 的 `accepted_artifact_ref` 允许为
+            # null（未接受的节点），此时退到 `node_id` / `node_epoch` 会把
+            # manifest 内部的节点名当成内容引用、把 S08 的 `node_epoch` 当成
+            # 内容 `revision` 写进 `node_ref`——AGENTS.md 明令这两个代不能
+            # 混用，方案 §1.5 也把 `node_epoch` 定为「不读不写」。
+            ref = node.get("accepted_artifact_ref") or node.get("ref")
+            if not isinstance(ref, dict):
+                continue
+            service_id = ref.get("service_id")
+            object_id = ref.get("id")
+            object_revision = ref.get("revision")
+            if (not isinstance(service_id, str) or not service_id
+                    or not isinstance(object_id, str) or not object_id
+                    or not isinstance(object_revision, int)
+                    or isinstance(object_revision, bool) or object_revision < 1):
                 continue
             self.conn.execute(
                 "INSERT INTO node_ref (tenant_id, branch_id, manifest_id,"

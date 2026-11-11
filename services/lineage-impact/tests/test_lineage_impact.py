@@ -568,6 +568,30 @@ def test_event_replay_never_emits_external_messages(svc):
     assert svc.outbox.unpublished(limit=100) == []
 
 
+def test_unaccepted_node_never_indexes_its_node_epoch_as_a_revision(svc):
+    """未接受的节点不能把 S08 的 `node_epoch` 当成内容 `revision` 落在 `node_ref`。
+
+    S08 的 `accepted_artifact_ref` 允许为 null（`service.py:171` 放行），此时
+    节点只有 `node_id` 与 `node_epoch`。旧实现 `ref.get("revision") or
+    node.get("node_epoch") or 1` 会把 epoch 当 revision 写进 `node_ref`：
+    epoch 是"这个逻辑节点被重算过几次"，revision 是"第几版内容"，两者
+    混用后 `_check_known_revision` 与 CONSERVATIVE 过覆盖都会拿错数。
+    AGENTS.md 与方案 §1.5 都写明 `node_epoch` 不读不写。
+    """
+    svc.consume({
+        "id": "ev_unaccepted", "type": "snapshot.manifest.committed",
+        "tenant_id": TENANT, "sequence": 4,
+        "data": {"manifest_id": MANIFEST, "revision": 4, "branch_id": BRANCH,
+                 "execution_fence": 1, "episode_id": EPISODE,
+                 "node_states": [{"node_id": "shot_1", "node_epoch": 5,
+                                  "accepted_artifact_ref": None}]},
+    })
+    rows = list(svc.conn.execute("SELECT * FROM node_ref"))
+    assert rows == [], (
+        "只有 node_epoch 没有 accepted_artifact_ref 的节点不该产生 node_ref 行；"
+        f"实际写入了 {[dict(r) for r in rows]}")
+
+
 def test_emitted_payload_satisfies_the_contract_schema(svc):
     """发出去的事件体要能用 `contracts/` 里那份 schema 验过。
 
