@@ -983,12 +983,13 @@ UPDATE projection_watermark
 |---|---|---|---|
 | C09-1 | **`contracts/openapi.v2.yaml` 完全没有 S09 端点**。`services/lineage-impact/service.yaml` 声明 `POST /lineage-edges`、`POST /impact-queries`，contracts 里 `grep 'lineage\|impact-queries\|lineage-edges'` 无结果 | 按 catalog 的两条命令 + §5.3 的查询补全 | `contracts/openapi.v2.yaml` |
 | C09-2 | `service.yaml` 的 `depends_on` 只有 `S08`，但 E08 链路必须消费 S16 `memory.canon.committed` 与 S18 `context.pack.created`；实际还消费 S06/S04/S10/S28/S37 | 补 `S16`、`S18`、`S06`、`S10`、`S28`、`S37` | `contracts/service-catalog.v2.json` → 重新生成 |
-| C09-3 | `lineage.impact.computed` 在 `event-topics.v2.json` 注册，但**无 payload schema**；§5.4 的字段只能停留在方案里 | 新增 `contracts/events/lineage-impact-computed.v2.schema.json` | `contracts/` |
+| C09-3 | **原记「无 payload schema」已不成立**：payload schema 文件已存在（`4ccf82d` 引入），topic 注册表里本条事件的 `data_schema_ref` 正指向它。真缺口是**事件带不全 `analysis_hash` 的哈希对象**：`result` 是 7 键，事件只带 5 键（少 `reuse_artifact_refs` 与 `derived_adjustments`），消费方重算出的哈希必然不同——本方案 §6.2 把「校验 `analysis_hash` 一致」定为 S07 的职责，那就得能从事件重算。该 schema 已把它登记为 `x-conflicts` LNI-2，并附 `watermark_source` 未进 payload、「下界不可复核」一条 | 事件补齐这两个键（或改 `analysis_hash` 的口径）归 owner 定 | `contracts/` + S07 方案 |
 | C09-4 | `execution-context.v2.schema.json` 是**单 `node_id` + 单 `node_epoch`** 结构，与"闭包是多节点"直接冲突。若把 `POST /impact-queries` 的 body 做成 `execution-context`，要么塞一个假几点的 node，要么把 node 数组塞进一个 node 字段 | 不复用 execution-context；用 §5.2 的专用 body，只借其中的 `manifest_ref`/`branch_id`/`execution_fence` | `contracts/openapi.v2.yaml`（S09 需要独立的 request schema） |
 | C09-5 | `enterprise-change-plan.v2` 的 `impact` 没有 `disposition` 三档，只有 `regenerate_node_ids`/`recheck_node_ids`/`reuse_artifact_refs` 三个数组。S09 的 `RECHECK` 与 `REUSE` 语义能映射，但**节点级 reason 无处安放** | 映射为三数组（可表达）；reason 留在 `impact_analysis_node`，S47 按需查 S09 | 暂不改；如要可解释性进计划，需扩 schema |
 | C09-6 | docs/04 §2 要求 ChangePlan 含 `impact_watermark`，`enterprise-change-plan.v2` 里只有 `impact.lineage_watermark`（值来源相同但位置不同，且是 required 的嵌套字段） | 用 `impact.lineage_watermark`，值取 S09 的 `lineage_watermark` | S07 方案同步此决定 |
 | C09-7 | `service.yaml` 的 `api.query` 是 `POST /impact-queries`（POST 但归类为 query），而 openapi 的 `Operation`/`Error` 语义假定写命令才有幂等头 | `POST /impact-queries` **要求** `Idempotency-Key`（因为有计算成本与 `analysis_id` 复用） | 契约注释说明"有成本的查询也要幂等" |
 | C09-8 | 没有任何契约定义 `shot_lineage_id`（[S39 C4](S39-repair-planning.md) 已登记）。S09 用 `service_id/id/revision` 定位，不依赖它；但 S39 的跨 Run 累计需要它与 S09 的节点 id 对齐 | S09 不引入该字段；缺口留给 S39/S06 裁决 | 见 S39 C4 |
+| C09-9 | **envelope 的 schema 与 `platform/event-sdk` 的 `EventEnvelope` 对不上**：schema 要求 `aggregate_sequence` 且 `additionalProperties: false`，SDK 发的是 `sequence`；schema 要求 `causation_id` 是非空 string，SDK 在无因果时发 `null`；schema 还把 `data` 列进 envelope 的 required。三者都会让**任何**服务发出的事件验不过 envelope——不只是 S09，S08 的同形 emit 一样红 | S09 不改 envelope（那是 platform 层的口径）。本服务只保证 `data` 部分能过 payload schema，由 `test_emitted_payload_satisfies_the_contract_schema` 守住 | `platform/event-sdk` + `event-envelope.v2.schema.json` 二选一 |
 
 ---
 

@@ -920,6 +920,18 @@ class LineageImpactService:
         base_ref = body.get("base_manifest_ref")
         if not isinstance(base_ref, dict) or not isinstance(base_ref.get("id"), str):
             raise ServiceError(422, "SCHEMA_INVALID", "base_manifest_ref.id is required")
+        # 契约里 `base_manifest_ref` 是 required[ id, revision, content_hash ]
+        # 且 `additionalProperties: false`，三样一起才能让 S07 判 analysis 是否
+        # stale（LNI-4）。只收 id 的话 S09 会发出一条下游 schema 验不过的事件，
+        # 而它自己的单测照样绿——校验必须在入口做完。
+        base_rev = base_ref.get("revision")
+        if not isinstance(base_rev, int) or isinstance(base_rev, bool) or base_rev < 1:
+            raise ServiceError(422, "SCHEMA_INVALID",
+                               "base_manifest_ref.revision must be an integer >= 1")
+        base_hash = base_ref.get("content_hash")
+        if not _is_hash(base_hash):
+            raise ServiceError(422, "SCHEMA_INVALID",
+                               "base_manifest_ref.content_hash must be 64 lowercase hex")
         branch_id = body.get("branch_id") or "main"
         seed = body.get("seed")
         if not isinstance(seed, dict):
@@ -1101,6 +1113,10 @@ class LineageImpactService:
                 correlation_id=body.get("command_id", ""),
                 causation_id=seed.get("plan_id"),
                 data={
+                    # 契约的 payload schema 把 `schema_version` 收进了 required，
+                    # 意为"payload 自身版本"，与 envelope 上那个同名键不是一件事。
+                    # 只由 `new_event` 写 envelope 会让发出的事件体在这条上验不过。
+                    "schema_version": "2.0",
                     "analysis_id": analysis_id, "analysis_hash": analysis_hash,
                     "mode": mode, "base_manifest_ref": base_ref,
                     "execution_fence": fence, "lineage_watermark": watermark,

@@ -568,6 +568,62 @@ def test_event_replay_never_emits_external_messages(svc):
     assert svc.outbox.unpublished(limit=100) == []
 
 
+def test_emitted_payload_satisfies_the_contract_schema(svc):
+    """发出去的事件体要能用 `contracts/` 里那份 schema 验过。
+
+    这条不是"再测一遍序列化"：S09 自己的断言全绿也能发出一条下游验不过的
+    事件——`base_manifest_ref` 少 `content_hash`、`data` 少 `schema_version`
+    时就是这样，34 个用例一条都没红。所以这里直接拿真 schema 对真事件。
+    """
+    import json
+    from pathlib import Path
+
+    import jsonschema
+
+    g = _e03(svc)
+    _query(svc, [{**g["shot"], "fields": ["/camera/angle"]}], mode="ALLOW_CONSERVATIVE")
+    event = svc.outbox.unpublished(limit=10)[0]
+
+    root = Path(__file__).resolve().parents[3]
+    schema = json.loads((root / "contracts" / "lineage.impact-computed.v2.schema.json")
+                        .read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator(schema).validate(event["data"])
+
+
+def test_base_manifest_ref_must_carry_content_hash(svc):
+    """只给 `{id}` 的基线引用要在入口就拒。
+
+    契约里它是 required[ id, revision, content_hash ] 且
+    `additionalProperties: false`；缺了 hash，S07 无法判 analysis 是否 stale
+    （LNI-4），而这个洞只有走到 S07 才会以 422 显形。
+    """
+    g = _e03(svc)
+    body = {
+        "command_id": "cmd_q1", "branch_id": BRANCH, "execution_fence": 1,
+        "base_manifest_ref": {"id": MANIFEST, "revision": 1},
+        "seed": {"kind": "CHANGE_SEED",
+                 "refs": [{**g["shot"], "fields": ["/camera/angle"]}]},
+    }
+    with pytest.raises(ServiceError) as err:
+        svc.query_impact(TENANT, body)
+    assert err.value.status == 422
+    assert "content_hash" in str(err.value)
+
+
+def test_base_manifest_ref_content_hash_must_be_a_hash(svc):
+    """长度/字符集不对同样是 422——schema 给的是 `^[0-9a-f]{64}$`。"""
+    g = _e03(svc)
+    body = {
+        "command_id": "cmd_q1", "branch_id": BRANCH, "execution_fence": 1,
+        "base_manifest_ref": {"id": MANIFEST, "revision": 1, "content_hash": "mf"},
+        "seed": {"kind": "CHANGE_SEED",
+                 "refs": [{**g["shot"], "fields": ["/camera/angle"]}]},
+    }
+    with pytest.raises(ServiceError) as err:
+        svc.query_impact(TENANT, body)
+    assert err.value.status == 422
+
+
 # ---- HTTP 层 -------------------------------------------------------------
 
 def _http_client(monkeypatch, tmp_path):
