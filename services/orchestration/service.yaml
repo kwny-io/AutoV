@@ -4,7 +4,7 @@
 service_id: S21
 slug: orchestration
 name: 长任务编排
-maturity: design_only
+maturity: implemented
 
 domain: control
 owner_team: workflow

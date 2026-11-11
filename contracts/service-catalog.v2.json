@@ -486,7 +486,7 @@
       "acceptance": "数千子任务重启后续跑；暂停阻止新准入并继续结算已提交任务",
       "deployment_unit": "orchestration",
       "schema_owner": "orchestration",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {

@@ -1105,6 +1105,15 @@ S26 的 job 在途数（按 run_id 过滤）
 | C21-9 | `automation-policy.v2` 的 `overrides[].scope_type` 无 `run`（S02 方案 G1 已登记）。docs/06 §2 写"单集/Run覆盖"，schema 表达不了 Run 级覆盖 | 按 episode 覆盖近似；**不自行加枚举** | `contracts/automation-policy.v2.schema.json` |
 | C21-10 | `execution-context.v2` 的 `node_id` + `node_epoch` 是**单节点**语义，但创建 Run 是 **集级**操作。用集级请求携带一个节点的 epoch 是语义错误的 | 创建 Run 时忽略这两个字段的"当前值"语义，只做 fence 校验；节点级上下文由 workflow 在派单时重新组装 | 需要"集级 execution context"或把这两个字段改为可选 |
 | C21-11 | `slo.verified: false` 与 docs/03 的规划量级（5,000 活跃 Run / 52 次/秒峰值）都没有实测。`MAX_CONCURRENT_SHOTS_PER_EPISODE=24` 等默认值是基于这些未验证值的推导 | 全部标为可配、默认保守 | 容量验证后再定 |
+| C21-12 | **`Operation` 的 `additionalProperties:false` 与「重放」信息冲突**。`Operation` 只有 `{operation_id, state, run_id}`（仅 `operation_id` 必填），方案 §5.1 的 `replayed` 放不进去；`disposition` 等取消分类也无处返回 | 响应严格只发三个字段；重放信息由幂等层保证语义等价而不外露，取消分类走 §5.4 `/nodes?state=CANCELED` | `contracts/openapi.v2.yaml` |
+| C21-13 | **`RUN_ALREADY_ACTIVE` 只在 T21-42 出现，§5.7 的 12 个错误码里没有它**。同意图重复创建 Run 时到底返回 200 还是 409 无定论 | 返回既有 Run 的 `Operation`（200 语义），不新建；不发明错误码 | 方案 §5.7 或测试清单，二选一 |
+| C21-14 | **`node_in_flight` 的 §1.5 DDL 缺两列**：`disposition`（§4.2 要求把取消分成 CANCELED / DISCARD_ON_COMPLETION 落盘）与 `job_state`（T21-24 要求不取消 `SUBMISSION_UNKNOWN`，而 §4.5 又要求不猜——两者只能靠本地记录上次从 S26 事件读到的状态同时满足） | 两列都加；`job_state` 只是**快照**，S26 仍是权威 | 方案 §1.5 |
+| C21-15 | **`/blockers` 与 E06 失败报告没有持久化载体**。§5.4 与 T21-02 都要求可查，§1 的 DDL 里没有对应表 | 新增 `node_blocker` 表（事实表，非执行状态） | 方案 §1 |
+| C21-16 | **`with conn:` 在 SQLite autocommit 下不是事务**（与 C22-27 / C23-22 同源）。方案 §6.2/§6.3 的「与业务写入同事务」在 SQLite 上必须显式 `BEGIN IMMEDIATE` | 用显式的可重入 `Transaction`；生产 PG 下语义一致 | 平台实现说明 |
+| C21-17 | **事件的 `data` 要求 `previous_state` 是 11 状态枚举且必填，`current_stage` 是 `minLength:1` 的必填串**，但 Run 刚创建时既没有前态也没有 stage | `previous_state` 取读到的原值（新建时视为 `QUEUED` 自指）；`current_stage` 在首个 stage 开始前落哨兵 `ADMISSION` | 契约允许 null，或给出取值集 |
+| C21-18 | **「取消后重建」会撞编排层唯一索引**。§6.1 说靠业务层部分索引解决，但 `business_idem_key` 跨重建不变 ⇒ `workflow_id` 不变 ⇒ 撞 `wb_workflow_uniq`，且 Temporal 对同 id 的 `start_workflow` 会返回那个**已终结的句柄**，新 Run 根本没启动 | `run_generation` 取同键历史最大值 +1，得到新 `workflow_id`；`run_generation` 列同时表达 CMA 代数与重建代数 | 方案 §6.1 措辞 |
+| C21-19 | **`temporalio` 不在依赖里**，本仓库也没有任何服务发出站 HTTP。S08/S02/S22/S23/S26 的真实调用无法在本仓库落地 | 六个依赖一律走注入的 callable 端口；未接线时 503 `DEPENDENCY_UNAVAILABLE`（契约标 `retryable=true`），不静默降级。S02 本身仍是 `design_only`，按 AGENTS.md 用 mock 按契约走 | 依赖清单 / 部署引导代码 |
+| C21-20 | **平台 `Outbox` DDL 没有 `(tenant_id, aggregate_id, sequence, event_type)` 唯一索引**（方案 §1.8 有）。`aggregate_sequence = projection_watermark` 的"稠密无缺口"因此只靠应用层保证 | 保持 `sequence = projection_watermark`，由 `_record_state` 的 CAS 保证每次变更恰好 +1 | `platform/event-sdk` |
 
 ---
 
