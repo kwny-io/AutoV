@@ -4,7 +4,7 @@
 service_id: S09
 slug: lineage-impact
 name: 依赖溯源与影响分析
-maturity: design_only
+maturity: implemented
 
 domain: control
 owner_team: workflow

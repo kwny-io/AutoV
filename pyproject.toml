@@ -9,5 +9,7 @@ pythonpath = [
     "services/tenant-access/api",
     "services/revision-snapshot/src",
     "services/revision-snapshot/api",
+    "services/lineage-impact/src",
+    "services/lineage-impact/api",
 ]
 testpaths = ["services", "platform"]

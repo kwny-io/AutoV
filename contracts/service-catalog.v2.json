@@ -202,7 +202,7 @@
       "acceptance": "记忆事实改动可定位后续集、上下文包、剧本和镜头",
       "deployment_unit": "lineage-impact",
       "schema_owner": "lineage_impact",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {
