@@ -18,7 +18,7 @@
       "acceptance": "跨租户对象、撤销凭证、服务身份越权均被拒绝",
       "deployment_unit": "tenant-access",
       "schema_owner": "tenant_access",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {

@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+# 各服务的 src/api 目录各自独立发布，测试要能把它们当普通包导入，
+# 所以路径在这里统一声明，而不是要求跑测试的人先手工设 PYTHONPATH。
+pythonpath = [
+    "platform/idempotency-sdk/src",
+    "platform/event-sdk/src",
+    "platform/auth-sdk/src",
+    "services/tenant-access/src",
+    "services/tenant-access/api",
+]
+testpaths = ["services", "platform"]

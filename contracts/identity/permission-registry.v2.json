@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vflow.local/contracts/identity/permission-registry.v2.json",
+  "title": "permission_key 注册表 v2",
+  "description": "plans/S01-tenant-access.md §11 C11 缺失的权限键注册表。S01 的 role 通配校验、S02 的门判定、S46 的 MCP scope 映射都依赖它。每条都标注了在 plans/ 里的出处；没有出处的键不进本表。",
+  "x-source": "从 plans/S01-tenant-access.md、S03–S06、S19、S20、S28、S40、S46 的命令表与权限段落提取",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "naming_rule",
+    "permissions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "naming_rule": {
+      "const": "<domain>.<resource>[.<action>]",
+      "description": "两段或三段：资源型权限（如 project.get、review.decide）在两段式里省略 action。S01 plan 原文即如此，不能为凑格式改名。"
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "domain",
+          "risk",
+          "needs_budget_scope",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,}$"
+          },
+          "domain": {
+            "type": "string",
+            "enum": [
+              "platform",
+              "tenant",
+              "org",
+              "creative",
+              "production",
+              "review",
+              "budget",
+              "integration",
+              "asset",
+              "agent"
+            ]
+          },
+          "risk": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "description": "high = 会触发付费或外部分发；破窗期间强制 deny（S01 §3.6）。"
+          },
+          "needs_budget_scope": {
+            "type": "boolean",
+            "description": "true 时 permission-checks 必须带 budget_scope_id，否则 422。"
+          },
+          "mcp_tool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "contracts/mcp-tools.v2.design.json 里的工具名；无映射为 null。"
+          },
+          "source": {
+            "type": "string",
+            "description": "在 plans/ 里的出处，格式 <file>:<line>。"
+          }
+        }
+      }
+    }
+  },
+  "permissions": [
+    {
+      "key": "platform.tenant.provision",
+      "domain": "platform",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:104"
+    },
+    {
+      "key": "platform.tenant.suspend",
+      "domain": "platform",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:105"
+    },
+    {
+      "key": "platform.tenant.terminate",
+      "domain": "platform",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:106"
+    },
+    {
+      "key": "platform.principal.manage",
+      "domain": "platform",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:110"
+    },
+    {
+      "key": "org.unit.manage",
+      "domain": "org",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:107"
+    },
+    {
+      "key": "org.member.provision",
+      "domain": "org",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:108"
+    },
+    {
+      "key": "org.member.offboard",
+      "domain": "org",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:109"
+    },
+    {
+      "key": "tenant.idp.manage",
+      "domain": "tenant",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:113"
+    },
+    {
+      "key": "tenant.role.manage",
+      "domain": "tenant",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:116"
+    },
+    {
+      "key": "tenant.grant.manage",
+      "domain": "tenant",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:117"
+    },
+    {
+      "key": "creative.script.seal",
+      "domain": "creative",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:1325"
+    },
+    {
+      "key": "creative.breakdown.create",
+      "domain": "creative",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S05-breakdown.md:151"
+    },
+    {
+      "key": "creative.breakdown.revise",
+      "domain": "creative",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S05-breakdown.md:154"
+    },
+    {
+      "key": "creative.breakdown.seal",
+      "domain": "creative",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S05-breakdown.md:153"
+    },
+    {
+      "key": "creative.storyboard.create",
+      "domain": "creative",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S06-storyboard.md:148"
+    },
+    {
+      "key": "creative.storyboard.revise",
+      "domain": "creative",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S06-storyboard.md:149"
+    },
+    {
+      "key": "creative.storyboard.seal",
+      "domain": "creative",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S06-storyboard.md:150"
+    },
+    {
+      "key": "creative.prompt.compile",
+      "domain": "creative",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S20-prompt-compiler.md:160"
+    },
+    {
+      "key": "creative.template.manage",
+      "domain": "creative",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S20-prompt-compiler.md:161"
+    },
+    {
+      "key": "creative.template.publish",
+      "domain": "creative",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S20-prompt-compiler.md:162"
+    },
+    {
+      "key": "agent.task.create",
+      "domain": "agent",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S19-agent-runtime.md:140"
+    },
+    {
+      "key": "agent.task.cancel",
+      "domain": "agent",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S19-agent-runtime.md:141"
+    },
+    {
+      "key": "agent.definition.manage",
+      "domain": "agent",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S19-agent-runtime.md:142"
+    },
+    {
+      "key": "asset.voice.authorize",
+      "domain": "asset",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:46"
+    },
+    {
+      "key": "budget.commitment.approve",
+      "domain": "budget",
+      "risk": "high",
+      "needs_budget_scope": true,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:181"
+    },
+    {
+      "key": "budget.purpose.plan_compute",
+      "domain": "budget",
+      "risk": "medium",
+      "needs_budget_scope": true,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:1287"
+    },
+    {
+      "key": "review.decide",
+      "domain": "review",
+      "risk": "medium",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:1270"
+    },
+    {
+      "key": "production.run.start",
+      "domain": "production",
+      "risk": "high",
+      "needs_budget_scope": true,
+      "mcp_tool": null,
+      "source": "plans/S01-tenant-access.md:1267"
+    },
+    {
+      "key": "project.get",
+      "domain": "integration",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": "project.get",
+      "source": "plans/S01-tenant-access.md:1286"
+    },
+    {
+      "key": "memory.query",
+      "domain": "integration",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": "memory.query",
+      "source": "plans/S01-tenant-access.md:1286"
+    },
+    {
+      "key": "context.preview",
+      "domain": "integration",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": "context.preview",
+      "source": "plans/S01-tenant-access.md:1286"
+    },
+    {
+      "key": "run.get",
+      "domain": "integration",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": "run.get",
+      "source": "plans/S01-tenant-access.md:1286"
+    },
+    {
+      "key": "artifact.compare",
+      "domain": "integration",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": "artifact.compare",
+      "source": "plans/S01-tenant-access.md:1286"
+    },
+    {
+      "key": "model.estimate",
+      "domain": "integration",
+      "risk": "low",
+      "needs_budget_scope": false,
+      "mcp_tool": "model.estimate",
+      "source": "plans/S01-tenant-access.md:1286"
+    },
+    {
+      "key": "episode.plan",
+      "domain": "integration",
+      "risk": "medium",
+      "needs_budget_scope": true,
+      "mcp_tool": "episode.plan",
+      "source": "plans/S01-tenant-access.md:1287"
+    },
+    {
+      "key": "change.plan",
+      "domain": "integration",
+      "risk": "medium",
+      "needs_budget_scope": true,
+      "mcp_tool": "change.plan",
+      "source": "plans/S01-tenant-access.md:1287"
+    },
+    {
+      "key": "memory.extract",
+      "domain": "integration",
+      "risk": "medium",
+      "needs_budget_scope": true,
+      "mcp_tool": "memory.extract",
+      "source": "plans/S01-tenant-access.md:1287"
+    },
+    {
+      "key": "episode.generate",
+      "domain": "integration",
+      "risk": "high",
+      "needs_budget_scope": true,
+      "mcp_tool": "episode.generate",
+      "source": "plans/S01-tenant-access.md:1288"
+    },
+    {
+      "key": "change.apply",
+      "domain": "integration",
+      "risk": "high",
+      "needs_budget_scope": true,
+      "mcp_tool": "change.apply",
+      "source": "plans/S01-tenant-access.md:1288"
+    },
+    {
+      "key": "integration.scope.grant",
+      "domain": "integration",
+      "risk": "high",
+      "needs_budget_scope": false,
+      "mcp_tool": null,
+      "source": "plans/S46-developer-integration.md:885"
+    }
+  ],
+  "naming_rule": "<domain>.<resource>[.<action>]"
+}

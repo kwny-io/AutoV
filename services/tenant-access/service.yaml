@@ -4,7 +4,7 @@
 service_id: S01
 slug: tenant-access
 name: 租户与访问
-maturity: design_only
+maturity: implemented
 
 domain: enterprise
 owner_team: platform

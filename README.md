@@ -4,13 +4,14 @@
 
 短剧 / 漫剧企业级生产平台的工程仓库。
 
-本仓库当前处于 **骨架阶段**：目录、服务元数据、契约与设计文档已经就位，业务服务尚未实现。所有服务的 `maturity` 均为 `design_only`。
+本仓库当前处于 **骨架阶段向实现过渡**：目录、服务元数据、契约与设计文档已经就位。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次逐个实现，目前 `tenant-access`（S01）已有可运行的最小内核与测试，其余 47 个服务仍为 `design_only`。
 
 ## 现在有什么
 
 | 内容 | 位置 | 状态 |
 |---|---|---|
-| 48 个服务目录与元数据 | `services/<slug>/` | 元数据完整，`src/` 为空 |
+| 48 个服务目录与元数据 | `services/<slug>/` | 元数据完整；1 个有实现（S01），47 个 `src/` 为空 |
+| 共享 SDK（幂等 / 事件 / TCT） | `platform/*-sdk/src/` | 已实现，有单测 |
 | 13 个 Agent 角色 | `agents/<role>/` | 定义待填，限额未分配 |
 | 9 个供应商连接器 | `connectors/<provider>/<channel>/` | 全部 `disabled` |
 | 契约（OpenAPI / schema / 事件） | `contracts/` | 设计稿，已校验可解析 |
@@ -62,11 +63,17 @@ docs/                 17 篇设计文档 + 设计包存档（后者只读）
 
 以下是设计包里的原话，实现时不要忘记：
 
-- 未实现、未部署任何业务服务，未调用任何付费生成模型。
+- 尚未部署任何业务服务，未调用任何付费生成模型。已实现的服务只在本机跑单测，没有连过真实供应商。
 - 容量、SLO、RPO/RTO 都是**未验证的规划值**。`service.yaml` 里 `slo.verified` 一律为 `false`。
 - **Schema 合法 ≠ 分布式行为正确。** 静态校验只能证明契约自洽，证明不了 Saga、幂等、fencing 真的对。
 - 所有供应商默认 `disabled`。官方文档与账户探测通过后才能进入 `validating → active`。不要预填 `active`。
 
 ## 本地开发
 
-骨架阶段没有可运行的构建。`service.yaml` / `agent.yaml` / `connector.yaml` 均由 `contracts/service-catalog.v2.json` 派生，改动请改 catalog 后重新生成，不要手改生成物。
+目前只有 S01 有可运行的构建。`service.yaml` / `agent.yaml` / `connector.yaml` 均由 `contracts/service-catalog.v2.json` 派生，改动请改 catalog 后重新生成，不要手改生成物。
+
+```bash
+python -m pytest -q
+```
+
+需要 `fastapi`、`pytest`；Python 3.12。各服务的 `src/` 与 `api/` 在 `pyproject.toml` 的 `pythonpath` 里声明，不用先设环境变量。
