@@ -256,6 +256,13 @@ class RevisionSnapshotService:
             previous_fence = row["execution_fence"]
             self._insert_revision(tenant_id, manifest_id, candidate, merged,
                                   new_revision, head, expected_revision, command_id)
+            # §4：新 revision 一落地，旧的 COMMITTED 版本就成历史。已 ACCEPTED 的
+            # 不动——接受态不是「被取代」，它记着当时的接受水位。
+            self.conn.execute(
+                "UPDATE manifest_revision SET state = 'SUPERSEDED'"
+                " WHERE tenant_id = ? AND manifest_id = ? AND revision = ?"
+                " AND state = 'COMMITTED'",
+                (tenant_id, manifest_id, head))
             self.conn.execute(
                 "UPDATE manifest SET current_revision = ?, execution_fence = ?,"
                 " updated_at = ?, lock_version = lock_version + 1"
@@ -500,10 +507,13 @@ class RevisionSnapshotService:
                     retryable=True, details={"head_revision": head})
             else:
                 target = self._revision_row(tenant_id, manifest_id, expected_revision)
-                if target["state"] in ("VOIDED", "SUPERSEDED"):
+                # 只挡 VOIDED：作废是终态。SUPERSEDED 不是拒绝理由——§4 明说
+                # 「晚到的审核想接受旧 revision 时，走的不是这个转移，而是 §3.3
+                # 的 rebase-or-reject」，能否接受由下面的证据闸与 rebase 条件判。
+                if target["state"] == "VOIDED":
                     pending = ServiceError(
                         409, "ILLEGAL_STATE_TRANSITION",
-                        f"revision {expected_revision} is {target['state']}")
+                        f"revision {expected_revision} is VOIDED")
                 else:
                     unknown = [n for n in wanted if n not in head_nodes]
                     if unknown:

@@ -322,6 +322,46 @@ def test_late_decision_rebases_when_node_unchanged(svc):
     assert out["nodes"][0]["accepted_at_revision"] == 2
 
 
+def test_superseded_revision_can_still_be_rebased(svc):
+    """T08-19：旧 revision 被新提交取代后，节点没变的晚到审核仍可 rebase。
+
+    §4 把 SUPERSEDED → ACCEPTED 列为非法转移，但同一节又说晚到的接受走
+    §3.3 的 rebase-or-reject 而不是这个转移 —— 两条要一起读：接受写的是
+    head 上的指针，旧 revision 自己并不变成 ACCEPTED。
+    """
+    art = _ref("S29", "img_1")
+    n1 = {"node_id": "n1", "node_epoch": 1, "input_fingerprint": _fp("a"),
+          "locked": False, "accepted_artifact_ref": art}
+    _commit(svc, [n1])
+    _evidence(svc, 1, 1, {"n1": 1}, {"n1": art["content_hash"]})
+    _commit(svc, [n1, _node("n2")], expected_revision=1, seed="v2")
+    assert svc.get_revision(TENANT, MANIFEST, 1)["state"] == "SUPERSEDED"
+
+    out = _accept(svc, [n1], expected_revision=1, node_ids=["n1"])
+    assert out["rebased"] is True and out["rebased_from_revision"] == 1
+    assert out["accepted_revision"] is None  # n2 还没接受
+    ptr = svc.accepted_pointers(TENANT, MANIFEST)
+    got = next(n for n in ptr["nodes"] if n["node_id"] == "n1")
+    assert got["accepted_at_revision"] == 2
+    # 旧 revision 仍是历史，不会因为这次接受被改写成 ACCEPTED
+    assert svc.get_revision(TENANT, MANIFEST, 1)["state"] == "SUPERSEDED"
+
+
+def test_accepted_revision_is_not_superseded_by_next_commit(svc):
+    """接受态不是「被取代」：新提交只把旧的 COMMITTED 版本标成 SUPERSEDED。"""
+    nodes = [{"node_id": "n1", "node_epoch": 1, "input_fingerprint": _fp("a"),
+              "locked": False, "accepted_artifact_ref": _ref("S29", "img_1")}]
+    _commit(svc, nodes)
+    _evidence(svc, 1, 1, {"n1": 1}, {"n1": nodes[0]["accepted_artifact_ref"]["content_hash"]})
+    _accept(svc, nodes, expected_revision=1)
+    assert svc.get_revision(TENANT, MANIFEST, 1)["state"] == "ACCEPTED"
+
+    _commit(svc, [dict(nodes[0], input_fingerprint=_fp("a2"))],
+            expected_revision=1, seed="v2")
+    assert svc.get_revision(TENANT, MANIFEST, 1)["state"] == "ACCEPTED"
+    assert svc.get_revision(TENANT, MANIFEST, 2)["state"] == "COMMITTED"
+
+
 def test_accept_all_nodes_sets_accepted_revision(svc):
     """T08-23：最后一个节点接受时才更新 accepted_revision。"""
     art1, art2 = _ref("S29", "a"), _ref("S29", "b")
@@ -450,6 +490,29 @@ def test_node_diff_input_and_accepted_changed(diff_setup):
     out = diff_setup.node_diff(TENANT, MANIFEST, 2, 3)
     a = next(n for n in out["nodes"] if n["node_id"] == "A")
     assert a["change"] == "INPUT_AND_ACCEPTED_CHANGED"
+
+
+def test_node_diff_voided_revision_still_readable(svc):
+    """T08-23j：作废不等于不可读 —— 历史不可变，diff 照常返回。"""
+    _commit(svc, [_node("n1")])
+    _commit(svc, [_node("n1", fp="b")], expected_revision=1, seed="v2")
+    svc.fence(TENANT, SERIES, BRANCH,
+              {"command_id": "cmd_f2", "expected_fence": 1, "reason": "MANUAL"})
+    out = svc.node_diff(TENANT, MANIFEST, 1, 2)
+    assert out["from_revision"] == 1 and out["to_revision"] == 2
+    assert out["nodes"][0]["change"] == "INPUT_CHANGED"
+
+
+def test_node_diff_too_large_is_413_without_partial_result(svc):
+    """T08-23h：超 2000 节点报 413 并提示用 node_id 缩小，不给半截结果。"""
+    _commit(svc, [_node(f"n{i}") for i in range(2001)])
+    with pytest.raises(ServiceError) as exc:
+        svc.node_diff(TENANT, MANIFEST, 1)
+    assert exc.value.status == 413
+    assert exc.value.code == "NODE_DIFF_TOO_LARGE"
+    # 收窄到单节点可以正常返回，说明 413 不是能力缺失
+    one = svc.node_diff(TENANT, MANIFEST, 1, node_id="n0")
+    assert one["nodes"][0]["node_id"] == "n0"
 
 
 def test_node_diff_locked_flip_is_unchanged(diff_setup):
