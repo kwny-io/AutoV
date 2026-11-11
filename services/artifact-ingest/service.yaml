@@ -4,7 +4,7 @@
 service_id: S28
 slug: artifact-ingest
 name: 素材归档与制品目录
-maturity: design_only
+maturity: implemented
 
 domain: media
 owner_team: media

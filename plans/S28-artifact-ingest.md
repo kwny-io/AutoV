@@ -1,6 +1,6 @@
 # S28 · 素材归档与制品目录 —— 实现方案
 
-状态：`design_only`。本文是实现方案，不是已实现代码。所有供应商仍为 `disabled`。
+状态：`implemented`（内核）。「受理 + 发布 + 访问票据 + tombstone」已落地在 `services/artifact-ingest/`；`§4.2` 取字节、`§8.2` 沙箱探测、`§4.6` 派生、`§4.8` 删除编排未实现，见 §12.1 C28-12。所有供应商仍为 `disabled`。
 
 上游依据：[docs/01 §3](../docs/01-enterprise-architecture.md)（唯一权威表）、[docs/04 §1/§4/§6](../docs/04-data-consistency.md)（版本、事件标准、生命周期与删除）、[docs/10](../docs/10-assets.md)（资产与导入）、[docs/14 §2/§3](../docs/14-enterprise-operations.md)（隔离、导入限制、告警）、[docs/03 §2/§3](../docs/03-deployment-capacity.md)（容量、对象前缀）、[S28 规格](../docs/design-package/services/S28-artifact-ingest.md)。
 
@@ -10,7 +10,7 @@
 
 本文重点回答三个问题：**导入器怎么在拿到字节之前就把攻击面关掉**（§8）、**内容 hash 去重怎么做到不泄漏跨租户存在性**（§4.4）、**删除怎么做到先止血再编排**（§4.8）。
 
-> 说明：`contracts/openapi.v2.yaml` 目前**没有任何 S28 路径**，`contracts/` 下也没有 artifact 的机器可读 schema。本文的请求/响应形态是建议值，落地前必须先进契约。见 §12。
+> 说明：`contracts/openapi.v2.yaml` 目前**没有任何 S28 路径**；事件 payload 已有 `contracts/artifact-ingested.v2.schema.json`（实现按它校验，不按 §6.8 的示意文字），但 artifact 本身（请求/响应体）仍无机器可读 schema。本文的请求/响应形态是建议值，落地前必须先进契约。见 §12。
 
 ---
 
@@ -1457,7 +1457,38 @@ trace 标签只放 ID（`import_id`、`artifact_id`、`content_class`、`reject_
 | C28-10 | 全局控制面（Tenant Directory、`home_region`/`home_cell`）归属未在 service catalog 里写清 | docs/03 说是"全局控制面"，S01 的 `data_owner` 没有这两个字段 | 本文按"S28 存**自己的** `home_region`/`home_cell` 副本，权威在控制面"实现；不在 S28 做租户路由 | 架构（与 S01 的 C01-3 同一缺口） |
 | C28-11 | 对象存储的 region 隔离与"单 S28 部署"的关系：`service.yaml` 没有 region 维度，但 docs/03 要求 media 在租户 cell | catalog 生成物无法表达多 cell | 本文按"每 cell 一个 S28 部署实例、共享一个逻辑服务 ID"实现；这是部署形态，不改契约 | 架构（部署文档） |
 
+### 12.1 实现阶段新发现（本轮落地时才暴露）
+
+上表是设计方案时的缺口。下面这些是**写代码对着 §2/§6 逐字段落地时**才发现的——文档本身自洽，但按文档写不出可运行的东西。
+
+| # | 冲突/缺口 | 现状 | 本文怎么处理 | 需要谁改 |
+|---|---|---|---|---|
+| C28-12 | §11.1 把安全链（§4.2 取字节、§8.2 沙箱探测）排在发布之前，但这两段都需要真实网络、DNS 解析与无网沙箱运行时 | 本轮只做「受理 + 发布 + 访问 + tombstone」；`publish()` 的字节与探测结果由调用方交进来 | 先做发布事务，安全链留空并在业务模块 docstring 列明。**不能**用假沙箱凑绿测试——那样得到的是「绿但什么都没证明」 | 实施排期（需基础设施） |
+| C28-13 | §4.4 的去重可见性规则要求「调用方对已有 artifact 所属 scope 有读权限」才允许 `dedup.hit=true`，但 §2.1 的 `artifact` 只有 `owner_ref`，**没有 scope 列**；§2.4 的 `artifact_import` 也没有 | 没有 scope 就存不下「这条 artifact 属于哪个项目/剧集」，E28 的可见性规则无从实现 | `artifact` 与 `artifact_import` 各加 `scope_ref TEXT`（JSON）。已实现，但这是**加列**，要 owner 确认是加列还是另设 scope 表 | 架构 + contracts |
+| C28-14 | §4.4 写的是「两处 scope **相同**」，字面是实现成等值比较；但 scope 是 `{project_id, series_id, episode_id}` 这样的层级对象，等值比较会把「项目级调用方看剧集级 artifact」判成不可见 | 无 | 实现成**包含**（调用方每个字段都要与 artifact 对上），比字面严格更宽。差异登记在此，等裁决 | 架构（语义裁决） |
+| C28-15 | §6.1 第 2 步「`tenant_id` 与认证上下文一致」失败时该返什么码，§6.7 的 16 个码里没有对应项 | 无 | 用 `403 FORBIDDEN_SCOPE`。它语义上最接近，但「租户不符」与「同租户内 scope 不足」本是两件事，共用一码会让审计分不清 | contracts（§6.7 补码） |
+| C28-16 | §6.2 的 response 要 `retention.policy_ref`，§6.8 的 `source.attempt_id` 要 attempt id；§2.4 的 `artifact_import` 两列都没有（`source_ref` 只够放一个 id） | 无 | `artifact_import` 加 `retention_policy_ref TEXT` 与 `attempt_id TEXT`，`artifact` 加 `retention_policy_ref TEXT`。已实现，属加列 | 架构 + contracts |
+| C28-17 | §2.4 有 `mime_declared` 列、§5 的 F6 与 T28-33 要按「声明 vs 探测」拒 `FORMAT_MISMATCH`，但 **§6.1 的请求体没有任何字段能填 `mime_declared`** | 没有声明值就永远比不出不符，F6 与 `FORMAT_MISMATCH` 是死码 | `POST /artifact-imports` 接受可选 `mime_declared`（字符串），与列同名。已在实现中接受，但这是**新增请求字段**，要进 §6.1 | contracts |
+| C28-18 | 归档事件（artifact.archived）在事件注册表里**没有条目**，S28 的 topics 只有 `artifact.ingested` 一条；但 S09 的业务模块按它路由，另有 5 个 asset 服务方案订阅它 | 按「每服务一事件」规则 S28 发不出这个事件 | 不自行新增 topic（C28-3 已提同一问题）；本轮不产出归档事件。下游 5 处订阅目前收不到 | contracts + 架构（与 C28-3 合并裁决） |
+| C28-19 | §6.7 的 16 个错误码里，3 个在本轮**不可能抛出**：`TENANT_SUSPENDED` 与 `AUTH_DEPENDENCY_UNAVAILABLE` 都依赖对 S01 的真实调用（本轮 `ImportAuthorizer` 是桩，直通），`INGEST_BACKLOG` 依赖队列深度（本轮没有队列） | §4.10 明确要求 S01 不可达时 fail closed，桩做不到这一点 | 三个码都不写死路径，只登记。桩的类 docstring 写明「真实实现必须换成对 S01 的调用，并且不可达时 fail closed」。**这不是遗漏，是不能凭空造的失败条件** | 实施排期（需 S01 在线 + 队列） |
+
 **没有发现"两个设计文档互相矛盾、必须二选一"的硬冲突**（与 C1 不同）。以上都是契约缺失或边界未写清。C28-3 是唯一的"语义要选边"项：是折叠进单一事件还是新增 topic，需要裁决。
+
+### 12.2 跨服务的同一个缺陷（不属于 S28，但要报）
+
+`sqlite3.connect(..., isolation_level=None)` 下 **`with conn:` 不开启事务**。实测：
+
+```
+isolation_level=None inside: in_transaction False
+il=None after insert:        in_transaction False   ← 插入已自动提交
+```
+
+（对照：默认 `isolation_level=''` 时 `with conn:` 才有提交/回滚语义。）
+
+已实现并已提交的三个服务——`tenant-access`（6 处 `with self.conn:`）、`revision-snapshot`（6 处）、`lineage-impact`（7 处）——的连接都以 `isolation_level=None` 打开，因此**它们「业务事实 + Outbox 同事务」的说法目前不成立**：每条语句各自自动提交，中途崩溃会留下有事实无事件（或反之）的半写状态。S28 因此改用显式 `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`（业务模块的 `Transaction` 类），并有 `test_transaction_actually_rolls_back` 证明它真的会回滚。
+
+这三处需要单独修复，本轮不动（不在 S28 范围内，且是别人的提交）。
+
 
 ---
 

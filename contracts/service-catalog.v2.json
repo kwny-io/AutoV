@@ -646,7 +646,7 @@
       "acceptance": "供应商URL到期前归档；SSRF/内网/恶意媒体拒绝；不可变hash可验",
       "deployment_unit": "artifact-ingest",
       "schema_owner": "artifact_ingest",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "media"
     },
     {
