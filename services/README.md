@@ -4,7 +4,7 @@
 
 完整定义见 [docs/02-service-catalog.md](../docs/02-service-catalog.md)。
 
-**43 个服务为 `design_only`；S01 `tenant-access`、S08 `revision-snapshot`、S09 `lineage-impact`、S24 `model-registry`、S28 `artifact-ingest` 为 `implemented`。** 依赖关系是运行协作关系，不是启动拓扑要求；异步环通过事件拆解。
+**42 个服务为 `design_only`；S01 `tenant-access`、S08 `revision-snapshot`、S09 `lineage-impact`、S23 `budget-ledger`、S24 `model-registry`、S28 `artifact-ingest` 为 `implemented`。** 依赖关系是运行协作关系，不是启动拓扑要求；异步环通过事件拆解。
 
 
 ## 平台（4）

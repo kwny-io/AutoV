@@ -15,5 +15,7 @@ pythonpath = [
     "services/artifact-ingest/api",
     "services/model-registry/src",
     "services/model-registry/api",
+    "services/budget-ledger/src",
+    "services/budget-ledger/api",
 ]
 testpaths = ["services", "platform"]

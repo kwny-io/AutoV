@@ -4,7 +4,7 @@
 service_id: S23
 slug: budget-ledger
 name: 预算与成本账本
-maturity: design_only
+maturity: implemented
 
 domain: finance
 owner_team: finance

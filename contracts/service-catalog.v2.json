@@ -531,7 +531,7 @@
       "acceptance": "并发抢额度不越界；预留和实际分离；跨run返工不能绕过集预算",
       "deployment_unit": "budget-ledger",
       "schema_owner": "budget_ledger",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "finance"
     },
     {
