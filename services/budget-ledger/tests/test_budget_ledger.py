@@ -859,3 +859,89 @@ def test_http_missing_headers_is_400(client):
     r = c.post("/budget-authorizations", json=_reserve_body(root), headers={})
     assert r.status_code == 400
     assert r.json()["code"] == "MALFORMED_REQUEST"
+
+# ================= 撤权与版本冲突（§3.1 / §6.2 / 错误表） =================
+
+def test_t23_rv10_access_revoked_releases_only_reserved():
+    """§6.2：撤权只放 RESERVED。AUTHORIZED 不动 —— S22 的 permit 可能 INFLIGHT。"""
+    svc = _svc()
+    b = _root(svc)
+    a = _reserve(svc, b, attempt="att_a")
+    z = _ready(svc, b, attempt="att_b")
+    assert svc.get_reservation(T, a["reservation_id"])["state"] == "RESERVED"
+
+    out = svc.consume_access_revoked(T, {"id": "rev-1"}, correlation_id="c_rv")
+    assert out["released"] == [a["reservation_id"]]
+    assert svc.get_reservation(T, a["reservation_id"])["state"] == "RELEASED"
+    assert svc.get_reservation(T, a["reservation_id"])["release_reason"] == "OPERATOR"
+    # AUTHORIZED 原样留着，钱仍然占着
+    assert svc.get_reservation(T, z)["state"] == "AUTHORIZED"
+    assert _b(svc, b)["outstanding_reserved_micro"] == 1000
+
+
+def test_t23_rv11_access_revoked_invalidates_stale_view():
+    """撤权之后，别的服务手上那条旧视图里的 RESERVED 已经不是事实，
+    再用它的 revision 提交就会撞上 VERSION_CONFLICT，而不是被静默接受。"""
+    svc = _svc()
+    b = _root(svc)
+    r = _reserve(svc, b, attempt="att_stale")
+    rid = r["reservation_id"]
+    stale_revision = svc.get_reservation(T, rid)["revision"]
+
+    svc.consume_access_revoked(T, {"id": "rev-2"}, correlation_id="c_rv2")
+
+    now_revision = svc.get_reservation(T, rid)["revision"]
+    assert now_revision != stale_revision
+
+    # 旧 revision 先被版本闸门挡住
+    with pytest.raises(ServiceError) as stale:
+        svc.authorize(T, rid, {"expected_revision": stale_revision},
+                      actor={"service": "test"}, correlation_id="c_after")
+    assert stale.value.code == "VERSION_CONFLICT"
+
+    # 拿对 revision 也推不动：状态已经不是 RESERVED
+    with pytest.raises(ServiceError) as gone:
+        svc.authorize(T, rid, {"expected_revision": now_revision},
+                      actor={"service": "test"}, correlation_id="c_after2")
+    assert gone.value.status == 409
+    assert gone.value.code == "RESERVATION_NOT_SETTLEABLE"
+    assert gone.value.details["state"] == "RELEASED"
+
+
+def test_t23_rv9_stale_revision_is_conflict_not_silent():
+    """错误表 409 VERSION_CONFLICT（可重试）。用旧 revision 推进要明确失败。"""
+    svc = _svc()
+    b = _root(svc)
+    rid = _reserve(svc, b)["reservation_id"]
+    before = svc.get_reservation(T, rid)["revision"]
+
+    svc.authorize(T, rid, {}, actor={"service": "test"}, correlation_id="c_a")
+    after = svc.get_reservation(T, rid)["revision"]
+    assert after == before + 1
+
+    with pytest.raises(ServiceError) as exc:
+        svc.release(T, rid, {"reason": "SAGA_ABORTED",
+                             "evidence_ref": {"id": "x"},
+                             "expected_revision": before},
+                    actor={"service": "test"}, correlation_id="c_b")
+    assert exc.value.status == 409
+    assert exc.value.code == "VERSION_CONFLICT"
+    assert exc.value.retryable is True
+    assert exc.value.details == {"expected_revision": before,
+                                 "actual_revision": after}
+    # 冲突没有副作用
+    assert svc.get_reservation(T, rid)["state"] == "AUTHORIZED"
+
+
+def test_t23_rv12_current_revision_is_accepted():
+    """同一命令带对 revision 必须放行，否则上一条用例证明不了区别。"""
+    svc = _svc()
+    b = _root(svc)
+    rid = _reserve(svc, b)["reservation_id"]
+    rev = svc.get_reservation(T, rid)["revision"]
+    out = svc.release(T, rid, {"reason": "NEVER_DISPATCHED",
+                               "expected_revision": rev},
+                      actor={"service": "test"}, correlation_id="c_ok")
+    assert out["state"] in ("RELEASED", "released")
+    assert svc.get_reservation(T, rid)["state"] == "RELEASED"
+    assert _b(svc, b)["outstanding_reserved_micro"] == 0
