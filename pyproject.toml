@@ -17,5 +17,7 @@ pythonpath = [
     "services/model-registry/api",
     "services/budget-ledger/src",
     "services/budget-ledger/api",
+    "services/scheduler-quota/src",
+    "services/scheduler-quota/api",
 ]
 testpaths = ["services", "platform"]

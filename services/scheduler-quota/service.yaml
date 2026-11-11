@@ -4,7 +4,7 @@
 service_id: S22
 slug: scheduler-quota
 name: 调度与供应商配额
-maturity: design_only
+maturity: implemented
 
 domain: execution
 owner_team: execution

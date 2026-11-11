@@ -934,3 +934,134 @@ Topic `drama.scheduler-quota.v2`，partition key `tenant_id:aggregate_id`，`agg
 - 不用 Redis 做权威计数。
 - 不自动释放 `DISPATCH_AUTHORIZED` / `INFLIGHT`。
 - 不把 `estimated_wait_ms` 当作 SLA 承诺。
+---
+
+## 11. 实现偏差与契约缺口登记（实施轮）
+
+本轮落地的是**配额内核**：§1 的数据模型与两级计数、§2 的命令与查询入口、§3 的状态机、
+§5.3 的锁序（用 SQLite 的立即事务近似）、§5.4 的幂等、§5.6 的租约、§5.7 的 WFQ 排序、
+§6.1 的事件发布与 §6.2 的四个消费者。
+
+**没有**落地的是：§5.2 的真实 Redis 客户端与 §5.5 的探针（只有保守窗口的开关）、
+§5.3 第 1 层的分片写主选举、§5.7 的 aging 加成、§9 的每分钟/每日对账作业与 janitor
+进程（对账与清扫都写成了可调用方法，没有 worker）、§2.6 的 `:resume` 所需的 S02 授权
+判定（只校验调用方是内部 principal、并要求带授权引用）。
+
+下列条目是**本轮没自行裁决或必须偏离原文**的地方，按 AGENTS.md 的
+「契约与文档冲突 → 停下，报告冲突」登记，不自行改契约。§8 的 C22-1 … C22-6 已登记，
+这里从 C22-7 起编号。
+
+- **C22-7 池上限不是列约束。** §1.1 的 `qp_inflight_bounds` 是
+  `CHECK (inflight_used BETWEEN 0 AND inflight_limit)`，但 T22-14 要求把 limit 从 40
+  下调到 20 时已有 35 个继续跑 —— 上限若写进 CHECK，那条下调语句自己就写不进去。
+  本轮只保留下界，上限落在发放入口的事务内预检。`account_used_inflight` 同理。
+- **C22-8 路由元组随请求内联。** §2.1 只给了 `route_decision_ref`，§8 的 C22-5 又
+  要求它是不透明引用（S22 不查 S25）。本轮路由的五个要素必须随请求内联，扁平字段
+  优先、其次读 ref 内部，两种写法都收。`route_decision_ref` 不是必填 —— 缺它时按
+  内联字段选池；这不是「S22 自己算路由」，因为内联值仍来自 S25 的 RouteDecision。
+- **C22-9 `TERMINAL_EVIDENCE_REQUIRED` 不在 §2.7。** T22-27 要求「release 缺证据 → 422」
+  但错误表没有对应的码。本轮新增 422 `TERMINAL_EVIDENCE_REQUIRED`。同一类还有
+  §2.7 未列的 422 `RELEASE_REASON_NOT_ALLOWED`（理由与来源状态不匹配）、
+  422 `SHARD_CAP_CONFLICT` / `SHARD_CAP_EXCEEDED`（建池与改限额时的 Σ limit ≤ cap）、
+  500 `SHARD_MISSING`（池指向的分片不存在 —— 这是数据损坏，不是调用方错误）。
+  这些码属本文推断，需 owner 认可后再补进契约。
+- **C22-10 §2.6 之外多了五个运维端点。** 本轮另开 `POST /quota-pools`（建池）、
+  `POST /pools/{id}:set-limits`、`POST /pools/{id}:drain`、`POST /cache:degrade`、
+  `POST /janitor:sweep`。前三个没有建池/改限额/下线的入口就无法验收 T22-14、T22-15；
+  `:drain` 对应 §3.2 的 DRAINING 态，原文只有 `:suspend` / `:resume`。
+  `:sweep` 是把 §5.6 的 janitor 做成可手工触发；`:degrade` 见 C22-11。
+- **C22-11 没有真实 Redis。** §5.2 要求 Redis 承担快速拒绝、失联时进入保守窗口；
+  本仓库没有 Redis 依赖，本轮只实现「保守窗口」这一半：一个内存截止时间
+  （`mark_cache_degraded`）、窗口内 acquire 一律 503 `CACHE_DEGRADED`、`/cache:rebuild`
+  从 permit 聚合重算池计数。T22-09 / T22-10 因此验的是窗口语义，**不是** Redis 丢包
+  检测 —— 那个探针未实现。上真 Redis 前，`CACHE_DEGRADED` 不会被真实故障触发。
+- **C22-12 五处新增列。** §1 的 DDL 里没有：`quota_pool.source_revision`（§2.5 的响应
+  要它，但没有列承载）、`quota_pool.shard_key`（Σ limit ≤ cap 的校验要按它 GROUP BY，
+  每次现拼安静地放过写错的 account）、`permit.grant_epoch`（§2.1/§2.3 的
+  `expected_grant_epoch` 要它）、`permit.reconcile_required_at`（§6.2 明说要打这个
+  标记，DDL 没有列）、`permit.resource_milli_reserved`（expire / release 时要把 GPU/CPU
+  池预留的资源秒退回，没有列就只能重新推算）。五列都是本服务的推断。
+- **C22-13 `aggregate_sequence` 是状态编码，不是序列。** §1.5 说「每个 permit 一个 1..N
+  的本地序列」，§6.1 给出的却是 RESERVED=1 … EXPIRED=5 的状态映射，两者矛盾
+  （PSP-2 登记过这个二义性）。本轮取状态编码：同一 permit 的状态推进正好是 1→2→3→4，
+  重复的 release 重放写同一个序号，下游按 `aggregate_sequence` 判乱序仍然成立。
+  代价是**同一 permit 不会出现两跳同序号**这种「合法的序列洞」以外的空洞，
+  也就无法用它表达「同一状态被重发两次」。要改成真序列需先定裁决。
+- **C22-14 `POOL_SUSPENDED` 是 503 不是 403。** §3.3 只写「拒绝新 acquire」，错误表
+  记的是 503 `retryable:true`。本轮取 503：账号被隔离不是调用方权限问题，S26 应该
+  有界退避而不是换凭证重试。两处（选池时、预检时）都返回同一码。
+- **C22-15 多了一个消费者名。** §6.3 只列 s22.model / s22.access / s22.observation
+  三个，但 §6.2 有第四行（S26 的 `generation.job.state-changed`）。本轮为它开了
+  第四个消费者名 s22.job，否则 inbox 去重与三个消费者共用一个名，任何一方的事件会互相吞掉。
+  这个名字不在契约里。
+- **C22-16 `PERMIT_ALREADY_RELEASED` 从不发出。** §2.7 有这一行（409、幂等、返回首次
+  结果），但本文 §2.3 与 T22-28 / T22-29 要求重复 release **返回首次结果**。一个永远
+  不会被抛出的码留在表里会让调用方写出走不到的分支。本轮重复 release 走 200 幂等
+  重放（`inflight_freed:false, replayed:true`），不返回 409。错误表这一行建议删除或
+  改注为「不实现」。
+- **C22-17 T22-07 的字面数字与 §1.1 冲突。** T22-07 写「两池各 limit=8，`account_cap=10`」，
+  但 §1.1 的配置时规则是 Σ limit ≤ cap，8+8=16 > 10，这样的两个池按本文根本建不出来。
+  本轮的用例取「两池各 limit=5、cap=10」，验收点仍落在运行时的账号级上限（两池各有
+  余量、账号先满）。这一格要么改数字，要么把 T22-07 拆成「先构造超配再被拒」与
+  「合法配置下账号先满」两条。
+- **C22-18 §3.1 漏了 RESERVED 的两条超车理由。** T22-26 要求 fence 递增时释放
+  「未 dispatch」的 permit，而 RESERVED 按定义就是未 dispatch；§3.1 的表只给
+  DISPATCH_AUTHORIZED 列了 `SUPERSEDED_BY_FENCE` / `SUPERSEDED_BY_BUDGET`。
+  照表实现会把最该被回收的那批 permit 逼到用 OPERATOR 兜底、把释放原因丢掉。
+  本轮让 RESERVED 也收这两条理由。
+- **C22-19 钉住账号与跨池负载均衡的边界。** §0.1 与 T22-46 要求「池不可用就报错、
+  不换账号、不跨区域」，S25 的 L1 降级却是「同一 model_snapshot 换另一个健康账户池」。
+  本轮把两者分开：请求**指定了** `account_ref`（被钉住）时，只在同一账号下的池里选，
+  找不到就 422/503，绝不换账号；请求**没指定**账号时，在路由命中的多个健康池之间
+  按水位选（T22-46c）。后者不是 S22 自行降级 —— 换池的决定仍由 S25 的 RouteDecision
+  给出，S22 只做负载均衡。这条边界若被写成「S22 永不跨池」，L1 就没法成立。
+- **C22-20 aging 加成未实现。** §5.7 说 `effective_at = enqueued_at - aging_bonus`，
+  `aging_bonus` 随等待时长线性增长。本轮 `effective_at` 写入时就等于 `enqueued_at`，
+  构造函数收了 `aging_rate` 却没有任何地方用它。后果是排序的第 3 键退化成常量，
+  只剩 `enqueued_at` 兜底 —— 同一 `virtual_time` 的两条仍按先到先得，但「等得久的
+  往前挪」这个意图没有发生。要真做 aging 需要一个按时间推进 `effective_at` 的作业，
+  那是 §9 的 worker，不在内核里。
+- **C22-21 没有分片写主，因此没有 `WRITER_EPOCH_STALE`。** §2.7 与 §5.3 第 1 层要求
+  每个分片一个写主、旧写主返回 503 `WRITER_EPOCH_STALE`。本轮假设单写：SQLite 的
+  `BEGIN IMMEDIATE` 让同一时刻只有一个写者，比 PG 的行锁更强，也就没有「旧写主」
+  这个状态可报。多副本同时写同一分片时的正确性**未验证**，部署形态必须先满足单写。
+  `WRITER_EPOCH_STALE` 在实现里零命中。
+- **C22-22 tpm 窗口没有消耗方。** §1.1 有 `tpm_limit` / `tpm_remaining_window`，预检也
+  会因余额为零返回 429 `bottleneck=tpm`，但没有任何命令扣减 tpm —— 本轮 acquire 只扣
+  rpm（`_apply_counters` 的 `rpm_delta`）。tpm 的扣减需要请求的 token 数，那是 S27 观测
+  才有的值，S22 在发放时不知道。所以 tpm 现在只能作为静态闸门使用。这是缺口，
+  不是有意的设计。
+- **C22-23 事件投递没有 HTTP 入口。** §6.2 的四个消费者都写成了方法
+  （`consume_model_capability_changed` / `consume_access_revoked` /
+  `consume_job_state_changed` / `consume_observation_received`），但 `api/` 下没有
+  对应的入站路由 —— 契约里没有事件入口，S22 的 openapi 也没有。测试直接调方法。
+  接消息总线时需要一个真实的消费者进程，不是一个 HTTP 端点。
+- **C22-24 账本列与 §1.4 不同。** §1.4 是 `delta_tpm` / `delta_resource_micro`，
+  本轮落成 `delta_account` / `delta_resource_milli`：账号级在途是两级计数的另一半，
+  只记池级会让「账号满了」这件事无从对账；资源秒按毫单位存，与
+  `resource_seconds_used_milli` 一致（`numeric(20,3)` 是 PG 的定点写法）。`delta_tpm`
+  没有扣减方（C22-22），所以不建列。若实数支持后要补，需先定清 tpm 扣减的时点。
+- **C22-25 只追加靠触发器。** §1.4 说账本是「计数的可重建来源」。Postgres 可以用
+  收回 UPDATE/DELETE 权限 + 触发器双保险；SQLite 没有 REVOKE，本轮只有 BEFORE UPDATE
+  / BEFORE DELETE 两个触发器。库的所有者仍能改历史，append-only 是应用层承诺而非
+  存储层强制。上真库时必须补回权限那一半。与 S23 的 C23-9 是同一处偏离。
+- **C22-26 幂等与发件箱用平台 SDK。** §1.5 要求与 S08 同构的 `idempotency_record` /
+  `outbox` / `inbox` DDL，本轮不重复声明，改用平台 SDK 的那张表（SDK 自己保证
+  「业务事实与事件同事务」）。语义一致、落库形态不同。与 S23 的 C23-12/13、
+  S24 的 C24-10 是同一处偏离。同键同 body 重放、同键异体 409 在 HTTP 层实现
+  （`IDEMPOTENCY_KEY_REUSED` 在 `api/` 抛出，不在内核里）。
+- **C22-27 事务必须显式开。** `sqlite3` 在自动提交模式下，连接上下文管理器
+  只是 try/except/commit，而每条语句已经各自提交 —— 它**不**开启事务。
+  「预检 + 自增」之间若插入别人，T22-06（100 并发只授予 5 个）就立不住。内核里
+  所有写路径都发显式的 `BEGIN IMMEDIATE`。S01 / S08 / S09 用连接上下文当事务的地方
+  有同样的隐患，属既有问题，本轮只在 S22 修正（同 C23-22）。
+- **C22-28 时间戳存定宽 27 字符文本。** §1 的列是 `timestamptz`，本轮落成 UTC 文本，
+  定宽是为了让字典序等于时间序 —— `isoformat()` 在微秒为 0 时会省掉小数段，
+  那样字符串比较就会出错。配额算术全程整数，没有 float 参与比较。
+
+新增未决（承接 §8 与文末清单）：
+
+- C22-9 的五个错误码、C22-12 的五列、C22-15 的消费者名要不要进契约，需 owner 确认。
+- C22-13 的 `aggregate_sequence` 语义（状态编码 vs 真序列）需要一次裁决；PSP-2 登记过。
+- C22-17 的 T22-07 数字冲突、C22-20 的 aging 作业、C22-21 的写主选举、C22-22 的 tpm
+  扣减时点，四项都属未决。

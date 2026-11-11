@@ -509,7 +509,7 @@
       "acceptance": "Redis丢失不超并发；账号跨租户共享上限仍严格守恒",
       "deployment_unit": "scheduler-quota",
       "schema_owner": "scheduler_quota",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "execution"
     },
     {
