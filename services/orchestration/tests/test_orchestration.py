@@ -258,6 +258,23 @@ def test_t21_11_episode_too_large_is_422():
     assert exc.value.code == "EPISODE_TOO_LARGE"
 
 
+def test_t21_11b_shot_cap_is_800_not_the_temporal_child_ceiling():
+    """§2.2：`MAX_SHOTS_PER_EPISODE = 800`。
+
+    2000 是 Temporal 的 `MAX_CONCURRENT_CHILDREN`（并发子工作流硬上限），
+    不是集规模闸门；用它当闸门等于没有闸门。801 必须被拒，800 必须放行。
+    """
+    over, _ = _svc(Ports(node_count=801))
+    with pytest.raises(ServiceError) as exc:
+        _create(over)
+    assert exc.value.code == "EPISODE_TOO_LARGE"
+
+    at_limit, ports = _svc(Ports(node_count=800))
+    created = _create(at_limit)
+    assert created["state"] == "accepted"
+    assert len(ports.workflows) == 1
+
+
 def test_t21_12_episode_path_must_match_context():
     svc, p = _svc()
     with pytest.raises(ServiceError) as exc:
@@ -525,6 +542,73 @@ def test_t21_42_same_intent_does_not_create_second_active_run():
         (T,)).fetchone()[0]
     assert count == 1
     assert len(p.workflows) == 1, "workflow 只启动一次"
+
+
+def test_t21_50_start_workflow_failure_is_retryable_not_500():
+    """§5.7：`start_workflow` 失败必须是 503 `TEMPORAL_UNAVAILABLE`（可重试）。
+
+    Run 已经落库了（§3.1 步骤 6 先于步骤 7），所以这里不是"什么都没发生"：
+    binding 与 projection 都在，只是 workflow 没启动。
+    """
+    class Broken(Ports):
+        def start_workflow(self, workflow_id, payload):
+            raise RuntimeError("temporal frontend unreachable")
+
+    svc, p = _svc(Broken())
+    with pytest.raises(ServiceError) as ei:
+        _create(svc)
+    assert ei.value.status == 503
+    assert ei.value.code == "TEMPORAL_UNAVAILABLE"
+    assert ei.value.retryable is True
+
+    row = svc.conn.execute(
+        "SELECT run_id, workflow_started_at FROM workflow_binding"
+        " WHERE tenant_id = ?", (T,)).fetchone()
+    assert row is not None, "binding 已经落了"
+    assert row["workflow_started_at"] is None, "启动没成功就不能标记"
+
+
+def test_t21_51_retrying_create_run_actually_starts_the_workflow():
+    """C21-21：重试必须真的补启，而不是命中业务幂等就返回。
+
+    方案 §3.1 说"启动失败只需重试 `start_workflow`"，但重试走同一个 POST，
+    业务层幂等会直接返回原 Run——不补启的话 workflow 永远不启动。
+    """
+    class Flaky(Ports):
+        def __init__(self):
+            super().__init__()
+            self.attempts = 0
+
+        def start_workflow(self, workflow_id, payload):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("temporal frontend unreachable")
+            self.workflows.append((workflow_id, payload))
+            return {"started": True}
+
+    svc, p = _svc(Flaky())
+    with pytest.raises(ServiceError):
+        _create(svc)
+    assert p.attempts == 1
+
+    second = _create(svc)
+    assert p.attempts == 2, "重试真的又调了一次 start_workflow"
+    assert len(p.workflows) == 1
+    assert svc.get_run(T, second["run_id"])["state"] == "QUEUED"
+
+    # 第三次：已经启动过，不再重复启动。
+    _create(svc)
+    assert p.attempts == 2, "启动成功后不应再调端口"
+
+
+def test_t21_52_manual_generation_mode_never_starts_a_workflow():
+    """§3.1：`generation_mode=manual` 不启动 workflow，重试也不启动。"""
+    svc, p = _svc(Ports(generation_mode="manual"))
+    first = _create(svc)
+    second = _create(svc)
+    assert first["run_id"] == second["run_id"]
+    assert p.workflows == []
+    assert svc.get_run(T, first["run_id"])["state"] == "WAITING_INPUT"
 
 
 def test_t21_43_cancel_then_rebuild_works_because_index_is_partial():

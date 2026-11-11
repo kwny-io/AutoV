@@ -1114,6 +1114,10 @@ S26 的 job 在途数（按 run_id 过滤）
 | C21-18 | **「取消后重建」会撞编排层唯一索引**。§6.1 说靠业务层部分索引解决，但 `business_idem_key` 跨重建不变 ⇒ `workflow_id` 不变 ⇒ 撞 `wb_workflow_uniq`，且 Temporal 对同 id 的 `start_workflow` 会返回那个**已终结的句柄**，新 Run 根本没启动 | `run_generation` 取同键历史最大值 +1，得到新 `workflow_id`；`run_generation` 列同时表达 CMA 代数与重建代数 | 方案 §6.1 措辞 |
 | C21-19 | **`temporalio` 不在依赖里**，本仓库也没有任何服务发出站 HTTP。S08/S02/S22/S23/S26 的真实调用无法在本仓库落地 | 六个依赖一律走注入的 callable 端口；未接线时 503 `DEPENDENCY_UNAVAILABLE`（契约标 `retryable=true`），不静默降级。S02 本身仍是 `design_only`，按 AGENTS.md 用 mock 按契约走 | 依赖清单 / 部署引导代码 |
 | C21-20 | **平台 `Outbox` DDL 没有 `(tenant_id, aggregate_id, sequence, event_type)` 唯一索引**（方案 §1.8 有）。`aggregate_sequence = projection_watermark` 的"稠密无缺口"因此只靠应用层保证 | 保持 `sequence = projection_watermark`，由 `_record_state` 的 CAS 保证每次变更恰好 +1 | `platform/event-sdk` |
+| C21-21 | **§3.1 说「启动失败只需重试 `start_workflow`」，但重试走同一个 `POST`，命中业务层幂等就直接返回原 Run**——不记下启动过没有，workflow 永远不会启动，Run 永久停在 `QUEUED`。`start_workflow` 抛异常时也没有对应错误码，会冒成 500 | `workflow_binding` 加 `workflow_started_at`（NULL = 未启动）；既有 ACTIVE Run 若未启动则补启且只补一次；端口失败映射 503 `TEMPORAL_UNAVAILABLE`（§5.7 已有该码，`retryable=true`） | 方案 §3.1 措辞；§1.1 DDL |
+| C21-22 | **§5.7 的 `POLICY_DENIES_GENERATION`（「`generation_mode=manual` 且调用方要求自动」）在这份契约里不可达**：openapi 的创建 body 只有 `context`/`budget_scope_id`/`command_id`，没有任何字段能表达「我要自动」 | 不发明码，也不猜调用方意图：`generation_mode=manual` 一律按 §3.1 末段建 Run 并落 `WAITING_INPUT`。该码保留在表里但当前不会发出 | `contracts/openapi.v2.yaml` 需要表达「请求自动」的字段 |
+| C21-23 | **`intent` 是 `business_idem_key` 的九个输入之一（§1.1），但 openapi 创建 body 是 `additionalProperties:false` 且没有这个属性**——按契约发出去就非法 | 接收 `intent`（缺省 `episode_production`），因为不接收就无法区分「集级生产」与「局部修复」两种意图，业务幂等会合并成一个 Run | `contracts/openapi.v2.yaml` 应补 `intent` 枚举 |
+| C21-24 | **§2.2 有两个 2000/800 的数容易被互换**：`MAX_CONCURRENT_CHILDREN = 2000` 是 Temporal 的并发子工作流硬上限，`MAX_SHOTS_PER_EPISODE = 800` 才是集规模闸门。初版实现把闸门写成 2000，等于没有闸门 | 闸门取 800；测试钉住 800 放行、801 拒绝。并发上限交给 workflow 的 `wait_condition` | 无（已在实现侧对齐 §2.2）；记录以防再换错 |
 
 ---
 

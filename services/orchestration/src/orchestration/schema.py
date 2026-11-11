@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS workflow_binding (
   status                     TEXT NOT NULL,
   created_at                 TEXT NOT NULL,
   closed_at                  TEXT,
+  -- §3.1 步骤 6 与 7 之间有一个窗口：binding 已提交、workflow 还没启动。
+  -- 方案说"启动失败只需重试 `start_workflow`"，但若不记下启动过没有，
+  -- 重试会撞上业务层幂等直接返回原 Run，workflow 永远不会被启动
+  -- （C21-21）。NULL = 尚未启动，重试时补启。
+  workflow_started_at        TEXT,
 
   PRIMARY KEY (tenant_id, run_id),
   CONSTRAINT wb_generation_positive CHECK (run_generation >= 1),

@@ -212,7 +212,10 @@ class OrchestrationService:
                  source: str = "S21", namespace: str = "drama",
                  task_queue: str = "orchestration-episode",
                  workflow_type: str = "episode_production",
-                 max_nodes_per_episode: int = 2000,
+                 # §2.2 `MAX_SHOTS_PER_EPISODE = 800`。2000 是 Temporal 的
+                 # `MAX_CONCURRENT_CHILDREN` 硬上限，不是集规模闸门——拿它
+                 # 当闸门等于没有闸门（C21-24）。
+                 max_nodes_per_episode: int = 800,
                  # ---- 依赖端口（§3.1 / §4.2 / §4.3 / §4.6）----
                  fence: Callable[[str, dict], dict] | None = None,
                  effective_policy: Callable[[str, dict], dict] | None = None,
@@ -356,65 +359,130 @@ class OrchestrationService:
                 # T21-42：同意图已有 ACTIVE Run。返回原 Run 而不是再建一个。
                 # 契约上没有 `RUN_ALREADY_ACTIVE` 这个码（§5.7 没有，T21-42 提了）
                 # ——登记为 C21-13，这里选"返回原 Run"这一支。
-                return self._operation_for(existing, replayed=False)
-
-            run_id = self._new_id("run")
-            now = self._now()
-
-            # generation_mode=manual：不启动 workflow，但**仍然创建** binding
-            # 与 projection，落到 WAITING_INPUT。这样"等人工"是可见的（§3.1）。
-            initial_state = ("WAITING_INPUT" if generation_mode == "manual"
-                             else "QUEUED")
-            waiting_reason = WAITING_REASON_MANUAL if generation_mode == "manual" else None
-
-            self.conn.execute(
-                "INSERT INTO workflow_binding (tenant_id, run_id, workflow_id,"
-                " run_generation, namespace, task_queue, workflow_type,"
-                " business_idem_key, series_id, episode_id, branch_id, manifest_id,"
-                " manifest_revision_at_start, execution_fence_at_start,"
-                " automation_mode, policy_ref, budget_scope_id, status, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ACTIVE',?)",
-                (tenant_id, run_id, workflow_id, run_generation, self.namespace,
-                 self.task_queue, self.workflow_type, business_idem_key,
-                 context["series_id"], context["episode_id"], context["branch_id"],
-                 manifest_ref["id"], int(manifest_ref["revision"]), fence_at_start,
-                 automation_mode, _dumps(context["policy_ref"]), budget_scope_id,
-                 now))
-
-            self.conn.execute(
-                "INSERT INTO run_projection (tenant_id, run_id, state,"
-                " manifest_revision, execution_fence, completed_nodes,"
-                " blocked_nodes, failed_nodes, waiting_reason, blocked_reason,"
-                " current_stage, projection_watermark, last_event_at, terminal_at,"
-                " version) VALUES (?,?,?,?,?,0,0,0,?,NULL,NULL,1,?,NULL,1)",
-                (tenant_id, run_id, initial_state, int(manifest_ref["revision"]),
-                 fence_at_start, waiting_reason, now))
-
-            self._emit_state(tenant_id, run_id, previous_state=None,
-                             correlation_id=correlation_id,
-                             causation_id=correlation_id)
+                run_id = existing["run_id"]
+                needs_start = self._needs_start(existing)
+            else:
+                run_id = self._new_id("run")
+                needs_start = generation_mode != "manual"
+                self._insert_binding(
+                    tenant_id, run_id, workflow_id, run_generation,
+                    business_idem_key, context, manifest_ref, fence_at_start,
+                    automation_mode, budget_scope_id, generation_mode,
+                    correlation_id=correlation_id)
 
             binding = self._binding_row(tenant_id, run_id)
 
         # §3.1 步骤 7：事务提交后才启动 workflow。反过来会产生"有 Run 但没绑定"
         # 的孤儿；这一顺序失败只需重试 `start_workflow`（workflow_id 确定性）。
-        if generation_mode != "manual":
-            starter = self.start_workflow
-            if starter is not None:
-                starter(workflow_id, {
-                    "run_id": run_id,
-                    "tenant_id": tenant_id,
-                    "run_generation": run_generation,
-                    "business_idem_key": business_idem_key,
-                    "namespace": self.namespace,
-                    "task_queue": self.task_queue,
-                    "workflow_type": self.workflow_type,
-                    "manifest_ref": manifest_ref,
-                    "execution_fence": fence_at_start,
-                    "automation_mode": automation_mode,
-                })
+        if needs_start:
+            self._start_workflow_once(tenant_id, binding, manifest_ref,
+                                      run_generation, business_idem_key,
+                                      automation_mode, fence_at_start)
+            binding = self._binding_row(tenant_id, run_id)
 
         return self._operation_for(binding, replayed=False)
+
+    def _needs_start(self, binding: dict) -> bool:
+        """既有 ACTIVE Run 是否还没被启动过（C21-21）。
+
+        `generation_mode=manual` 的 Run 永远不启动 workflow，它在
+        `waiting_reason` 上是可辨识的；其余 ACTIVE 但没有
+        `workflow_started_at` 的，正卡在 §3.1 步骤 6/7 之间的窗口里。
+        """
+        if binding["workflow_started_at"] is not None:
+            return False
+        projection = self._projection_row(binding["tenant_id"], binding["run_id"])
+        return not (projection and projection["waiting_reason"] == WAITING_REASON_MANUAL)
+
+    def _insert_binding(self, tenant_id: str, run_id: str, workflow_id: str,
+                        run_generation: int, business_idem_key: str, context: dict,
+                        manifest_ref: dict, fence_at_start: int,
+                        automation_mode: str, budget_scope_id: str,
+                        generation_mode: str, *, correlation_id: str) -> None:
+        """§3.1 步骤 6。binding + projection + outbox，同一事务。
+
+        `workflow_started_at` 留 NULL：步骤 7 成功后才写（C21-21）。
+        """
+        now = self._now()
+        # generation_mode=manual：不启动 workflow，但**仍然创建** binding
+        # 与 projection，落到 WAITING_INPUT。这样"等人工"是可见的（§3.1）。
+        initial_state = ("WAITING_INPUT" if generation_mode == "manual"
+                         else "QUEUED")
+        waiting_reason = WAITING_REASON_MANUAL if generation_mode == "manual" else None
+
+        self.conn.execute(
+            "INSERT INTO workflow_binding (tenant_id, run_id, workflow_id,"
+            " run_generation, namespace, task_queue, workflow_type,"
+            " business_idem_key, series_id, episode_id, branch_id, manifest_id,"
+            " manifest_revision_at_start, execution_fence_at_start,"
+            " automation_mode, policy_ref, budget_scope_id, status, created_at,"
+            " workflow_started_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ACTIVE',?,NULL)",
+            (tenant_id, run_id, workflow_id, run_generation, self.namespace,
+             self.task_queue, self.workflow_type, business_idem_key,
+             context["series_id"], context["episode_id"], context["branch_id"],
+             manifest_ref["id"], int(manifest_ref["revision"]), fence_at_start,
+             automation_mode, _dumps(context["policy_ref"]), budget_scope_id,
+             now))
+
+        self.conn.execute(
+            "INSERT INTO run_projection (tenant_id, run_id, state,"
+            " manifest_revision, execution_fence, completed_nodes,"
+            " blocked_nodes, failed_nodes, waiting_reason, blocked_reason,"
+            " current_stage, projection_watermark, last_event_at, terminal_at,"
+            " version) VALUES (?,?,?,?,?,0,0,0,?,NULL,NULL,1,?,NULL,1)",
+            (tenant_id, run_id, initial_state, int(manifest_ref["revision"]),
+             fence_at_start, waiting_reason, now))
+
+        self._emit_state(tenant_id, run_id, previous_state=None,
+                         correlation_id=correlation_id,
+                         causation_id=correlation_id)
+
+    def _start_workflow_once(self, tenant_id: str, binding: dict,
+                             manifest_ref: dict, run_generation: int,
+                             business_idem_key: str, automation_mode: str,
+                             fence_at_start: int) -> None:
+        """§3.1 步骤 7。**成功后才写 `workflow_started_at`**（C21-21）。
+
+        方案说"启动失败只需重试 `start_workflow`"，但重试走的是同一个
+        `POST`，命中业务层幂等就返回原 Run 了——不记下启动过没有，workflow
+        永远不会被启动，Run 永远停在 QUEUED。所以这里既补启又要标记。
+
+        端口失败映射成 503 `TEMPORAL_UNAVAILABLE`（§5.7 有这一条，
+        `retryable=true`），而不是让它冒成 500。
+        """
+        starter = self.start_workflow
+        if starter is None:
+            # 未接线：Run 已落库，workflow 尚未启动。不标记，下次重试会补启。
+            raise ServiceError(
+                503, "DEPENDENCY_UNAVAILABLE",
+                "dependency port 'start_workflow' is not wired", retryable=True,
+                details={"port": "start_workflow"})
+        try:
+            starter(binding["workflow_id"], {
+                "run_id": binding["run_id"],
+                "tenant_id": tenant_id,
+                "run_generation": run_generation,
+                "business_idem_key": business_idem_key,
+                "namespace": self.namespace,
+                "task_queue": self.task_queue,
+                "workflow_type": self.workflow_type,
+                "manifest_ref": manifest_ref,
+                "execution_fence": fence_at_start,
+                "automation_mode": automation_mode,
+            })
+        except ServiceError:
+            raise
+        except Exception as exc:      # 传输层/客户端异常：可重试
+            raise ServiceError(
+                503, "TEMPORAL_UNAVAILABLE",
+                f"starting the workflow failed: {exc}", retryable=True,
+                details={"workflow_id": binding["workflow_id"]}) from exc
+
+        self.conn.execute(
+            "UPDATE workflow_binding SET workflow_started_at = ?"
+            " WHERE tenant_id = ? AND run_id = ? AND workflow_started_at IS NULL",
+            (self._now(), tenant_id, binding["run_id"]))
 
     def _validate_context(self, context: dict) -> None:
         """`execution-context.v2` 的 18 个 required 全在（§3.1 步骤 3）。
