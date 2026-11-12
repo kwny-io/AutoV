@@ -821,3 +821,47 @@ CREATE TABLE governance_policy.inbox (
 - §2 的兼容矩阵（尤其 `unattended_batch + acceptance_mode=manual` 的处理）需要产品签认；本方案选择"保留收紧方向 + 降级标记"，理由是不许自动放宽。
 - §9.2 的 "安全 checkpoint" 定义需要与 S21 工作流实现对齐；本方案给的是必要条件，不是已实现的检查点契约。
 - 缺口 G1/G2/G3 若最终按不同方式解决，§4.2 的 Layer 收集逻辑与 §6.1 的 gate 清单需要同步修改。
+
+### 13.1 实现轮次登记（第一轮：§2/§4/§5）
+
+**已实现**：`services/governance-policy/` 的 `merge.py`（§4.3 的 join 算子与 §4.6 示例）、
+`schema.py`（§10.1 的三张表）、`service.py`（§4.5 的发布期校验 + §5 的解析）、
+`api/app.py`（两条契约路径 + `:resolve-effective`）、40 个测试。
+
+**本轮没做，留给下一轮**：§7 的 `PolicyDecision`（`POST /policy-decisions:evaluate`）
+与 §8 的派单前实时复查、§9 的动态切换、§10.2 的 kill-switch 旁路表。方案 §4 是可
+独立测试的纯函数内核，所以先做它；§7 的「一次性凭证、绝不缓存」与 §5 的
+「纯函数、可缓存」是两套语义，混在一轮里容易做出「evaluate 返回 allow」那种
+破坏「策略批准 ≠ 放行」的东西。
+
+**本轮暴露的、方案没写清的四处**（都是实现时不得不自己定、而不是抄来的）：
+
+1. **`scope` 走命令信封，不走策略文档。** `automation-policy.v2` 的文档根级没有
+   `scope_type`/`scope_id`（`additionalProperties: false`），往里塞私有键会让合法
+   文档变非法。`POST /policies/{id}/revisions` 的 body 因此多了可选的
+   `{"scope": {"type", "id"}}`，缺省 `tenant`/`tenant_id`。与 §5 给 `resolve` 加
+   `context` 同性质，是 OpenAPI 的实现层扩展。
+2. **`reviewer_roles` 的祖先范围在 v2 里填不出来。** 根级没有 `reviewer_roles`
+   （§11 G2），`overrides[].scope_type` 又不含 `tenant`，所以
+   `_parent_effective` 给出的 `allow` 恒为空集——§4.5 (c) 的守卫端到端走不到。
+   守卫保留（G2 修好后立即生效），测试改成单元级直接喂 parent 钉判定。
+   **这是 G2 的一个具体后果，不是新增缺口。**
+3. **`effective_window.until` 恒为 `None`。** v2 没有 `expiry`（§11 G2），
+   §5 行 376 的 `POLICY_EXPIRED` 分支因此当前不会触发。这是诚实反映契约缺口，
+   不是关掉检查。
+4. **`content_hash` 落库存裸 64 位 hex，不带 `sha256:` 前缀。** 契约
+   `policy_ref.content_hash` 的 `pattern` 是 `^[0-9a-f]{64}$`，带前缀会被直接拒；
+   全仓 47 份 schema 都是裸 hex（§11 POL-10 已记方案示例的 `sha256:` 写法）。
+
+**方向复查时补的一处**：`resolve_effective` 原先没有吐出 `effective.hard_rules`。
+它是 v2 的必填键、发布期 (e) 已校验，但 §5 行 349 的响应里有它——不吐出来 S26
+派单前就读不到 `rights_required` / `budget_scope_id`，而这两个正是 §6.1 各 gate
+放行条件的输入。现在按「最具体那层胜」取值（`hard_rules` 不能 join：三条款
+`const true`、一条 `const false`，变了就是 `HARD_RULE_IMMUTABLE`；各层只有
+`budget_scope_id` 会不同，其「更严」方向由 §4.5 (d) 的有序校验保证，不是格上的
+min/max）。同时补了 §5 响应里承诺的 `gate_plan[].stop_at` 与 `effective.allowed_actions`
+（后者当前恒为 `null`，因为 v2 根级没有这个字段，同 §11 G2）。
+
+**仍依赖别的服务、本轮只做形状校验**：§4.5 (d) `BUDGET_SCOPE_ESCAPE` 需要 S23 的
+budget tree、§4.5 (g) `assert_scope_exists` 需要 S01/S08 的 scope 目录。S02 不拥有
+那棵树，也不跨库读，所以这两条只校验形状；语义校验等对应服务的只读接口。

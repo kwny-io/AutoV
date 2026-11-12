@@ -4,7 +4,7 @@
 service_id: S02
 slug: governance-policy
 name: 治理与自动化策略
-maturity: design_only
+maturity: implemented
 
 domain: enterprise
 owner_team: platform

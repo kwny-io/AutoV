@@ -40,7 +40,7 @@
       "acceptance": "项目→单集→阶段→节点覆盖正确；安全/预算硬约束不能被低级覆盖",
       "deployment_unit": "governance-policy",
       "schema_owner": "governance_policy",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {
