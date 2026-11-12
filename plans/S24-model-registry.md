@@ -830,6 +830,7 @@ WHERE mode_combination_probe.probed_at < EXCLUDED.probed_at;
 与规范化、价格快照与报价上界、批量有效性。**没有**落地第 4 步只读探测 worker
 （需真实只读凭证）、第 6 步付费探测经 S26（S26 未实现，直连模型违反 AGENTS.md），
 以及 §4.2 / §4.3 的调度器（逻辑写成可调用方法并有测试，无 worker 进程）。
+其中 §4.3 的探测→健康推导在后续轮次补齐，见 C24-15。
 
 下列条目是**本轮没自行裁决**的冲突，按 AGENTS.md「契约与文档冲突 → 停下，报告冲突」登记。
 
@@ -881,6 +882,21 @@ WHERE mode_combination_probe.probed_at < EXCLUDED.probed_at;
   原因码（租户、生命周期、账户、驻留、证据、模式、能力、价格、上界）。S25 的硬过滤
   码表与本服务的码名不完全一致（例如本服务用 `ACCOUNT_UNAVAILABLE` 覆盖四个池状态），
   码表统一属未决。
+- **C24-15 §4.3 的探测→健康推导此前只落了 setter。** 上文「§4.2 / §4.3 的调度器
+  （逻辑写成可调用方法并有测试）」在 §4.2 一侧成立（`expire_evidence`），§4.3 一侧
+  此前只有 `set_pool_health(pool_id, health, reason)` —— 一个收结论的 setter，
+  方案行 671/672 的两条推导规则（连续 3 次失败 → `suspect`、401/403 → 立即
+  `unauthorized`）没有任何代码承载，「连续」的计数也无处存放。补上
+  `record_probe_outcome(pool_id, status=...)`：入参是探测拿到的 HTTP 状态码，
+  健康态由本服务按 §4.3 推导；计数落在新表 `account_pool_probe_state`
+  （`consecutive_fail`）。`set_pool_health` 保留，分工是「人工判定」对
+  「探测原始结论」。401/403 与其它失败**分开计数**：一次凭证被拒不该被之前的
+  5xx 计数放大。`POST /account-pools/{pool_id}/probe-outcomes` 是它的入口
+  （§3 没有列这个 path，与 C24-4 同性质）。
+- **C24-16 `suspect` 池仍会进候选集。** §4.3 只对 401/403 说「停用该池」，§3.2 的
+  硬过滤也没有 `suspect`，所以本轮不把它当硬过滤——否则一次网络抖动就能让池从
+  路由里消失。若 owner 认为 `suspect` 也该硬过滤，改 `_exclude_reason` 一处即可，
+  但那会让 S25 的 `ACCOUNT_UNAVAILABLE` 覆盖到第 5 个池状态。
 
 新增未决（承接文末「未决，需在实施会话里定」）：
 

@@ -901,3 +901,103 @@ def test_http_capability_checks_wrapper():
                        headers={"Idempotency-Key": "k3", "X-Tenant-Id": TA})
     assert resp.status_code == 404
     assert resp.json()["code"] == "SNAPSHOT_NOT_FOUND"
+
+
+# -- §4.3 探测结论 → 池健康 ------------------------------------------------
+
+def test_401_flips_pool_to_unauthorized_immediately():
+    """§4.3 行 672：401/403 立即 unauthorized —— 不需要三次确认。"""
+    svc = _svc()
+    _seed(svc)
+    out = svc.record_probe_outcome("pool_a", status=401)
+    assert out["health"] == "unauthorized"
+    assert out["consecutive_fail"] == 1
+    assert out["changed"] is True
+
+
+def test_403_is_treated_the_same_as_401():
+    svc = _svc()
+    _seed(svc)
+    assert svc.record_probe_outcome("pool_a", status=403)["health"] == "unauthorized"
+
+
+def test_three_consecutive_failures_make_the_pool_suspect():
+    """§4.3 行 671：「连续 3 次」是方案给的数，不是调用方说的数。"""
+    svc = _svc()
+    _seed(svc)
+    first = svc.record_probe_outcome("pool_a", status=500)
+    second = svc.record_probe_outcome("pool_a", status=503)
+    third = svc.record_probe_outcome("pool_a", status=502)
+    assert first["health"] == "healthy" and first["changed"] is False
+    assert second["health"] == "healthy" and second["changed"] is False
+    assert third["health"] == "suspect" and third["changed"] is True
+
+
+def test_a_success_resets_the_consecutive_counter():
+    svc = _svc()
+    _seed(svc)
+    svc.record_probe_outcome("pool_a", status=500)
+    svc.record_probe_outcome("pool_a", status=500)
+    ok = svc.record_probe_outcome("pool_a", status=200)
+    assert ok["health"] == "healthy" and ok["consecutive_fail"] == 0
+    # 重置后再来两次失败仍不该 suspect —— 计数真的清零了，不是被"记住"
+    svc.record_probe_outcome("pool_a", status=500)
+    assert svc.record_probe_outcome("pool_a", status=500)["health"] == "healthy"
+
+
+def test_suspect_pool_still_shows_in_candidates_but_unauthorized_does_not():
+    """suspect 不在 `_exclude_reason` 的硬过滤里，unauthorized 在 —— 两者的
+    区别是方案给的（§4.3 只对 401/403 说"停用该池"）。"""
+    svc = _svc()
+    _seed(svc)
+    _project(svc)
+    svc.register_snapshot({"snapshot": _snap(), "prices": [_price()]})
+    for _ in range(3):
+        svc.record_probe_outcome("pool_a", status=500)
+    assert svc.candidates(TA, {})["candidates"], "suspect must not be silently excluded"
+    svc.record_probe_outcome("pool_a", status=401)
+    out = svc.candidates(TA, {})
+    assert out["candidates"] == []
+    assert out["excluded"][0]["code"] == "ACCOUNT_UNAVAILABLE"
+
+
+def test_probe_outcome_does_not_emit_an_unlocatable_event():
+    """C24-3：`model.capability.changed` 的 data 装不下池，所以这里也不发。"""
+    svc = _svc()
+    _seed(svc)
+    before = len(_event_payloads(svc))
+    svc.record_probe_outcome("pool_a", status=401)
+    assert len(_event_payloads(svc)) == before
+
+
+def test_probe_outcome_rejects_unknown_pool_and_bad_method():
+    svc = _svc()
+    _seed(svc)
+    with pytest.raises(ServiceError) as exc:
+        svc.record_probe_outcome("pool_missing", status=200)
+    assert exc.value.status == 404
+    with pytest.raises(ServiceError) as exc:
+        svc.record_probe_outcome("pool_a", status=200, method="guessed")
+    assert exc.value.status == 400
+
+
+def test_http_probe_outcome_takes_status_not_health():
+    client, service = _app()
+    service.register_channel({"provider": "seedance", "channel": "v1",
+                              "connector_deployment": "c1", "egress_identity": "e1",
+                              "credential_ref": "secret://a", "lifecycle": "active"})
+    service.register_pool({"pool_id": "pool_a", "tenant_id": "*",
+                           "provider": "seedance", "channel": "v1",
+                           "region": "ap-east-1", "scope": "shared",
+                           "data_region": "ap-east-1", "max_inflight": 4, "rpm": 60,
+                           "health": "healthy", "enabled": True})
+    resp = client.post("/account-pools/pool_a/probe-outcomes",
+                       json={"status": 403},
+                       headers={"Idempotency-Key": "p1", "X-Tenant-Id": TA})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["health"] == "unauthorized"
+    # health 不是可传字段：传了自己算出来的结论也不影响推导
+    bad = client.post("/account-pools/pool_a/probe-outcomes",
+                      json={"health": "healthy"},
+                      headers={"Idempotency-Key": "p2", "X-Tenant-Id": TA})
+    assert bad.status_code == 400

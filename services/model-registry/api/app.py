@@ -127,6 +127,22 @@ def set_pool_health(pool_id: str, payload: dict,
         pool_id, health, body.get("reason")))
 
 
+@app.post("/account-pools/{pool_id}/probe-outcomes")
+def record_probe_outcome(pool_id: str, payload: dict,
+                         command_id: str = Header(alias="Idempotency-Key"),
+                         x_tenant_id: str = Header(alias="X-Tenant-Id")):
+    """§4.3 的探测结论落点。`status` 是探测拿到的 HTTP 状态码，不是健康态——
+    401/403 → `unauthorized`、连续 3 次失败 → `suspect` 由服务推导。"""
+    body = _body(payload, command_id, x_tenant_id)
+    status = body.get("status")
+    if not isinstance(status, int) or isinstance(status, bool):
+        raise ServiceError(400, "INVALID_REQUEST",
+                           "status must be the integer HTTP status of the probe")
+    return command(x_tenant_id, body, lambda: service.record_probe_outcome(
+        pool_id, status=status, method=body.get("method") or "account_probe",
+        reason=body.get("reason")))
+
+
 @app.post("/capability-snapshots")
 def register_snapshot(payload: dict,
                       command_id: str = Header(alias="Idempotency-Key"),

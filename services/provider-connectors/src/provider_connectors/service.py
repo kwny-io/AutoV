@@ -69,12 +69,22 @@ S27 是**参数映射器 + 协议处理器 + 观测上报者**。它不选模型
      S22 permit 保证（同一个 permit 覆盖整个派单窗口），S27 不重复计数是明文
      要求；剩下的那一道"单 Pod 别自己打满"需要一个按渠道与副本数确定的阈值，
      方案没给数，也不该由实现拍。它属于部署参数。
-  2. §8.1 的「auth 熔断后上报 S24 `pool_health='unauthorized'`」没有实现。
-     §8.2 说用 `connector.health.degraded` 事件或 S24 probe 周期，但
-     `contracts/` 里**没有**这个事件（只有 `connector.observation.received`）。
-     没有契约就不能发：发出去会被 topic 校验拒，或变成一个没人订的野生事件。
-     这条在 S26 有落点（`generation_jobs/service.py:1806` 的
-     `isolate_account_pool` 端口），S27 侧需要等契约补齐才有合法的上报路径。
+  2. §8.1 的「auth 熔断后上报 S24 `pool_health='unauthorized'`」本服务不直接做。
+     §8.2 给的第一个选项是 `connector.health.degraded` 事件，但 `contracts/`
+     里**没有**这个事件——新增一个 topic 会让 `README_CLAIMS` 的 55 被钉死的
+     计数检查和 `contracts/README.md` 一起变红，而那份 README 在本循环的禁改
+     清单里。**§8.2 的第二个选项（S24 probe 周期发现）已经可用**：S24 侧本轮
+     补了 `record_probe_outcome(pool_id, status=401|403)`，它按 §4.3 直接把池
+     判成 `unauthorized`，并已由 `POST /account-pools/{pool_id}/probe-outcomes`
+     暴露。也就是说「401/403 让池停用」这件事在本服务之外有确定落点了。
+
+     仍然**不该由 S27 调用它**：S24 方案 §3.4/§4.3 明文要求 `account_probe` 由
+     S24 自有的 `probe-worker` 用独立只读凭证执行、**不经过 S27 业务出站身份**；
+     而 S27 在提交路径上根本不知道 `account_pool_id`（`claim` 的返回体、
+     `connector_request_receipt`、`submit.requested` 的 payload 里都没有这个
+     字段）。要让 S27 报池，得先给这三处加字段——那是契约变更，不是实现选择。
+     这一条留给 owner 定：要么 S24 的 probe-worker 上线，要么给 S27 的提交链路
+     补池标识。本服务不代填。
 """
 
 from __future__ import annotations

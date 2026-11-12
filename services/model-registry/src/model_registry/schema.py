@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS provider_account_pool (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_pool_natural
   ON provider_account_pool (provider, channel, region, scope, tenant_id);
 
+-- §4.3「探测失败连续 3 次 → suspect」的计数器。放在池上而不是另起一张表：
+-- 「连续」是池的属性，只可能有一个当前值；留一张历史表会让「连续几次」变成
+-- 需要扫全表才能回答的问题，而 S27 熔断后要的就是立刻能回答。
+CREATE TABLE IF NOT EXISTS account_pool_probe_state (
+  pool_id           TEXT PRIMARY KEY REFERENCES provider_account_pool(pool_id),
+  consecutive_fail  INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_fail >= 0),
+  last_method       TEXT,
+  updated_at        TEXT NOT NULL
+);
+
 -- §6.1/§6.2 capability_bundle_revision 是全局单调计数器，取一次加一。
 -- 单行表：SQLite 的 BEGIN IMMEDIATE 已经把它串行化，不需要额外锁行。
 CREATE TABLE IF NOT EXISTS registry_counter (

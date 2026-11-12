@@ -43,6 +43,10 @@ EXECUTION_KINDS = ("sync", "poll", "callback", "hybrid")
 HEALTH_STATES = ("healthy", "suspect", "unauthorized", "exhausted", "disabled")
 METHODS = ("doc_read", "account_probe", "paid_probe", "field_observation")
 
+# §4.3 行 671：「探测失败连续 3 次 → 池 health='suspect'」。方案给的是数字，
+# 不是「若干次」——所以它可以落到代码里，不需要 owner 再填。
+PROBE_FAIL_THRESHOLD = 3
+
 # §4.1 的生命周期图。`retired` 是终态：没有出边。
 LIFECYCLE_EDGES = {
     "disabled": {"validating"},
@@ -324,6 +328,75 @@ class ModelRegistryService:
                 " health_checked_at = ? WHERE pool_id = ?",
                 (health, reason, self._now(), pool_id))
         return {"pool_id": pool_id, "health": health}
+
+    def record_probe_outcome(self, pool_id: str, *, status: int,
+                             method: str = "account_probe",
+                             reason: str | None = None) -> dict:
+        """§4.3 的两条推导规则。**由探测结论决定 health，不由调用方给结论。**
+
+        - 401/403 → 立即 `unauthorized`（`§4.3` 行 672），且**不靠连续计数**：
+          凭证被拒不需要"三次确认"，第一次就该停用。
+        - 其余失败连续满 `PROBE_FAIL_THRESHOLD` 次 → `suspect`（`§4.3` 行 671）。
+        - 成功 → 回到 `healthy` 并把计数清零。
+
+        与 `set_pool_health` 的分工：那个收的是**人工判定**（人要写什么就是什么，
+        还带 reason）；这个收的是**探测原始结论**（HTTP 状态码），健康态由本方法
+        按方案推导。让调用方自己算「几次算连续」等于把 §4.3 的阈值搬到每个调用方。
+
+        **不发事件**（C24-3）：`model.capability.changed` 的 `data` 装不下池。
+        """
+        if method not in METHODS:
+            raise ServiceError(400, "INVALID_REQUEST",
+                               f"method {method!r} is not one of {METHODS}")
+        if not _int(status):
+            raise ServiceError(400, "INVALID_REQUEST",
+                               "probe status must be an integer HTTP status")
+        if self.conn.execute(
+                "SELECT 1 FROM provider_account_pool WHERE pool_id = ?",
+                (pool_id,)).fetchone() is None:
+            raise ServiceError(404, "POOL_NOT_FOUND", f"pool {pool_id} does not exist")
+
+        failed = not (200 <= status < 300)
+        with Transaction(self.conn):
+            row = self.conn.execute(
+                "SELECT consecutive_fail FROM account_pool_probe_state"
+                " WHERE pool_id = ?", (pool_id,)).fetchone()
+            previous = int(row["consecutive_fail"]) if row else 0
+            # 401/403 与「其它失败」分开计数：一次凭证被拒不该被之前的 5xx
+            # 计数放大，也不该因为后面来了个 500 就慢慢"降级"成 suspect。
+            unauthorized = status in (401, 403)
+            fails = 0 if not failed else (
+                1 if unauthorized else previous + 1)
+
+            if not failed:
+                health, why = "healthy", None
+            elif unauthorized:
+                health, why = "unauthorized", reason or f"probe returned {status}"
+            elif fails >= PROBE_FAIL_THRESHOLD:
+                health, why = "suspect", reason or (
+                    f"{fails} consecutive probe failures")
+            else:
+                health, why = None, None   # 还没到阈值，不动健康态
+
+            now = self._now()
+            self.conn.execute(
+                "INSERT INTO account_pool_probe_state (pool_id, consecutive_fail,"
+                " last_method, updated_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (pool_id) DO UPDATE SET"
+                " consecutive_fail=excluded.consecutive_fail,"
+                " last_method=excluded.last_method,"
+                " updated_at=excluded.updated_at",
+                (pool_id, fails, method, now))
+            if health is not None:
+                self.conn.execute(
+                    "UPDATE provider_account_pool SET health = ?, health_reason = ?,"
+                    " health_checked_at = ? WHERE pool_id = ?",
+                    (health, why, now, pool_id))
+            current = self.conn.execute(
+                "SELECT health FROM provider_account_pool WHERE pool_id = ?",
+                (pool_id,)).fetchone()["health"]
+        return {"pool_id": pool_id, "status": status, "health": current,
+                "consecutive_fail": fails, "changed": health is not None}
 
     # -- 写：S01 授权投影缓存 -----------------------------------------------
 
