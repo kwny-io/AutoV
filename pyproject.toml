@@ -29,5 +29,7 @@ pythonpath = [
     "services/governance-policy/api",
     "services/story-memory/src",
     "services/story-memory/api",
+    "services/continuity/src",
+    "services/continuity/api",
 ]
 testpaths = ["services", "platform"]

@@ -391,7 +391,7 @@
       "acceptance": "闪回、误导、合法特效与真实矛盾有区分；低置信度abstain",
       "deployment_unit": "continuity",
       "schema_owner": "continuity",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "memory"
     },
     {
