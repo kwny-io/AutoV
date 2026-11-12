@@ -4,7 +4,7 @@
 service_id: S40
 slug: human-review
 name: 人工审核与接管
-maturity: design_only
+maturity: implemented
 
 domain: governance
 owner_team: platform

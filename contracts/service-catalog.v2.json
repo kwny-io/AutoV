@@ -932,7 +932,7 @@
       "acceptance": "四档模式门一致；预算增加与创作接受使用不同权限",
       "deployment_unit": "human-review",
       "schema_owner": "human_review",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {
