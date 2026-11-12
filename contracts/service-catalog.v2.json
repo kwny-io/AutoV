@@ -602,7 +602,7 @@
       "acceptance": "LLM/VLM/图像/视频/TTS全经本服务；单任务不会因超时盲目重复付费",
       "deployment_unit": "generation-jobs",
       "schema_owner": "generation_jobs",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "execution"
     },
     {
