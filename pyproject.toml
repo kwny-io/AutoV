@@ -35,5 +35,7 @@ pythonpath = [
     "services/context-retrieval/api",
     "services/human-review/src",
     "services/human-review/api",
+    "services/project-catalog/src",
+    "services/project-catalog/api",
 ]
 testpaths = ["services", "platform"]

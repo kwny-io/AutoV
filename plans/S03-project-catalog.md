@@ -944,3 +944,94 @@ S45 需要的审计证据由 S03 提供：
 5. **`story_window_ref` 的形态**：本文只用 `{clock_id, section_hint}`。S16 的 `episode_story_window` 需要 `tick_start/tick_end`，而这两个值在 S05 分场完成后才可能精确。是否应该让 S16 建窗口、S03 只存 `story_window_ref.story_window_id`？这需要 S16 方案确认。
 6. **业务目标与合同的映射**：`budget_envelope` 的 `cap_micro` 是否要与 S23 的 `budget_scope` 一一对应？若不对应，两个"上界"会在报表里打架。
 7. **归档的保留期**：`archived` 之后多久可以真正删除项目行？docs/04 §6 要求按引用图与法律保留检查，但 S03 不是引用图的所有者（S09 是）。需要在 S09 提供"这个 project 还有没有下游引用"的查询之后才能实现删除。本版**不实现删除**。
+
+---
+
+## 12. 实现登记（本轮）
+
+实现落在 `services/project-catalog/`：`src/project_catalog/{schema,deps,service}.py`、
+`api/app.py`、`tests/test_project_catalog.py`（32 个用例，全绿）。catalog 的
+`maturity` 已从 `design_only` 改为 `implemented`（只改这一个字段，再跑
+`tools/scaffold/generate_services.py` 重新生成 `service.md` / `service.yaml`）。
+
+### 12.1 方向复查四条
+
+| 项 | 结论 |
+|---|---|
+| (a) 方案承诺的命令 / 查询 / 错误码 | §5.1 的 6 条命令、§5.2 的 7 条查询全部有路由。`api/app.py` 共 6 个 `@app.post`、9 个 `@app.get` —— 多出的两个 GET 是 `/episodes/{id}/acceptance-projection`（12.3 的偏离之一，只为让「这一集为什么是 completed」可解释，不给外部触发投影的能力）与 `/health/readiness`。§5.4 的 12 个错误码里 **10 个有代码路径**；缺的 2 个下面单列，都是「方案承诺了、实现没有对应物」，不是漏写。 |
+| (b) 第二权威 | 否。`episode` 表**没有 `episode_number` 列**（`test_episode_table_has_no_number_column` 用 PRAGMA 钉住，并带一个阳性对照）；不铸 `scene_id`（只在 `episode_scene_projection` 里出现，且 `GET /episodes/{id}/scenes` 带 `authoritative_source: "S05"`）；不持 accepted 指针 —— `episode.lifecycle='completed'` 只由 `apply_episode_lifecycle_projection()` 写入，且可回退（§3.2）。与 [docs/01 §3](../docs/01-enterprise-architecture.md) 的权威表无冲突：表里没有 S03 这一行，而它列出的九类事实（manifest/accepted pointer/epoch、剧本分镜、资产、正史、预算、permit、生成任务、制品、人工决定）S03 一类都不写。 |
+| (c) AGENTS.md 红线 | 无违反。S03 的 `src/`、`api/`、`tests/` 只 import 标准库 + `event_sdk` / `idempotency_sdk` / `fastapi`，**没有对任何别的服务的 import，也没有跨库连接**；S01 / S21 / S16 全是注入的回调（`deps.py`），未配置时分别是 503 失败关闭、`None`（不检查，不是 0）、`None`。租户只从 `X-Tenant-Id` 取，body 里的 `tenant_id` 仅用于比对，不一致 403。生产开关默认关闭：三个 `*_BASE_URL` 不设即全部失败关闭。 |
+| (d) 版本语义 | 不适用但**已核实**：`execution_fence` 与 `node_epoch` 在 `services/project-catalog/` 下**一次都没出现**（grep 为空）。S03 不持 run/branch 作用域，也不持 node 作用域，因此两个概念都不该出现在这里 —— 出现才是错。本服务自己的三个版本概念按 §6.2 分开：`head_revision`（元数据 CAS）、`spec_revision.revision`（比 `content_hash`，不比 revision）、`manifest.revision`（S08 的，S03 不碰）。 |
+
+**(a) 缺的两个错误码**：`409 ORDER_LOCKED` 与 `503 CATALOG_UNAVAILABLE`。
+前者在 SQLite 上**不可达**：§6.5 说两个重排同时到同一 series 时「一个成功，另一个在
+`series` 行锁上排队；拿到锁后 CAS 失败 → 409 `REVISION_CONFLICT`」。本实现用
+`BEGIN IMMEDIATE` 串行化写者，第二个重排在事务边界上排队，不是「拿不到锁立刻返回」，
+所以它走的是 `REVISION_CONFLICT` 那条 —— 与 §6.5 期望的终态一致，只是错误码不同。
+`ORDER_LOCKED` 只有在「显式 `SELECT ... FOR UPDATE NOWAIT`」的 Postgres 实现下才有
+意义。后者要求主库不可写或只读副本落后时返回，本实现没有主备/副本概念（单文件
+SQLite），所以没有触发点。两个都保留在 §5.4 里不动 —— 它们是移植到 Postgres 时的
+目标行为，删掉反而丢失信息。
+
+**方案外多出的 7 个码**（都写进 `schema.CONTRACT_GAPS` 或直接由 SDK 抛出）：
+`403 PERMISSION_DENIED`（S01 判否，`build_authorizer` 的 `allowed = granted and not denied`）、
+`409 ALREADY_ARCHIVED` / `409 PROJECT_ARCHIVED`（两种「归档后不许写」的场景：
+项目已归档再归档 vs 归档项目下建集，分成两个码才能让调用方区分）、
+`422 APPLY_TO_EXISTING_UNSUPPORTED`（§4.5 明确要求规格变更走 S07 的 ChangePlan，
+本服务拒绝「顺手改了还回填到已有集」）、`500 INTERNAL`（内部不变量被破坏，
+不是用户输入问题）、`503 PERMISSION_KEY_UNREGISTERED`（G5：写权限键在
+`permission-registry.v2.json` 里根本没注册，失败关闭而不是拿读权限顶替）、
+`409 COMMAND_IN_PROGRESS`（平台 SDK 的原名，HTTP 层映射成方案里的
+`COMMAND_IN_FLIGHT`，见 G6）。
+
+### 12.2 PEC-1 未改，理由是它属于 NEEDS_OWNER
+
+`contracts/project.episode-created.v2.schema.json` 的 `fix_shape` 要求二选一：
+(a) 在创建事务里补一行 `spec_revision(scope=episode)`；(b) 把 §5.3 的字段改成
+`effective_spec_hash` 并注明。**本轮两条都没做**，原因不是没时间：
+
+- `x-needs-owner` 第 1 条问的正是「`spec_hash` 哈希的是哪个对象」。这不是实现能
+  从代码里推出来的事实（两个候选列都在 §2.5 里，都合法），是契约设计决策。
+- 约束是「不代填 NEEDS_OWNER」。改 §5.3 就是在替 owner 选 (b)，改 schema 就是在
+  替 owner 选 (a) —— 两条都越界。
+- 实际行为已钉住、可复核：`service.py` 的 `_emit_created` 填的是
+  `episode_spec_effective.content_hash`（物化后的生效规格），理由写在
+  `schema.CONTRACT_GAPS` 的 PEC-1 条里，并且 `test_event_payload_matches_registered_schema`
+  拿真 schema 校形状。**形状对、语义登记、计划不动** —— 三条同时成立才叫「没选边」。
+
+若 owner 选 (b)，要改的是四处：§5.3 行 656 的字段名、`contracts/examples/
+project-episode-created.json`、schema 的 `properties` 与 `required`、以及
+`contracts/README.md` 行 821 那句引用。四处必须一起改，否则 `check_examples`
+会先在示例上炸。
+
+### 12.3 与方案的实质偏离
+
+| 偏离 | 方案怎么说 | 实现怎么做 | 为什么 |
+|---|---|---|---|
+| `ORDER_LOCKED` | §5.4 有该码 | 不可达，改用 `REVISION_CONFLICT` | §6.5 期望的终态是「另一个 409」，本实现给的是同一个 409 的另一个码 |
+| 重排唯一约束 | §4.3 要求 `DEFERRABLE` | 非延迟 `UNIQUE(series, kind, window, episode_id)` + 先写 `+1000000` 再写回 | SQLite 不支持 `DEFERRABLE`；两条路径的最终不变量相同 |
+| 幂等结果落库 | §6.1 由 SDK 管三态 | 内核在**命令同一事务内**写 `result`，HTTP 层的 `finish` 是同值覆盖 | 消掉「已提交但幂等行没写」的窗口；SDK 的 `begin`/`finish` 是裸语句，不含事务 |
+| `ABANDONED` 状态 | §6.1 要求后台清扫器置 `ABANDONED` | `sweep_stale_commands()` 直接删掉 `result IS NULL` 的僵死行 | SDK 没有第三态；删掉产生的后置状态（同 `command_id` 可重发）与置 ABANDONED 相同 |
+| 两条未登记事件 | §5.3 要发 `reordered` / `lifecycle.changed` | 写进 `local_event` 表，不进 outbox | 发布一个 `event-topics.v2.json` 里不存在的 event_type 比不发更糟（G9） |
+| 业务目标 / 本地事件 ID 前缀 | §2 行 107 只列了六个前缀 | `gol_` / `lev_` | 方案没说；写在 G13 里，等 owner 收编 |
+| `spec` 各段是否必填 | §2.5 说「全部必填」 | 项目层四段必填，剧/集覆盖可按段部分给出，但出现的段必须完整 | 照字面读会让三层继承失去意义（G12） |
+| `GET /episodes/{id}/acceptance-projection` | §5.2 只有 7 条查询，没有这一条 | 新增只读端点，回 `lifecycle` 与一句说明 | §3.2 说 `completed` 是投影且可回退，那就得能让调用方看出「现在是 completed、为什么」。**只读**：写入路径是 S08 的投影回调，这个端点不给外部触发投影的能力 |
+
+### 12.4 未验证 / 未接
+
+- **S08 → S03 的 accepted 投影没有接**：`apply_acceptance_projection` /
+  `apply_episode_lifecycle_projection` 有实现、有用例（`test_completed_is_reversible`），
+  但**没有事件消费者调用它们**。所以本服务不会自己把一集标成 `completed`（C03-8）。
+- **S05 场次投影没有真实上游**：`episode_scene_projection` 表与读路径在，
+  `projection_watermark` / `stale` 也在，但采集 `breakdown.revision.created` 的
+  消费者不在本轮（§11.1 第 6 步）。
+- **S16 故事时钟只做形状校验**：`clock_validator` 未配置时返回 `None`，
+  `warnings` 恒为 `[]`（`test_story_clock_unchecked_produces_no_warning`）。
+  「没检查」与「检查过没问题」在响应上不可区分 —— 这是刻意的：编一个 `[]` 之外的
+  东西就等于假称查过了。
+- **S01 用 mock**：`test_write_with_real_s01_fails_closed` 跑的是「生产形状的 S01」
+  —— 它认识 `project.get`、不认任何写权限，于是本服务 503 失败关闭。真 S01 接上之前
+  所有写命令在默认配置下都是 503，这是 G5 的直接后果。
+- **只有 SQLite**：`BEGIN IMMEDIATE` 的串行化语义、没有 RLS、没有主备。
+  E12–E23 里与本服务相关的部分（幂等、跨租户、重放、版本冲突）有覆盖；
+  崩溃恢复只有 `test_sweep_removes_abandoned_in_progress_rows` 一条。

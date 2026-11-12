@@ -62,7 +62,7 @@
       "acceptance": "重排集序不改变稳定ID；归档项目阻止新Run",
       "deployment_unit": "project-catalog",
       "schema_owner": "project_catalog",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "creation"
     },
     {
