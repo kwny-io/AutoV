@@ -795,3 +795,56 @@ runbook：
 6. ❌ checkpoint 落后时返回旧数据 + `stale` 标记让调用方自己判断 → 必须 409，调用方无法判断就不会判断。
 7. ❌ 把 `depends_on: S19` 理解成 S16 可以直接调模型 → 抽取必须经 S26 准入。
 8. ❌ 跨库 JOIN S08 的 manifest 表 → 只能通过 API 或事件。
+
+---
+
+## 11. 实现登记（本轮）
+
+实现落在 `services/story-memory/`：`src/story_memory/{schema,predicates,service}.py`、
+`api/app.py`、`tests/test_story_memory.py`（37 个用例）。catalog 的 `maturity` 已从
+`design_only` 改为 `implemented`（「已实现最小内核，尚未部署」）。
+
+### 11.1 已实现并有用例钉住
+
+- §1.1–§1.11 全部 DDL（Postgres → SQLite 翻译，两条 `CHECK` 原样保留）。
+- §3.5 checkpoint 链、§3.6 四项实时复查、§3.3 原子提交顺序（含同事务 outbox）。
+- R1–R8 结构校验、C1–C6 冲突预检、§4.2 八类合并冲突。
+- §4.3 回滚（只追加）、§6 三轴查询与硬门 `MEMORY_WATERBEHIND`。
+- §9.1–§9.4 的 E08/E09/E10/E11 用例，以及 E05 幂等与跨租户拒绝。
+
+### 11.2 本轮修掉的实现缺陷
+
+| 缺陷 | 症状 | 修法 |
+|---|---|---|
+| `_load_revision` 读 `claim_revision.kind` | 该列不存在（`kind` 在 `claim` 上） | JOIN `claim` |
+| 合并产生的 revision 没有 `accepted_manifest_ref` | 撞 `accepted_needs_evidence` | 用源分支 head 作为证据 |
+| `_revert` 只筛 `status='accepted'` | 要回退的那条恰已被置成 `superseded`，一条也没写 | 去掉该过滤 |
+| `_revert` 的 prior 只按 `revision DESC` 跨分支取 | 别分支编号更大的 revision 被当成本分支的上一版 | 限定 `branch_id`，按 `commit_sequence` |
+| `_check_causality` 用全库 `MAX(revision)` 读被引用事件 | 别的分支能让本分支的校验换结果 | 改读本分支 `canon_effective_claim` |
+| `_visible_to_character` 读 claim 自己的 `epistemic_scope` 放行 | 一条事实可自证"谁能看见我"，等于第二个可见性权威 | 删掉该放行口，只留 §6.4 的两个 |
+| IDENTITY_DRIFT 读 `fact["participants"]` | 该键不存在，永远不漂移 | 从 `value` 取；并要求它是 `participants` 谓词 |
+| `causes` / `resurrection` / `resolved_by_event` 登记为 `entity_id` | §1.6 里它们指向 claim id，合法引用被判悬空 | 新增 `claim_ref` 值域，查 `claim` 表存在性 |
+| story_event 的 participants 变更同时报 `VALUE_CONFLICT` | `warn` 类的 IDENTITY_DRIFT 永远观察不到 | 该谓词走专门那条 |
+
+### 11.3 范围裁剪（未实现，交付前须处理）
+
+- **S08 / S01 接线未做**：`manifest_authority` 与 `kill_switch` 只接受注入的
+  callback，默认不注入即不放行（§3.6）。接真实服务不在本轮范围。
+- **S09 / S07 发布未做**：只写 `outbox` 行，没有真实 publisher；`changed_subject_ids`
+  与 `affected_story_window` 作为失效种子随事件带出，闭包不在 S16。
+- **`POST /merge-decisions` 未做**：§4.2 说由 S40 裁决、S16 只接受决定，接口未实现，
+  合并目前一律产出冲突清单并停在 `require_human`。
+- **`claim_candidate` 增加一列 `proposition_claim_id`**：§1.6 的 `knowledge_state`
+  必须指明"对哪个命题"，原 §1.7 DDL 没有落点，R8 无从校验。属与原方案的结构性差异。
+
+### 11.4 与 openapi 的契约冲突（待 owner 裁决，未自行选边）
+
+`contracts/openapi/story-memory.v2.yaml` 与本文档不一致，实现按本文档写，响应体额外
+带 `x-contract-gaps` 说明：
+
+1. `GET /series/{series_id}/memory/query` 响应 `additionalProperties: false` 且只允许
+   `{checkpoint, claims}`；§6 承诺 `checkpoint_hash` / `withheld_claim_ids` /
+   `existence_checks` / `unresolved_conflicts`。
+2. `POST /memory/commits` 的 `claim_refs` items 是裸 `type: object`，未约束
+   `{service_id,id,revision,content_hash}`；body 也没有 `branch_id`，而提交必须有分支。
+3. §4.1 的 `POST /branches` 在 openapi 中不存在。

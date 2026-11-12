@@ -366,7 +366,7 @@
       "acceptance": "谁知道什么、钥匙归属、伤势、伏笔跨集正确；改前集触发失效",
       "deployment_unit": "story-memory",
       "schema_owner": "story_memory",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "memory"
     },
     {
