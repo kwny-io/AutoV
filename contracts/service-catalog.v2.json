@@ -624,7 +624,7 @@
       "acceptance": "单一供应商故障隔离；重复乱序回调不倒退状态；无业务路由权限",
       "deployment_unit": "provider-connectors",
       "schema_owner": "provider_connectors",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "execution"
     },
     {

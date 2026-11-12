@@ -21,5 +21,9 @@ pythonpath = [
     "services/scheduler-quota/api",
     "services/orchestration/src",
     "services/orchestration/api",
+    "services/generation-jobs/src",
+    "services/generation-jobs/api",
+    "services/provider-connectors/src",
+    "services/provider-connectors/api",
 ]
 testpaths = ["services", "platform"]
