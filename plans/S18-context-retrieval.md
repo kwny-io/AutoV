@@ -1,6 +1,6 @@
 # S18 · 上下文检索与组装 — 实现方案
 
-状态：`design_only`。SLO 未验证。本文是实现方案，不是已实现的服务。
+状态：`implemented`（内核）。SLO 未验证。方案 §1–§10 的内核已落地并有测试覆盖；缺口见 §12。
 
 上游约束：[docs/05 §4](../docs/05-cross-episode-memory.md)、[docs/08 §2](../docs/08-agents-prompts.md)、[docs/04 §5](../docs/04-data-consistency.md)、[S18 规格](../docs/design-package/services/S18-context-retrieval.md)、[S16 实现方案](./S16-story-memory.md)、[context-pack.v2](../contracts/context-pack.v2.schema.json)。
 
@@ -645,3 +645,82 @@ runbook：
 9. ❌ 在 pack 组装时调用模型生成摘要 → 需要摘要就提交显式 compute 任务。
 10. ❌ 冲突时只留一方 → 两方都给 + 标记冲突。
 11. ❌ 事件到达时改已发出的 pack → 只标记 stale，pack 不可变。
+
+---
+
+## 12. 实现状态、契约缺口与方向复查
+
+实现位于 `services/context-retrieval/`（`src/context_retrieval/` + `api/app.py`），
+测试在 `tests/test_context_retrieval.py`（29 条，跑真实的 `StoryMemoryService`，
+不是 stub）。测试覆盖 §10.1–§10.6 与 HTTP 层。
+
+### 12.1 契约冲突（按 AGENTS.md 只登记，不自行选边）
+
+| # | 冲突 | 本实现 | 需要谁改 |
+|---|---|---|---|
+| C18-1 | `contracts/openapi.v2.yaml:404` 声明 `POST /context-packs`，body 为 `{context: execution-context.v2, task_role, token_budget, command_id}`，`additionalProperties: false`。而 `execution-context.v2.schema.json` 的 18 个字段**全部 required** 且同样禁止额外属性 —— §2 的 `episode_order`、`perspective`、`story_clock_id`、`story_tick`、`focus`、`include_candidates` 一个都装不进去 | 用 §2 的扁平 body；收到 `context` 信封时返回 `CONTRACT_BODY_UNSUPPORTED`(400)。不"尽力映射"—— 没有 `perspective` 可用时只能编一个默认值，那就是反模式 4 | `contracts/openapi.v2.yaml`：S18 需要独立的 request schema。同类已登记：S09 C09-4（「不复用 execution-context；用 §5.2 的专用 body，只借其中的 manifest_ref/branch_id/execution_fence」）、S07 C07-2、S01 C4 |
+| C18-2 | openapi 只有 `POST /context-packs`；设计包的查询入口 `GET /context-packs/{id}`（要返回 `source_revision`/`projection_watermark`）不在契约里 | 实现了该查询，`source_watermark` 在契约对象里 | `contracts/openapi.v2.yaml` |
+| C18-3 | openapi 的 `token_budget` 用了锚 `*id003`，而 `id003` 是在 `/manifests/{id}/commits` 上声明的 `expected_manifest_revision: {type: integer, minimum: 1}`。类型能凑合，但语义是清单修订号 | 不改锚 —— 改 `id003` 会顺带改掉一个无关端点 | `contracts/openapi.v2.yaml`：给它自己的锚 |
+| C18-4 | `POST /context-packs` 契约写 `'200'`，本实现返回 `201` | 201（创建语义）。这是 HTTP 层的差异，不改变 body | `contracts/openapi.v2.yaml` 或本服务二选一 |
+
+### 12.2 上游能力缺口（不是实现自由度）
+
+1. **S16 不返回 `claim_refs[].content_hash`。** `_render_claim` 输出 19 个键，没有它；
+   而 `context-pack.v2` 要求该项为 64-hex 且 `additionalProperties: false`。
+   本实现写入 `sha256("unavailable:<claim_id>:<revision>")` 作为**形状占位**，
+   在 `CONTRACT_GAPS` 里逐条报出。它**不是内容哈希**：按它去重等于按 claim id 去重。
+   `test_missing_upstream_hash_becomes_a_labelled_placeholder` 钉住这一点，并先断言
+   上游确实没有该字段 —— 否则测的就不是占位。
+2. **没有实体别名读端。** `forbidden_leak_scan` 只能比对 entity id 与 claim 文本，
+   别名泄漏检测（§4.8 步骤 2）未实现。
+3. **`context-pack.v2` 没有 `candidate` / `stale` / `pack_for_delivery` / 水位理由字段。**
+   候选包与失效包只能在本服务内拦截，交付闸门（S43）必须复查。
+4. **S16 没有 episode-summary 读端或计算入口。** `episode_blocks` 恒为
+   `{block_id, missing: true, requires: 'plan:compute'}`。
+5. **没有 pgvector 索引。** 语义补充池为空，每个 pack 报 `semantic_coverage: "disabled"`。
+6. **`task_role → required_kinds` 的默认表**在契约与设计包里都没有，本实现照 §7 抄，
+   并把 §7 当**下限**与 §4.1 的硬事实集求并（见 12.3 第 1 条）。
+7. **`story_clock_id` 与 `episode_order` 的对应关系**由调用方给，本服务不校验二者是否
+   与 S16 的 episode window 一致；不一致时 S16 返回空区间，表现为 pack 缺事实而非报错。
+
+### 12.3 实现过程中改掉的三处判断
+
+1. **§7 的表是下限，不是排他集。** 初版把 `writer` 的 `required_kinds` 直接当成全集，
+   于是 `entity_state` 从不被查询 —— 而 §4.1 说「硬事实全进」，E08-1 也要求 writer 包里
+   出现新 `held_by` 修订。改成 `HARD_KINDS ∪ ROLE_EXTRA_KINDS`。
+2. **`belief_type` 在 `epistemic_scope` 里，不在 `fact` 里。** 初版禁则模板读
+   `fact["belief_type"]`，于是 `KNOWLEDGE_BELIEF` 永远是死代码。
+3. **泄漏扫描方向。** 初版从**可见** claim 的取值里取禁用词，任何合法的实体引用都会
+   被误判。§4.8 步骤 1 定义的是取**不可见**集，再扫 pack 文本。
+
+### 12.4 上游行为变更（S16）
+
+`StoryMemoryService.query` 的揭示闸门原本是
+`if mode in ("character","audience") and audience_order is not None` —— 全知视角据此
+能看到尚未揭示的事实。docs/05 §4 的过滤顺序把「信息揭示/角色知情」列在相关性之前且
+**不区分视角**，S18 反模式 4 也明确「全知视角 = 全部可见」是错的。已改为只按
+`audience_order is not None` 判断。调用方不传 `audience_as_of_episode_order` 时不设限，
+这是显式的「不按播出序过滤」，不是默认放行。S16 + S17 的 70 条测试仍全绿。
+
+### 12.5 方向复查四条
+
+- **(a) 方案承诺的命令 / 查询 / 错误码是否都在代码里。** `POST /context-packs`、
+  `GET /context-packs/{id}`、`/health/readiness` 三条都在。本服务**自己抛**的错误码
+  （逐条从 `raise ServiceError(...)` 数出）：`MALFORMED_REQUEST`(400)、
+  `CANDIDATES_NOT_ALLOWED`(400)、`CONTRACT_BODY_UNSUPPORTED`(400)、
+  `TENANT_MISMATCH`(403, HTTP 层)、`PACK_NOT_FOUND`(404)、
+  `CHECKPOINT_MISMATCH`(409)、`BUDGET_TOO_SMALL_FOR_REQUIRED_FACTS`(422)、
+  `LEAK_DETECTED`(500)。另外**原样转发** S16 的 `MEMORY_WATERMARK_BEHIND`(409) 与
+  `MEMORY_UNAVAILABLE`(503)。S16 抛的其他错误码（如 `NO_COMMITTABLE_CANDIDATES`）
+  不经本服务产生，`_memory_query` 抛出后原样上抛。
+  未实现的是 §5.2 的回源（情形 A）与语义池 —— 两者都在 12.2 登记。
+- **(b) 是否成为第二权威。** 否。docs/01:52 的权威表写「正史事实/状态/关系/伏笔 → S16；
+  S18 构建上下文；S17 只做检查」。本服务的库里没有 claim/fact/state 表，事实只经注入的
+  `memory_query` 实时获得；可见性判定完全由 S16 的 `query` 执行，S18 只消费
+  `claims` 与 `withheld_claim_ids`。
+- **(c) AGENTS.md 红线。** 无跨库写入 / 无跨库 JOIN / 不 import S16 的业务 ORM（只经
+  `memory_query` 注入）。不制造第二权威。不触发付费路径。`tenant_id` 来自
+  `X-Tenant-Id`，body 里的只用于比对，不一致 403。
+- **(d) 版本语义。** S18 全库不出现 `execution_fence` 或 `node_epoch`（grep 为空）。
+  它按 episode + checkpoint 工作，不推进任何接受指针，也不回写 S16 —— 因此
+  eFence/eEpoch 的混用与「旧 epoch 推进接受指针」两类错误在本服务里没有发生面。

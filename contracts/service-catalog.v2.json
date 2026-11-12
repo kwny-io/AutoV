@@ -415,7 +415,7 @@
       "acceptance": "分集可见性、角色知情状态、分支、故事时间和权限过滤生效",
       "deployment_unit": "context-retrieval",
       "schema_owner": "context_retrieval",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "memory"
     },
     {

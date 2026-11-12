@@ -31,5 +31,7 @@ pythonpath = [
     "services/story-memory/api",
     "services/continuity/src",
     "services/continuity/api",
+    "services/context-retrieval/src",
+    "services/context-retrieval/api",
 ]
 testpaths = ["services", "platform"]

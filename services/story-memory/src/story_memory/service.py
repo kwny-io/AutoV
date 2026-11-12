@@ -1426,8 +1426,12 @@ class StoryMemoryService:
                 if not self._visible_to_character(env, fact, scope, characters):
                     withheld.append(env["claim_id"])
                     continue
-            # 揭示范围（观众视角）。
-            if mode in ("character", "audience") and audience_order is not None:
+            # 揭示范围。docs/05 §4 的过滤顺序把"信息揭示/角色知情限制"列在相关性
+            # 之前，且不区分视角 —— 全知视角同样不能看见"未来才揭示"的事实，
+            # 否则编剧会写出观众还不知道的信息（S18 反模式 4 正是这一点）。
+            # 调用方不传 audience_as_of_episode_order 时不设限，是显式的"不按播出
+            # 序过滤"，不是默认放行。
+            if audience_order is not None:
                 if int(scope.get("audience_reveal_episode_order", 0)) > audience_order:
                     if env["claim_id"] not in withheld:
                         withheld.append(env["claim_id"])
