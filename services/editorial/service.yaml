@@ -4,7 +4,7 @@
 service_id: S41
 slug: editorial
 name: 剪辑与时间线
-maturity: design_only
+maturity: implemented
 
 domain: post
 owner_team: post
