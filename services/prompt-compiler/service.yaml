@@ -4,7 +4,7 @@
 service_id: S20
 slug: prompt-compiler
 name: Prompt模板与编译
-maturity: design_only
+maturity: implemented
 
 domain: agents
 owner_team: agents
