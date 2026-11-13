@@ -4,7 +4,7 @@
 service_id: S38
 slug: subtitles
 name: 字幕与本地化
-maturity: design_only
+maturity: implemented
 
 domain: post
 owner_team: post
