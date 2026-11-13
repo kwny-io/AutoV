@@ -4,7 +4,7 @@
 service_id: S35
 slug: technical-qc
 name: 媒体技术质检
-maturity: design_only
+maturity: implemented
 
 domain: quality
 owner_team: quality
