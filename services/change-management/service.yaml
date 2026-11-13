@@ -4,7 +4,7 @@
 service_id: S07
 slug: change-management
 name: 对话修改与变更计划
-maturity: design_only
+maturity: implemented
 
 domain: control
 owner_team: workflow
