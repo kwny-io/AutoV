@@ -4,7 +4,7 @@
 service_id: S46
 slug: developer-integration
 name: 开发者API与MCP
-maturity: design_only
+maturity: implemented
 
 domain: experience
 owner_team: experience
