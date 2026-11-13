@@ -4,7 +4,7 @@
 service_id: S32
 slug: lipsync
 name: 口型生产
-maturity: design_only
+maturity: implemented
 
 domain: production
 owner_team: generation
