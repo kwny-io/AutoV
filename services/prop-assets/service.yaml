@@ -4,7 +4,7 @@
 service_id: S14
 slug: prop-assets
 name: 道具资产
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
