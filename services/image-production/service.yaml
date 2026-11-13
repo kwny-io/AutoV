@@ -4,7 +4,7 @@
 service_id: S29
 slug: image-production
 name: 图像与关键帧生产
-maturity: design_only
+maturity: implemented
 
 domain: production
 owner_team: generation
