@@ -4,7 +4,7 @@
 service_id: S31
 slug: speech-production
 name: 配音生产
-maturity: design_only
+maturity: implemented
 
 domain: production
 owner_team: generation
