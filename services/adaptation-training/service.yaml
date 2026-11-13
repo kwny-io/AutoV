@@ -4,7 +4,7 @@
 service_id: S48
 slug: adaptation-training
 name: LoRA与模型适配训练
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
