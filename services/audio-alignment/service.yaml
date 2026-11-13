@@ -4,7 +4,7 @@
 service_id: S37
 slug: audio-alignment
 name: 音频理解与对齐质检
-maturity: design_only
+maturity: implemented
 
 domain: quality
 owner_team: quality
