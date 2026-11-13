@@ -1,0 +1,36 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCG9H8J9K0M1N2P3Q4R5S6T7",
+  "source": "S43",
+  "type": "delivery.publish.failed",
+  "subject": "dp_01JCG9J9K0M1N2P3Q4R5S6T7U8",
+  "time": "2026-11-06T15:41:52Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "dp_01JCG9J9K0M1N2P3Q4R5S6T7U8",
+  "aggregate_sequence": 5,
+  "correlation_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+  "causation_id": "da_01JCG9K0M1N2P3Q4R5S6T7U8V9",
+  "traceparent": "00-3d4e5f6071829304a5b6c7d8e9f0a1b2-3c4d5e6f708192a3-01",
+  "data": {
+    "schema_version": "2.0",
+    "package_id": "dp_01JCG9J9K0M1N2P3Q4R5S6T7U8",
+    "package_type": "formal",
+    "episode_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+    "channel_id": "ch_platform_a",
+    "attempt_id": "da_01JCG9K0M1N2P3Q4R5S6T7U8V9",
+    "attempt_no": 3,
+    "state": "FAILED",
+    "failure_code": "CHANNEL_FORMAT_UNSUPPORTED",
+    "failure_detail": {
+      "http_status": 413,
+      "channel_message": "payload exceeds 4GB limit",
+      "max_bytes": 4294967296
+    },
+    "bytes_sent": 0,
+    "remote_ref": null,
+    "finished_at": "2026-11-06T15:41:52Z"
+  },
+  "data_ref": null
+}

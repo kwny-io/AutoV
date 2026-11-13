@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/quality/check-registry.v2.schema.json",
+  "title": "check registry v2",
+  "description": "Per-check registration data. Each QC service registers the checks it can emit; S39 reads this to route repairs. Adding a check is a data change here and needs no S39 release. The schema proves the shape; the qc-sdk validator proves the cross-file family constraint (see x-cross-checks).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_version", "checks"],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "registry_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic. Every add/edit bumps it; S39 records which version it routed with."
+    },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/check" }
+    }
+  },
+
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_id", "layer", "owner_service", "defect_type",
+        "default_action", "allowed_actions", "window_scope",
+        "severity_default", "severity_max", "recheck_scope"
+      ],
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "pattern": "^(TECH|VIS|AUD|SUB)\\.[A-Z0-9_]+(\\.[A-Z0-9_]+)+$",
+          "description": "<LAYER>.<GROUP>.<NAME>, uppercase. Globally unique; the validator rejects duplicates."
+        },
+        "layer": {
+          "type": "string",
+          "enum": ["technical", "semantic", "alignment", "subtitle"]
+        },
+        "owner_service": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "The QC service that emits this check. S35 / S36 / S37 / S38 today."
+        },
+        "defect_type": {
+          "type": "string",
+          "description": "Must be in action-families.v2.json closed_type_set. Selecting the action family is the ONLY thing this field does.",
+          "enum": [
+            "identity", "anatomy", "hands", "costume", "prop", "continuity",
+            "camera_adherence", "action_adherence", "temporal",
+            "subtitle", "lipsync", "voice", "technical", "audio_mix"
+          ]
+        },
+        "default_action": {
+          "type": "string",
+          "description": "The family chain's starting point for this check. MUST be a member of families[defect_type].chain.",
+          "enum": [
+            "reingest", "transcode", "keyframe_edit", "regenerate_video",
+            "temporal_edit", "redo_lipsync", "realign_subtitles",
+            "re_render_subtitles", "remix", "re_synthesize_speech",
+            "human_review", "change_spec"
+          ]
+        },
+        "allowed_actions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Subset of families[defect_type].chain. Intersected with the family and with policy to get the candidate set. May NOT widen what the family permits.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "reingest", "transcode", "keyframe_edit", "regenerate_video",
+              "temporal_edit", "redo_lipsync", "realign_subtitles",
+              "re_render_subtitles", "remix", "re_synthesize_speech",
+              "human_review", "change_spec"
+            ]
+          }
+        },
+        "window_scope": {
+          "type": "string",
+          "enum": ["frame", "window", "shot", "track", "all"],
+          "description": "How much of the artifact the repair touches, and therefore how much must be re-checked."
+        },
+        "window_max_frames": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "When window_scope is frame or window: the largest window this check may report. Gates keyframe_edit, whose precondition is <= 6."
+        },
+        "escalation_rule": {
+          "oneOf": [
+            { "$ref": "#/$defs/escalation" },
+            { "type": "null" }
+          ]
+        },
+        "severity_default": {
+          "type": "string",
+          "enum": ["blocker", "major", "minor", "info"]
+        },
+        "severity_max": {
+          "type": "string",
+          "enum": ["blocker", "major", "minor", "info"],
+          "description": "Ceiling a model-backed detector may raise to. Registration decides severity; the detector may only raise toward this, never lower it."
+        },
+        "recheck_scope": {
+          "type": "string",
+          "enum": ["technical", "technical+hash", "technical+audio", "semantic",
+                   "semantic+continuity", "alignment", "subtitle"],
+          "description": "Which layer(s) re-run after the repair. Determines the re-check cost, so it is data, not code."
+        },
+        "never_auto_repair": {
+          "type": "boolean",
+          "default": false,
+          "description": "True forbids every automatic route regardless of what the family allows, forcing human_review. Use for defects where any automatic action would change creative intent."
+        },
+        "no_auto_reason": {
+          "type": ["string", "null"],
+          "description": "Required when never_auto_repair is true: why no automatic route exists. Surfaced to the reviewer, so it must be a sentence a human can act on."
+        },
+        "notes": {
+          "type": ["string", "null"],
+          "description": "Free text for the registering team. Not read by S39."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "never_auto_repair": { "const": true } },
+            "required": ["never_auto_repair"]
+          },
+          "then": {
+            "required": ["no_auto_reason"],
+            "properties": { "no_auto_reason": { "type": "string", "minLength": 1 } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "window_scope": { "enum": ["frame", "window"] } },
+            "required": ["window_scope"]
+          },
+          "then": { "required": ["window_max_frames"] }
+        }
+      ]
+    },
+
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "comparator", "threshold", "escalate_to"],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "description": "What is measured against the threshold, e.g. defect_ratio, consecutive_frames, attempt_count."
+        },
+        "comparator": { "type": "string", "enum": ["lt", "lte", "gt", "gte", "eq", "ne"] },
+        "threshold": { "type": "number" },
+        "escalate_to": {
+          "type": "string",
+          "enum": [
+            "reingest", "transcode", "keyframe_edit", "regenerate_video",
+            "temporal_edit", "redo_lipsync", "realign_subtitles",
+            "re_render_subtitles", "remix", "re_synthesize_speech",
+            "human_review", "change_spec"
+          ],
+          "description": "Where in the family chain to jump when the threshold trips. Must also be in families[defect_type].chain."
+        }
+      }
+    }
+  },
+
+  "x-cross-checks": {
+    "why": "JSON Schema cannot reference another file's data. These rules are enforced by the qc-sdk registry validator AT LOAD TIME. A registry that violates any of them is rejected and the service fails to start; it is not logged and ignored.",
+    "rules": [
+      "Every defect_type is in action-families.v2.json closed_type_set.",
+      "default_action ∈ families[defect_type].chain.",
+      "allowed_actions ⊆ families[defect_type].chain.",
+      "escalation_rule.escalate_to ∈ families[defect_type].chain (when non-null).",
+      "No check_id appears twice.",
+      "owner_service matches the layer: technical→S35, semantic→S36, alignment→S37, subtitle→S38. A layer served by a different service is a registration error, not a new convention.",
+      "check_id namespace must match the layer: TECH→technical, VIS→semantic, AUD→alignment, SUB→subtitle."
+    ],
+    "why_load_time": "The registry is data owned by four different services and edited under deadline. A prose rule gets broken the first time someone adds a check in a hurry. Load-time rejection is the only version of the constraint that survives."
+  }
+}

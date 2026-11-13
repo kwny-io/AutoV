@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/production.sfx-ready.v2.schema.json",
+  "title": "production.sfx.ready payload v2",
+  "description": "event `production.sfx.ready` 的 data 部分。权威定义在 plans/S33-sound-effects.md §6.4（事件体形状，行 1103–1123）；三个枚举字段的闭集来自 §4 的 DDL（行 777、782）。这个事件宣布「这条音效 take 就绪，检查点前进到它」。它刻意只带**可交付性**需要的事实：这条音效多长、会不会循环、现在有没有权利、以及有没有缺口。**不含**音频 URL、`cue_intent` 原文、供应商信息、许可策略明细、归属署名（§6.4 行 1125）。`cue_intent` 之所以不进事件，原话是「它是创作意图的自然语言描述，往往直接泄露剧情（『主角发现尸体时的一声闷响』）。事件会流经 Kafka、被多个消费者存档」。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有 payload 约定；S33 §6.4 的示例没有画它。"
+    },
+    "sfx_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1105。发布此事件的音效作业。"
+    },
+    "sfx_take_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1106。就绪的音效 take。与 `checkpoint.to` 同值。"
+    },
+    "cue_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1107（示例 `cue_ep3_sc3_02_door`）。音效**提示**的 ID——一个 cue 说的是「这里需要一声闷响」，一个 take 是「满足它的一个具体素材」。§6.4 行 1108 的 `cue_revision` 配合它构成完整引用。"
+    },
+    "cue_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S33 §6.4 行 1108 + §6.4 行 1126（「S06 / S07 的 `shot.spec.revised`（若存在）→ cue 意图变更 → 新 revision」）。**必须带 revision 而不只是 cue_id**：同一个 cue 的意图会随镜头修订而变，旧 take 满足的是旧意图。S41 在时间线上放置音效时必须能判断「这条 take 还对不对应当前 cue」。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1109 + 行 1097（aggregate 就是它）。跨 Run 计数的锚点（S29 §8.2 的 `AttemptCounterKey` 含它）。"
+    },
+    "cue_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S33 §6.4 行 1110。该 cue 在镜头内的序号。S32/S31 的同名字段同样只给示例不给基准，本 schema 只约束 `>= 0`。注意 S33 §4.3 说 S41 到达时 S33 **不批量重算 placement**（§6.4 行 1124），所以 cue_index 是 S33 侧的顺序，不是时间线上的位置。"
+    },
+    "sfx_family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1111（示例 `hard_effect`）。**不收窄为 enum，尽管 S33 §2.3 列了五个值**：S33 §2.3 行 208 的原话是「`sfx_family` 的取值必须是一个闭集，由 `contracts` 定义（**当前没有**，§12 C1）。本文的临时处理是用一个固定的粗分类（`foley` / `ambience` / `hard_effect` / `ui` / `stinger`），并且**要求调用方必须给**」。计划自己说这是临时的、契约里还没有。把临时分类固化进 schema 会让它在正式闭集出现时变成一个必须迁移的既有契约。见 x-needs-owner。**但它的语义是明确的**：不是从 `cue_intent` 猜出来的（§2.3 行 197 的标题就是「为什么 `sfx_family` 是一个显式字段而不是从 `cue_intent` 里猜」），因为猜错方向不可复现。"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "来源：S33 §6.4 行 1112（示例已给完整四字段）。形状与 plans/S28-artifact-ingest.md 行 94 的规范定义一致（与 episode-manifest.v2 的 accepted_artifact_ref 同构）。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 —— 归档产物引用恒指向 S28。S33 §6.4 的示例也写 `\"service_id\": \"S28\"`。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S28 行 94。S28 行 94 声明「`revision` 只在 `artifact_id` 内有意义」。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.content_hash。S42 混音时靠它确认拿到的是哪一份音频。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "natural_duration_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S33 §6.4 行 1113 + §6.4 行 1128（S33 消费 S28 的 `artifact.ingested` 时**需要** `natural_duration_ms`、采样率、通道数、`ingesting_service`——§12 C4）。**它叫 natural 而不是 duration 是有意的**：这是素材本身的长度，不是要放在时间线上的长度。S41 拿到后可能循环（若 loopable）或截断，那都是 S41 的决定。"
+    },
+    "loopable": {
+      "type": "boolean",
+      "description": "来源：S33 §6.4 行 1114 + §2 行 190（`content_fingerprint = sha256(cue_intent || sfx_family || loopable_required)`）。**注意这里发的是 `loopable`（这条素材能不能循环），而指纹里用的是 `loopable_required`（这个 cue 需不需要循环）**——两个不同的量，同一个词根。见 x-conflicts PSR33-1。"
+    },
+    "rights_state": {
+      "type": "string",
+      "enum": [
+        "usable",
+        "void",
+        "unknown"
+      ],
+      "description": "来源：S33 §4 DDL 行 777（`rights_state text NOT NULL CHECK (rights_state IN ('usable','void','unknown'))`）+ §6.4 行 1115。**这是发布时刻的快照，不是永久保证**：§4 行 503 说「每次 take 被使用前（`GET /sfx-cues/{id}` 现算时、`ready` 事件前）」都要重新确认，S02 的 `policy.revision.published` 到达时会「重新解析许可；可能导致 take 变 void」（§6.4 行 1123）。§4 行 509 进一步要求「S33 在每次提供给 S42 的位置计算里，都要带上当前的 `rights_state`。若不可用，返回 `unplaceable` + 缺口」。所以消费方**不能把事件里的 usable 当长期凭证**。三值闭集照 DDL 收；S31 的同名字段没有闭集（见 quality 系列之外的 PSR-4）。"
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "generated",
+        "retrieved",
+        "substituted"
+      ],
+      "description": "来源：S33 §4 DDL 行 782（`source_kind text NOT NULL CHECK (source_kind IN ('generated','retrieved','substituted'))`）+ §6.4 行 1116。三值语义：generated 是生成出来的、retrieved 是从库/供应商检索到的、substituted 是用同族素材替代的（§11 T33-29「替代同族 + 有授权 + 许可可用 → 接受，`source_kind='substituted'`」）。**substituted 与 generated 的区别对合规有意义**：替代素材的许可条款可能与原创不同。"
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "来源：S33 §6.4 行 1117（`{ \"from\": \"st_00X…\", \"to\": \"st_01J…\", \"checkpoint_seq\": 2 }`）。与 S30/S31/S32 同形（`from`/`to`/`checkpoint_seq`），与 S29 的 `from_candidate_id`/`to_candidate_id` 不同——同 PSR-3。",
+      "properties": {
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "来源：S33 §6.4 行 1117。首个 take 必为 null。"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S33 §6.4 行 1117。与顶层 `sfx_take_id` 同值。"
+        },
+        "checkpoint_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S33 §6.4 行 1117（`2`）。单调递增。"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "checkpoint_seq"
+      ],
+      "additionalProperties": false
+    },
+    "content_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1118 + §2 行 190（`content_fingerprint = sha256(cue_intent || sfx_family || loopable_required)`）。**这个定义有跨服务含义**：指纹里含 `cue_intent` 原文（自由文本），而 `cue_intent` 刻意不进事件。所以消费方**无法从事件重算这个指纹**——它只能用作「两条 take 是不是同一个东西」的相等比较。S33 未声明输出格式（是否 hex、是否 64 位），不收窄。"
+    },
+    "gap_state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S33 §6.4 行 1119（`\"gap_state\": \"none\"`）。**只有这一个取值有出处**：S33 全文没有列 gap_state 的取值集合，也没有对应 DDL 列（§4 DDL 里 sfx_take 表有 rights_state/source_kind，没有 gap_state）。§4 行 549 说「S33 通过 `production.sfx.ready` 的扩展字段或单独的缺口查询端点提供（§12 C6）」S41 需要的缺口信息——这个字段就是那条「扩展字段」，但它的取值域没定。§6.4 行 1101 的发布表还列了建议新增的 `sfx.gap.recorded` / `sfx.gap.closed` 两个独立事件，说明缺口是一个独立概念。**不收窄为 enum**，见 x-needs-owner。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "sfx_job_id",
+    "sfx_take_id",
+    "cue_id",
+    "cue_revision",
+    "shot_lineage_id",
+    "cue_index",
+    "sfx_family",
+    "artifact_ref",
+    "natural_duration_ms",
+    "loopable",
+    "rights_state",
+    "source_kind",
+    "checkpoint",
+    "content_fingerprint",
+    "gap_state"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "sfx_family",
+      "demanded_by": "plans/S33-sound-effects.md §6.4 行 1111 + §2.3 行 208",
+      "s33_status": "S33 自己说：「`sfx_family` 的取值必须是一个闭集，由 `contracts` 定义（**当前没有**，§12 C1）。本文的临时处理是用一个固定的粗分类（`foley` / `ambience` / `hard_effect` / `ui` / `stinger`）」。**这正是 AGENTS.md「契约与文档冲突 → 停下，报告冲突」与「不从散文推断这些值」的处境**：计划提出了一个闭集，但明说它还没进契约。本 schema 因此不收 enum——把临时分类写成 enum 会让它变成事实上已发布的契约，而 S33 说它还要变。需要把这个闭集正式落到 contracts 里（届时本 schema 改成 enum），或确认临时分类可以冻结。"
+    },
+    {
+      "field": "gap_state 的取值集合",
+      "demanded_by": "plans/S33-sound-effects.md §6.4 行 1119（示例 `\"none\"`）+ §4 行 549（S41 的缺口信息由它为 S33 提供，§12 C6）",
+      "s33_status": "只有示例里的 `none` 有出处。S33 没有列取值集合、没有 DDL 列，但发布表（§6.4 行 1101）建议新增 `sfx.gap.recorded` / `sfx.gap.closed` 两个事件，说明缺口是有状态的（至少「有缺口」与「无缺口」）。§4 行 549 引用的 §12 C6 是这一处缺口的正式登记。本 schema 只收非空字符串。"
+    },
+    {
+      "field": "cue_index 的基准",
+      "demanded_by": "plans/S33-sound-effects.md §6.4 行 1110（示例 `0`）",
+      "s33_status": "示例是 0，与 S31 的 `utterance_index`（示例 2）基准可能不同。S33 没有说明它是 0-based 还是 1-based、是否在镜头内连续。本 schema 只约束 `>= 0`。它进事件是为了让消费方能按顺序处理同一镜头的多个 cue；基准不统一会让「第 1 个」在两侧指向不同的 cue。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PSR33-1",
+      "summary": "事件发 loopable（素材能否循环），指纹用 loopable_required（cue 是否要求循环）",
+      "s33_fingerprint": "§2 行 190：`content_fingerprint = sha256(cue_intent || sfx_family || loopable_required)`",
+      "s33_event": "§6.4 行 1114：`\"loopable\": false`",
+      "why_it_matters": "两个量回答不同问题：`loopable_required` 是 cue 的诉求（这段戏需要一直有环境声），`loopable` 是素材的属性（这条 30 秒的环境声能不能无缝循环）。它们不必相等——一条 30 秒素材可能可循环，而 cue 只要 3 秒不需要循环；反过来 cue 要求循环而拿到的素材不可循环就是缺口。**但只有后者（loopable）出现在事件里**，所以消费方看到 `loopable: false` 时无法判断「是素材不可循环，还是这个 cue 根本不需要循环」。若这确实是两种不同的东西，事件应当两个都发（或把 loopable_required 也带上），否则 `loopable=false` 在 S41 眼里永远像一条坏消息。本 schema 按事件示例收 loopable。"
+    },
+    {
+      "id": "PSR33-2",
+      "summary": "音效没有对应的 defect_type，一个音效问题在 QC 报告里无处落地（S33 已自认，§12 C9）",
+      "s33_status": "S33 §12 C9（行 1464–1475）已登记：「一个音效问题在 QC 报告里必须落到某个 `defect_type`。§1.4 的表给出三种可能的落点（`audio_mix`、`technical`、`temporal`），但这意味着…『音效缺失』没有落点。缺失是一个『没有东西』的事实，不是任何一类缺陷」。S33 的选择是「不选边：S33 不产生缺陷。缺口的表达走 `SfxGap`，不是 QC 缺陷」。",
+      "verified_here": "本窗口核对过 contracts/quality/action-families.v2.json 的 14 个族，没有任何族的 chain 含音效动作（audio_mix 族是 `remix → regenerate_video`，由 S42 与 S30 执行；remix 只能修混音参数，不能补一个缺失的音效）。S35–S39 的 AUD.* 检查 id 里也没有 SFX/EFFECT/AMBIENCE 任何一种。所以 S33 的「不是任何动作族的执行者」这句话是准确的。",
+      "why_it_matters": "这不是本 payload schema 能修的，也不是 S33 的文档矛盾——它是一条**已登记的设计缺口**。记在这里是因为 `production.sfx.ready` 是 S33 唯一的产出通道：当一条音效不对或缺失时，没有任何事件会把它变成可执行的修复动作。S41 的 `completeness` 与 S40 的人工验收是目前仅有的兜底（C9 的建议）。本 schema 不做补救，也不假装 gap_state 能表达缺陷。"
+    }
+  ]
+}

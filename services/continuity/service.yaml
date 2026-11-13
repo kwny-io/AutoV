@@ -4,7 +4,7 @@
 service_id: S17
 slug: continuity
 name: 连续性校验
-maturity: design_only
+maturity: implemented
 
 domain: memory
 owner_team: memory

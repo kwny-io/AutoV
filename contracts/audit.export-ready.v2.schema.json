@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/audit.export-ready.v2.schema.json",
+  "title": "audit.export.ready payload v2",
+  "description": "event `audit.export.ready` 的 data 部分。定义在 plans/S45-audit.md §4.3 行 445–466（计划给了完整示例，七个字段全部有值）。**这是 S45 唯一一条发布事件**（§4.3 行 443「只有一条」）。**事件名是 `ready`，状态机却有六个态**：§3.6 行 305–310 的 `REQUESTED → BUILDING → SEALED → READY`，另有 `FAILED` 与 `EXPIRED` 两条出口，而 `event-topics.v2.json` 里 `audit.*` 只有这一条——导出**失败**与**过期**没有事件，见 AEX-2。**导出物不在这里**：`data_ref` 指向 `manifest.json`（计划写裸字符串，信封不收，本仓库的示例改成四键对象），正文走对象存储（§3.6 行 313–322 的 bundle 形状）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "与本仓库全部 payload schema 一致。§4.3 行 455–463 的示例里没有它（示例只列了七个业务字段），但 `contracts/README.md` 的约定是每个 payload 的 `data` 都带版本，且它在 `required` 里。"
+    },
+    "export_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "§4.3 行 456（`\"exp_01J...\"`），与信封 `aggregate_id` 同值（§4.3 行 443「`aggregate_id = export_id`」）。DDL 是 `audit_export.export_id text PRIMARY KEY`（§5.6 行 710）。**注意这个 PK 不含 `tenant_id`**，而本服务 §10 的 T45-34（行 1084）要求跨租户查导出返回 404——`export_id` 全局唯一意味着它可以被用来探测存在性。见 AEX-3。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "REQUESTED",
+        "BUILDING",
+        "SEALED",
+        "READY",
+        "EXPIRED",
+        "FAILED"
+      ],
+      "description": "来源：§4.3 行 457（示例 `\"READY\"`）+ §5.6 行 714–715 的真 DDL `CHECK (state IN ('REQUESTED','BUILDING','SEALED','READY','EXPIRED','FAILED'))`。**六值枚举照 DDL 收全，但按发送规则只有一个取得到**：事件名是 `export.ready`、§3.6 行 326 说「完成时发」，所以实际流里恒为 `READY`。剩下五个态里 `FAILED` 与 `EXPIRED` 是**终点**却永远不会到此为止地通知消费方（AEX-2）；`REQUESTED`/`BUILDING`/`SEALED` 是过程态，本来就不该发。写法与 `breakdown.revision-created` 的 `state`、`adaptation.training-completed` 的 `state` 一致：收全 DDL 值，不收紧，把「实际取不到」写进描述而不是写进 `enum`。"
+    },
+    "record_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "§4.3 行 458（`128774`）+ §5.6 行 717（`record_count bigint NOT NULL DEFAULT 0`）。**`minimum: 0` 不是猜的**：DDL 的默认值就是 0，而一个查询范围没命中的导出是合法结果（`record_count = 0` 与「还没建完」在 `state` 上区分，不在这个数上）。同仓多数计数型字段都取 `minimum: 0`，与 `aggregate_sequence` 的 `minimum: 1` 是两类。"
+    },
+    "segment_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "§4.3 行 459（`14`）。**这个字段在 DDL 里没有列，只有 `segment_ids text[]`（§5.6 行 716）**——它是数组长度，不是独立事实，所以 `minimum: 0` 照数组可为空推。**计划里 `segment_count` 只出现这一次**（全文计数为 1），没有定义它数的是「参与本次导出的分段」还是「这些分段里成功读完的」：§3.6 行 324 允许某段因 `INTEGRITY_FAILED` 被跳过并记进 `gaps`，被跳过的段仍可能留在 `segment_ids` 里。本 schema 只收非负整数，不解释分母。见 AEX-1。"
+    },
+    "chain_continuous": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "§4.3 行 460（`true`）+ §5.6 行 719（`chain_continuous boolean`——**可为 NULL**）。**这里的 `null` 是 DDL 允许的，但语义没有定义**：行 719 只写类型不写注释，而 §3.6 行 324 说 `manifest.json` 里**必须有** `chain_continuous: true|false`。两者冲突的读法有两种：事件发在 `manifest.json` 写完之前（那么 `null` = 还没算），或 DDL 的 `boolean` 只是漏了 `NOT NULL`。本 schema 跟 DDL 收 `null`（宁可宽松也不替 S45 决定），但把它登记为 AEX-1 的一部分——**一个三值布尔对「导出是否完整」这件事无法当依据**，而 E39 正靠这个字段。"
+    },
+    "bundle_ref": {
+      "type": "object",
+      "description": "§4.3 行 461（`{\"service_id\": \"S45\", \"id\": \"exp_01J...\", \"revision\": 1, \"content_hash\": \"…\"}`）+ §5.6 行 718（`bundle_ref jsonb, -- {storage_ref, sha256, size_bytes}`）。**同一个名字指两个不同的对象**：计划示例给的是信封 `data_ref` 那种四键引用，DDL 注释给的是对象存储三元组。两者没有一个键重合（`service_id`/`id`/`revision`/`content_hash` 对 `storage_ref`/`sha256`/`size_bytes`），所以不是「同一个形状的两种写法」，是**两个形状共用了一个字段名**。本 schema 按**计划示例**收（四键，因为示例是唯一给出取值的地方，且它是唯一能与信封 `data_ref` 对齐的形状），并在 AEX-1 里点名 DDL 注释那一支。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "§4.3 行 461 的 `\"S45\"`。与信封 `data_ref.service_id` 同模式。计划没有说它能不能不是 `S45`（导出物由自己产生），schema 不写 `const`，理由与 `base_model_ref.service_id` 相同：示例是取值，不是约束。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "§4.3 行 461 的 `\"exp_01J...\"`，与 `export_id` 及信封 `aggregate_id` 三处同值。**这是一个「id 与所属聚合 id 相同」的引用**：它指向的 bundle 就是这次导出的产物，没有独立 id。DDL 里也没有 `bundle_id` 列（§5.6 行 709–727 通读），而 §3.6 行 316 的 `<bundle_id>/` 目录名暗示存在一个——见 AEX-4。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "§4.3 行 461 的 `1`。`audit_export` 没有 `revision` 列（§5.6 行 709–727），所以这个值是示例给的常量而非存储字段。导出是一次性产物、`ae_idem_idx`（行 729–730）也只允许同时存在一个进行中的同查询导出，所以固定为 1 是自洽的——但它是推断，不是出处。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "§4.3 行 461 写的是 `\"…\"`——**计划没有给值**。取裸 hex 64 位，与同仓 `char(64)` 列型及信封 `data_ref.content_hash` 一致。§3.6 行 321 的 `bundle.sha256`「对上面全部文件按固定顺序的摘要」是唯一候选来源，但**它与 DDL 注释里的 `bundle_ref.sha256` 是两个键名**，说明计划自己在两处指的可能是同一个值、也可能是两个（bundle 全量摘要 vs manifest 摘要）。本 schema 只收形状。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "§4.3 行 462（`\"2026-11-06T08:10:00Z\"`，距示例 `time` 正好 24 小时）+ §5.6 行 726（`expires_at timestamptz`——**可为 NULL**，而示例给了值，事件层收非空）。§3.6 行 310 的 `READY ──(expires_at 到)──► EXPIRED` 说明它是状态迁移的触发条件：**过期后导出物取不到，而这个迁移不发事件**（AEX-2）。消费方若在 `expires_at` 之后才处理这条事件，`data_ref` 已经无效——而事件 `normal_retention_days` 是 14（registry），比这里示例的 24 小时长得多，所以**事件还在、导出物已经没了**是常态而非边缘情况。**`format: date-time` 在本仓库只是注解**：`tools/validate/validate_examples.py` 用 `Draft202012Validator(target, registry=reg)` 且不传 `format_checker`，所以 `tomorrow` 这种值也能过。**而且即使传了也不管用**——`jsonschema` 把 `date-time` 检查器包在 `with suppress(ImportError)` 里，只有装了可选的 `rfc3339_validator` 才注册。这一点与全仓其余带 `format` 的字段一致，写在这里是为了不让人误以为它是强约束。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "export_id",
+    "state",
+    "record_count",
+    "segment_count",
+    "chain_continuous",
+    "bundle_ref",
+    "expires_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`segment_count` / `chain_continuous` / `bundle_ref` 的语义与形状",
+      "demanded_by": "plans/S45-audit.md §4.3 行 459–461（示例）+ §5.6 行 716–719（DDL）",
+      "s45_status": "三个字段各有一个说不清的地方。**`segment_count`**：DDL 里没有这一列，只有 `segment_ids text[]`（行 716）；它数的是「本次导出涉及的分段」还是「成功读完的分段」，计划全文只出现一次（行 459），没有说——而 §3.6 行 324 允许某段被 `INTEGRITY_FAILED` 跳过并记进 `gaps`。**`chain_continuous`**：DDL 是 `boolean`（可为 NULL，行 719），而 §3.6 行 324 说 `manifest.json` 里**必须有** `true|false`；事件发在 manifest 写完之后（行 326「完成时发」），所以 `null` 在正确实现里取不到，但 DDL 允许它。**`bundle_ref`**：示例是四键引用（行 461），DDL 注释是 `{storage_ref, sha256, size_bytes}`（行 718），两组键无一重合，是同一字段名下的两个形状。本 schema 按示例收，三处都只锁形状不解释语义。"
+    },
+    {
+      "field": "导出失败与过期的通知路径",
+      "demanded_by": "plans/S45-audit.md §3.6 行 305–310（状态机两条出口）与 §11 C45-1 行 1177（「`event-topics.v2.json` 只有 `audit.export.ready`」）",
+      "s45_status": "§3.6 的六个状态里 `FAILED` 和 `EXPIRED` 是**终点**：`FAILED` 有两类原因（不可重试错误直接终止、可恢复错误重试后仍失败），`EXPIRED` 由行 310 的 `expires_at` 到点触发。计划没有任何一句说这两件事怎么通知请求方——`POST /audit-exports` 只返回 `202 + export_id`（行 326），`GET /audit-exports/{id}` 能查（行 420），所以**只能轮询**。C45-1 只说了「目录里只有一条」，没把「两条出口无通知」列为缺口。本批次不新增 topic：按 AGENTS.md，登记一条没有生产方在跑的事件与登记一条没有形状的事件是同一种「先造契约再造事实」。见 AEX-2。"
+    },
+    {
+      "field": "`audit_export` 主键是否该含 `tenant_id`",
+      "demanded_by": "plans/S45-audit.md §5.6 行 710（`export_id text PRIMARY KEY`）与 §10 测试 T45-34（行 1084）",
+      "s45_status": "本服务 §10 的 T45-34 要求「租户 B 查租户 A 的 `record_id` / `stream_key` / **导出** → 404，响应不含 A 的任何标识」（E28）。但 `audit_export` 的 PK 是裸 `export_id`（行 710），`audit_segment` 同样是裸 `segment_id`（行 594），`audit_access_log` 同（行 733）——**这三张表的 id 全局唯一**，于是「不存在」与「属于别的租户」在唯一冲突这一层可分。同仓其他服务（S01 §5、S03 行 107、S10 行 101、S11 行 92 等）都在数据模型开头写明「所有主键/唯一约束含 `tenant_id`（E28）」，**S45 没有这一句**。可能是 RLS 兜住了（§2 提到启用 RLS），但 E28 要的是「不泄漏存在性」，而 RLS 拦的是读取、不拦主键冲突。事件层不受影响（`export_id` 在 payload 里本来就是单租户内的值），记录在此是因为它决定了本事件能否被跨租户试探。见 AEX-3。"
+    },
+    {
+      "field": "`bundle_id` 是否存在、`<bundle_id>` 与 `export_id` 的关系",
+      "demanded_by": "plans/S45-audit.md §3.6 行 316（`<bundle_id>/`）与 §4.3 行 461 / §5.6 行 709–727（无 `bundle_id` 列）",
+      "s45_status": "§3.6 的导出物目录以 `<bundle_id>/` 开头，而 `audit_export` 表（行 709–727）没有 `bundle_id` 列，`bundle_ref` 是 `jsonb` 且注释里也没有它。§4.3 行 461 的示例把 bundle 的 `id` 写成 `exp_01J...`——即 `export_id`。所以三种读法：`bundle_id` 就是 `export_id`（示例这么写）、`bundle_id` 是 `bundle_ref.storage_ref` 里的路径段（DDL 注释那一支）、或 `bundle_id` 是漏掉的列。本 schema 的 `bundle_ref.id` 只收非空字符串，不把它钉死为 `export_id`（那会把一种读法变成约束）。见 AEX-4。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "AEX-1",
+      "summary": "`bundle_ref` 在计划示例与 DDL 注释里是两个形状，键无一重合；`chain_continuous` 是可为 NULL 的布尔，而完整性判定要靠它",
+      "s45_event": "plans/S45-audit.md §4.3 行 461：`\"bundle_ref\": {\"service_id\": \"S45\", \"id\": \"exp_01J...\", \"revision\": 1, \"content_hash\": \"…\"}`",
+      "s45_ddl": "§5.6 行 718：`bundle_ref jsonb, -- {storage_ref, sha256, size_bytes}`。同一个字段名，另一组三个键。",
+      "why_it_matters": "两个字面值都不是笔误的样式：四键那组与信封 `data_ref` 完全同构（`service_id` 模式、`id`、`revision`、`content_hash` 模式全部一致），三键那组与对象存储的实际产物一致（`storage_ref` 是 `s3://…` 路径，见 §5.2 行 613 对分段 `storage_ref` 的注法）。实现时二选一都说得通，但**消费方解出来的东西不同**：四键那一支只能拿 `content_hash` 去比对，三键那一支能直接去取文件。同时 `chain_continuous` 在 DDL 里是可空布尔（行 719），而 §3.6 行 324 说 manifest 里**必须有** `true|false`，`strict_audit` 租户还要求「不允许 `chain_continuous=false`」（§8 行 910）。如果事件里出现 `null`，严格租户的消费方无法区分「完整」与「还没算」。",
+      "consequence": "本 schema 按示例收四键（示例是唯一给出取值的地方，且能与信封对齐），`chain_continuous` 收 `boolean|null`（照 DDL，不替 S45 收紧）。两个决定都只锁形状，语义与「哪个是真形状」登记为待裁。",
+      "fix_shape": "S45 owner 二选一并改另一处：(a) 保留示例的四键，把 §5.6 行 718 的注释改成同形；(b) 保留存储三元组，把 §4.3 行 461 的示例改成 `{storage_ref, sha256, size_bytes}` 并说明消费方如何独立验证。`chain_continuous` 若确实可能在 `SEALED` 之后、`READY` 之前为 `null`，应在 §3.6 行 324 把「manifest 里必须有」改成「READY 的导出必须有」；若不可能，DDL 应补 `NOT NULL`。"
+    },
+    {
+      "id": "AEX-2",
+      "summary": "状态机六个态里有两条终点出口（`FAILED` / `EXPIRED`）不产生任何事件，而创建导出的调用只拿到 `202`",
+      "s45_machine": "§3.6 行 305–310：`REQUESTED → BUILDING → SEALED → READY`，另有 `FAILED`（不可重试错误）与 `EXPIRED`（`expires_at` 到点）。",
+      "s45_events": "§4.3 行 443：「只有一条：`audit.export.ready`」；行 326：「完成时发」。`event-topics.v2.json` 全表核对：`audit.*` 只有 `audit.export.ready`，没有 failure/expired topic。",
+      "why_it_matters": "`POST /audit-exports` 只回 `202 + export_id`（行 326），而 `GET /audit-exports/{id}` 能查状态（行 420）。于是**失败和过期只能靠轮询发现**，与 S03 的 reorder 缺口是同一类：有变化、有消费方、没有信号。差别在于这里的消费方是外部系统（合规导出通常是 SIEM 或客户自己的归档流水线，见 C45-4），而那类调用方最不适合长轮询。另一个不对称：`READY` 有事件而 `EXPIRED` 没有，于是消费方收到「可以下载了」之后，**没有任何事件告诉它「下载窗口关了」**——`expires_at` 写在 payload 里（行 462），所以能自己算，但那要求消费方持久化这个时刻（事件 `normal_retention_days` 是 14 天，示例的窗口是 24 小时）。",
+      "consequence": "本 schema 保留 `state` 的六值枚举与 `expires_at`，在两者的描述里写明「其余五态不会到此为止地通知」。**不补登记事件**：AGENTS.md 的「先验证 E12–E23 再接真实模型」与「不要先造契约再造事实」都指向同一个动作顺序。",
+      "fix_shape": "要么把 `state` 语义改成「本事件也承载终局」（像 `adaptation.training.completed` 那样一条事件多个终态，但那需要改名并改发送规则），要么新增 `audit.export.failed` 与 `audit.export.expired`。前者更省契约、后者更清楚；C45-1 目前只记了「目录里只有一条」，没记这个选择。"
+    },
+    {
+      "id": "AEX-3",
+      "summary": "`audit_export` / `audit_segment` / `audit_access_log` 的 id 是全局主键，而本服务的 E28 测试要求跨租户查这些 id 返回 404",
+      "s45_ddl": "§5.6 行 710 `export_id text PRIMARY KEY`；§5.3 行 594 `segment_id text PRIMARY KEY`；§5.6 行 733 `access_id text PRIMARY KEY`。三张表都带 `tenant_id NOT NULL`，但都不在 PK 里。",
+      "s45_tests": "§10 行 1084 T45-34 `[E28]`：「租户 B 查租户 A 的 `record_id` / `stream_key` / 导出 → 404，响应不含 A 的任何标识」。",
+      "repo_convention": "同仓至少六个服务在数据模型开头写了同一句：S01 §5 行 581、S03 行 107、S10 行 101、S11 行 92、S12 行 107、S13 行 106、S14 行 155、S15 行 159——「所有主键/唯一约束含 `tenant_id`（E28：跨租户不得通过唯一冲突探测存在性）」。`git grep -F '主键/唯一约束含' -- plans/` 命中的就是这些，**S45 不在其中**。",
+      "why_it_matters": "裸 `PRIMARY KEY (export_id)` 意味着 `export_id` 这个字符串在整个库里只出现一次。租户 B 若拿到（或猜到）租户 A 的 `export_id` 去 `POST /audit-exports/{id}:verify`（行 408），返回 404 是对的；但**写入路径上的唯一冲突**会泄漏「这个 id 存在」：任何以 `export_id` 为主键的 INSERT 在冲突时与「属于别的租户」不可分。这不是本事件的问题，是本事件里那个 `export_id` 的宿主表的问题——但它决定了「把 `export_id` 发出去」的暴露面。导出物本身是合规证据，`export_id` 出现在客户自己的工单、SIEM 规则、下载脚本里，是**最可能跨租户泄露的 id 类型**。",
+      "consequence": "本 schema 收 `export_id` 为普通非空字符串（照 §4.3 行 456），不加租户前缀、不改形状——改形状会把一个 DB 约束问题变成线上协议变化。登记为待裁。",
+      "fix_shape": "把三张表的 PK 改成 `(tenant_id, export_id)` 等复合键，与其余服务一致；或在本服务 §2 数据模型开头补一句「哪些表刻意用全局 id、为什么」，并说明 RLS 如何兜住写入路径。两条都要改计划。"
+    },
+    {
+      "id": "AEX-4",
+      "summary": "导出物目录以 `<bundle_id>` 开头，但表里没有 `bundle_id` 列，示例又把 bundle 的 id 写成 `export_id`",
+      "s45_layout": "§3.6 行 315–322：`<bundle_id>/manifest.json`、`segments/seg_01J....jsonl`、`chain-proof.json`、`bundle.sha256`",
+      "s45_ddl": "§5.6 行 709–727 通读：只有 `export_id`、`query`、`query_hash`、`state`、`segment_ids`、`record_count`、`bundle_ref`、`chain_continuous`、`gaps`、`failure_reason`、`requested_by`、`purpose`、时间列。**没有 `bundle_id`**。",
+      "s45_event": "§4.3 行 461 的 `bundle_ref.id` 写的是 `exp_01J...`——与 `export_id` 同值。",
+      "why_it_matters": "`<bundle_id>` 这个占位符在 C45-2（行 1178「无 `audit-export-bundle.v1` 与 `chain-proof` 的形状定义」）里被当作**待定义的产物名**，而示例已经替它选了 `export_id`。两种读法的后果不同：若 `<bundle_id> == export_id`，一个导出作业只能有一个产物（与 `ae_idem_idx` 行 729–730 的「同时只有一个进行中」自洽，但重试会覆盖）；若 `<bundle_id>` 独立，则重试可以保留两个产物、可对比。计划没说重试会不会重写同一个路径，而 §10 行 1077 T45-32「导出 BUILDING 中 kill → 重启后重做」隐含会有两次写。",
+      "consequence": "本 schema 的 `bundle_ref.id` 只收 `minLength: 1`，不写成 `const export_id` 也不写成独立前缀（`bnd_` 之类）——两种都没出处。",
+      "fix_shape": "在 C45-2 定义 `audit-export-bundle.v1` 时一并定 `bundle_id` 是否等于 `export_id`，并把 §3.6 的目录占位符改成选定的值。"
+    },
+    {
+      "id": "AEX-5",
+      "summary": "计划的示例过不了本仓库的信封：`data_ref` 是裸字符串，`causation_id` 是 `null`",
+      "s45_example": "§4.3 行 453 `\"causation_id\": null`；行 464 `\"data_ref\": \"audit-export/exp_01J.../manifest.json\"`",
+      "envelope": "`contracts/event-envelope.v2.schema.json`：`data_ref` 是 `oneOf` [四键对象 | `null`]，**没有字符串分支**；`causation_id` 是 `{\"type\": \"string\", \"minLength\": 1}` 且在 16 个必备键里。",
+      "why_it_matters": "两处都是「动机合理、信封没出口」：`data_ref` 想给一个对象存储路径（这个信息本身有用，只是信封的 `data_ref` 不是放路径的地方），`causation_id` 为 `null` 是因为导出作业由定时器或 `expires_at` 触发、没有上游命令。计划里写 `causation_id: null` 的共三篇（S45 行 453、S46 行 379、S48 行 431），动机一致，被信封一致拒绝。",
+      "consequence": "本仓库的示例两处都改：`data_ref` 写四键对象（`id` 用 `export_id`、`content_hash` 用 manifest 摘要），`causation_id` 写那个 `202` 响应对应的命令 id。**这是示例层的适配，不是对计划的修改**——计划里的写法仍然会在实现时撞墙。",
+      "fix_shape": "计划的两处示例应改。`data_ref` 若确实要表达「对象存储路径」，路径应进 payload（`bundle_ref` 三键那一支就有 `storage_ref`），`data_ref` 留给信封语义。"
+    }
+  ]
+}

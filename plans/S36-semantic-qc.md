@@ -345,11 +345,51 @@ CREATE TABLE semantic_qc.evaluator_call (
 );
 CREATE UNIQUE INDEX ON semantic_qc.evaluator_call (report_id, check_id, window_index, model_snapshot);
 
-CREATE TABLE semantic_qc.outbox (...);
-CREATE TABLE semantic_qc.inbox (...);
+-- 与 S08 §1.6 同构
+CREATE TABLE semantic_qc.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE semantic_qc.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL  /* report_id */, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON semantic_qc.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE semantic_qc.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
 
 `evaluator_call` 是 E25 取证的关键：评估器超时后必须有记录说明"这次调用发生了什么"，否则无法区分"模型说没问题"和"模型没回答"。
+
+### 8.1 幂等
+
+`POST /semantic-checks` 的幂等键是 `tenant_id + command_id + request_hash`：
+
+| 情况 | 行为 |
+|---|---|
+| 同 `command_id`、同 `request_hash`，前次 `DONE` | 返回同一个 `operation_id` 与同一份 `report_id`，**不重跑评估器** |
+| 同 `command_id`、不同 `request_hash` | `409 COMMAND_PAYLOAD_MISMATCH`，不执行 |
+| 同 `command_id`、前次 `IN_PROGRESS` | `202`，返回同一 `operation_id`（不重复投递 VLM） |
+
+这条特别重要，因为一次语义质检要调几十次 VLM（`evaluator_calls: 41` 是常见量级）。没有幂等，
+网络重试一次就是几十次重复付费调用。`evaluator_call` 上的
+`UNIQUE (report_id, check_id, window_index, model_snapshot)` 是第二道防线：
+即便 `idempotency_record` 被绕过，同一报告同一窗口也不会产生第二条调用记录。
+
+**`quality.semantic.completed` 与报告落库同事务**（`aggregate_id = report_id`，
+`aggregate_sequence = report_generation`）。否则下游会收到一份查不到的报告，或者报告生效了
+而 S39 永远等不到事件。
 
 ---
 
@@ -360,6 +400,7 @@ CREATE TABLE semantic_qc.inbox (...);
 ```json
 {
   "command_id": "cmd_…",
+  "request_hash": "…",          // 对除 command_id 外的规范化请求体求 sha256
   "execution_context": { "...": "execution-context v2 全文" },
   "artifact": { "service_id": "S28", "id": "clip_x", "revision": 1, "content_hash": "…" },
   "shot_spec_ref": { "service_id": "S06", "id": "shot_3_2", "revision": 4, "content_hash": "…" },

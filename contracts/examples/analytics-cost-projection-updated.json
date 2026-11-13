@@ -1,0 +1,31 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCGE8U9V0W1X2Y3Z4A5B6C7",
+  "source": "S44",
+  "type": "analytics.cost.projection.updated",
+  "subject": "projection/pr_01JCGE9V0W1X2Y3Z4A5B6C7D8",
+  "time": "2026-11-06T16:40:12Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "pr_01JCGE9V0W1X2Y3Z4A5B6C7D8",
+  "aggregate_sequence": 4,
+  "correlation_id": "proj_01JCGE0W1X2Y3Z4A5B6C7D8E9",
+  "causation_id": "cmd_01JCGFA1X2Y3Z4A5B6C7D8E9F0",
+  "traceparent": "00-6071829304a5b6c7d8e9f0a1b2c3d4e5-6f708192a3b4c5d6-01",
+  "data": {
+    "schema_version": "2.0",
+    "projection_id": "pr_01JCGE9V0W1X2Y3Z4A5B6C7D8",
+    "scope": {
+      "project_id": "prj_01J9Z6U7V8W9X0Y1Z2A3B4C5D6"
+    },
+    "window": "30d",
+    "actual_to_date_micro": 412600000,
+    "projected_total_micro": 1279400000,
+    "ci_low_micro": 1102000000,
+    "ci_high_micro": 1487300000,
+    "based_on_rate": 28934666.67,
+    "computed_at": "2026-11-06T16:40:12Z"
+  },
+  "data_ref": null
+}

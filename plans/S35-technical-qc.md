@@ -837,9 +837,19 @@ CREATE UNIQUE INDEX ON technical_qc.report
    COALESCE(attempt_slot_id,'-'), report_generation);
 
 CREATE TABLE technical_qc.outbox (
-  id uuid PRIMARY KEY, aggregate_id text NOT NULL, sequence bigint NOT NULL,
-  event_type text NOT NULL, payload jsonb NOT NULL, published_at timestamptz
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id          text NOT NULL,        -- 事件信封 required
+  aggregate_id       text NOT NULL,             -- report_id
+  aggregate_sequence bigint NOT NULL,      -- report_generation
+  event_type         text NOT NULL,
+  partition_key      text NOT NULL,        -- tenant_id || ':' || aggregate_id
+  payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  published_at       timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
 );
+CREATE INDEX outbox_unpublished_idx ON technical_qc.outbox (id) WHERE published_at IS NULL;
 CREATE TABLE technical_qc.inbox (
   consumer text NOT NULL, event_id text NOT NULL, received_at timestamptz NOT NULL,
   PRIMARY KEY (consumer, event_id)
@@ -1029,7 +1039,25 @@ Runbook 要点：
 | C2 | `contracts/event-topics.v2.json` 的 `quality.*` 事件没有定义 `data` 最小字段集 | 按本文 §7 补 `event-payload/quality-*.v2.schema.json` |
 | C3 | `service-catalog.v2.json` 的 S35 `depends_on` 只有 S28，但读 ShotSpec 需要 S06 | 依赖表是运行协作关系而非拓扑，读 ShotSpec 走 query 可接受；若要求显式化，需改 catalog |
 | C4 | S38 需要发缺陷但没有 `quality.subtitle.*` 事件 | 见 [S38 §7](S38-subtitles.md)：缺陷随 `post.subtitle.ready` 的 `data_ref` 携带，不新增 topic |
-| C5 | 没有 `contracts/quality/check-registry.v2.json` | 新增。**S39 的修复路由依赖它**（§2.2.1 的族是代码，§2.2.2 的登记项是这个文件）；同时 validator 用它的 `severity_max` 与 `allowed_actions` 做交叉校验 |
-| C6 | registry 的 `default_action` / `allowed_actions` 必须是 `defect_type` 动作族的子集，但没有任何机制强制这一点 | 在 `platform/qc-sdk` 的 registry validator 里做**加载期校验**：越族即拒绝加载并报警。不要依赖人工 review —— registry 是数据，会漂移 |
-| C7 | `recommended_actions` 缺两个实际在用的动作：重新语音合成、重排字幕轨道。S37/S38/S39 只能用自然语言描述 | 新增 `re_synthesize_speech` 与 `re_render_subtitles`（§2.3）。不加这两个值，`voice` 与 `subtitle` 动作族无法机器可读，S39 只能硬编码 check_id 绕过去 |
-| C8 | `action_family[type]` 只存在于本文表格里，没有机器可读契约 | 见 [S39 §11 C5b](S39-repair-planning.md)：落到 `contracts/quality/` 下，S39 读数据不硬编码 |
+| C5 | 没有 `contracts/quality/check-registry.v2.json` | 新增。**S39 的修复路由依赖它**（§2.2.1 的族是代码，§2.2.2 的登记项是这个文件）；同时 validator 用它的 `severity_max` 与 `allowed_actions` 做交叉校验。**schema 与校验器已落（2026-11-05），数据文件未落** —— 见下方「已落项」 |
+| C6 | registry 的 `default_action` / `allowed_actions` 必须是 `defect_type` 动作族的子集，但没有任何机制强制这一点 | 在 `platform/qc-sdk` 的 registry validator 里做**加载期校验**：越族即拒绝加载并报警。不要依赖人工 review —— registry 是数据，会漂移。**已落**，见下方「已落项」 |
+| C7 | `recommended_actions` 缺两个实际在用的动作：重新语音合成、重排字幕轨道。S37/S38/S39 只能用自然语言描述 | 新增 `re_synthesize_speech` 与 `re_render_subtitles`（§2.3）。不加这两个值，`voice` 与 `subtitle` 动作族无法机器可读，S39 只能硬编码 check_id 绕过去。**已落**，见下方「已落项」 |
+| C8 | `action_family[type]` 只存在于本文表格里，没有机器可读契约 | 见 [S39 §11 C5b](S39-repair-planning.md)：落到 `contracts/quality/` 下，S39 读数据不硬编码。**已落**，见下方「已落项」 |
+
+**已落项（2026-11-05，commit `991ccee`）**——C6 / C7 / C8 三个缺口由四个文件关闭：
+
+| 文件 | 关的是 | 内容 |
+|---|---|---|
+| `contracts/quality/action-families.v2.json` | C8 | 14 值闭集 → 动作族。每族 `chain` / `fallback` / `forbidden[]`（含理由），`keyframe_edit` 的 ≤6 帧前置条件 |
+| `contracts/quality/qc-report.v2.schema.json` | C1 / C7 | QCReport v2 完整 payload，`recommended_actions` 12 值（含 `re_synthesize_speech` / `re_render_subtitles`）。**从本文 §2.3 程序化提取**，不是手抄 |
+| `contracts/quality/check-registry.v2.schema.json` | C5（一半） | 登记项形状与两条 `allOf` 条件；`x-cross-checks` 列 schema 表达不了的 7 条规则 |
+| `contracts/quality/validate_registry.py` | C6 | 加载期族校验的参考实现。退出码 0=可加载 / 1=拒绝 / 2=环境问题 |
+
+校验器已实测：把 `SUB.CUE.VERSION` 的 `default_action` 写成 `regenerate_video`（`subtitle` 族是
+`realign_subtitles → re_render_subtitles`），退出 1，两条错误分别指出「起点不在族链内」与
+「登记项不得拓宽族」。反向确认：合法的收窄（只留族链前缀）退出 0 —— 校验器区分「收窄」与「拓宽」。
+
+**C5 只落了一半**：`check-registry.v2.json` 数据文件本身没有。这不是抄一遍就行 —— 四份 QC 方案的
+登记表里**根本没有 schema 要求的字段**（`window_scope` / `escalation_rule` / `default_action` /
+`allowed_actions` / `recheck_scope` 大范围缺失）。凭空填等于把设计决策伪装成数据提取，必须四个
+QC 服务各自补登记项。**在那之前，族级约束有代码守着，check 级的窗口与起点动作仍靠人工。**

@@ -132,7 +132,35 @@ CREATE TABLE subtitles.rendition (
   PRIMARY KEY (track_id, subtitle_revision, format),
   UNIQUE (artifact_id)
 );
+
+-- 基础设施：与 S08 §6.4 同构
+CREATE TABLE subtitles.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE subtitles.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL  /* track_id */, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON subtitles.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE subtitles.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
+
+`post.subtitle.ready` 与 `rendition` 行必须同一本地事务提交：拆开就会留下「字幕渲染好了、没人知道」
+或「事件说好了、rendition 回滚了」两种空洞，而下游按事件驱动。`aggregate_id = track_id`，
+`aggregate_sequence = subtitle_revision`。中继做法与 [S08 §6.4](S08-revision-snapshot.md) 一致。
 
 `rendition` 是 §3.0 的落库形态：一个 `subtitle_revision` 最多三种格式，每行只指向 S28。S38 的**数据库里不存任何 `.srt` 字节**，也不生成自己的下载 URL。
 
@@ -470,8 +498,7 @@ translation.status:
 | C1 | 无 `contracts/quality/subtitle-track.v2.schema.json` | 新增；`cue` 的三版本列必须进 schema，否则只是实现约定 |
 | C2 | S15 无发音词典查询契约 | 见 §8；补 `GET /voices/{id}/lexicons?revision=N` |
 | C3 | S41 timeline 事件的 payload 未定义差分语义 | 补 `post.timeline.revision.created` 的 payload schema，含 affected clip 列表 |
-| C4 | `post.subtitle.ready` 无 payload schema，`artifacts[]` 的 `artifact_id` 归属未写明 | 随 C1 一起补；`artifact_id` 必须是 S28 的 ID 空间，不能是 S38 自定义 ID |
+| C4 | `contracts/event-topics.v2.json` 的 `post.subtitle.ready` 无 payload schema，`artifacts[]` 的 `artifact_id` 归属未写明 | 按 §7 补，随 C1 一起落；`artifact_id` 必须是 S28 的 ID 空间，不能是 S38 自定义 ID |
+| C5 | 无 locale profile 契约（CPS/行数/安全区） | 新增 `contracts/quality/locale-profile.v2.json`，按 locale 定义，随 policy 版本化 |
 
 > **G2 已关闭（2026-11-01）**：`depends_on` 里的 S28 不是声明过宽，而是方案漏写了输出侧这一环。S38 渲染出的字幕文件是制品字节，按 `docs/01` 只能由 S28 存。catalog 不改，方案补 §3.0 / `subtitles.rendition` / `artifacts[]` / `V6` / `E25-U5`。
-| C4 | `contracts/event-topics.v2.json` 的 `post.subtitle.ready` 无 payload schema | 按 §7 补 |
-| C5 | 无 locale profile 契约（CPS/行数/安全区） | 新增 `contracts/quality/locale-profile.v2.json`，按 locale 定义，随 policy 版本化 |

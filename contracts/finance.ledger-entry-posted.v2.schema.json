@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/finance.ledger-entry-posted.v2.schema.json",
+  "title": "finance.ledger.entry-posted payload v2",
+  "description": "event `finance.ledger.entry-posted` 的 data 部分。权威定义在 plans/S23-budget-ledger.md §6.1（行 1137–1176）。**S23 只发这一种 event_type**（行 1180）：预算耗尽、对账告警都不另发事件，而是通过 `entry_type` + `budget_after.state` 表达。理由是「所有变化本质上都是『记了一笔账』」，且新增 event_type 会被 schema registry 判为不兼容变更。**`aggregate_sequence = entry_seq`**（budget 内），所以一个 budget 的账本条目在 Kafka 上严格有序——这是消费方能做增量对账的前提。**金额一律是 micro 单位的整数**（行 1155–1161），没有浮点。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。来源：S23 §6.1 示例未画（示例只画 data 内部），按 contracts 既有 payload 约定补。"
+    },
+    "entry_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S23 §6.1 行 1149。账本条目 ID。**注意它不是 envelope 的 `aggregate_id`**——`aggregate_id = budget_id`（行 1139），一个 budget 下有多条 entry。所以 `entry_id` 才是这一条的唯一键，S44 的成本归因按它去重。"
+    },
+    "entry_type": {
+      "type": "string",
+      "enum": [
+        "LIMIT_SET",
+        "LIMIT_ADJUST",
+        "RESERVE",
+        "RELEASE",
+        "SETTLE",
+        "ADJUST",
+        "REFUND",
+        "ESCROW_GRANT",
+        "ESCROW_RETURN"
+      ],
+      "description": "来源：S23 §4 DDL 行 319–320（`entry_type text NOT NULL CHECK (entry_type IN ('LIMIT_SET','LIMIT_ADJUST','RESERVE','RELEASE','SETTLE','ADJUST','REFUND','ESCROW_GRANT','ESCROW_RETURN'))`）。九个值照 DDL 收。**`AUTHORIZE` 与 `ACCRUE` 刻意不在其中**（行 382）：它们不改变任何金额，只是状态推进。把它们记进账本会让账本不再是金额的权威——这条是 AGENTS.md「不让某个服务变成第二个权威」在账本内的体现。"
+    },
+    "budget_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S23 §6.1 行 1151。与 envelope 的 `aggregate_id` 同值（行 1139）。它在 payload 里重复出现是为了让 `data` 子树自洽——**消费方只拿 data 也能知道是哪个 budget**，不必回头读 envelope。其他几个事件的 payload 也保留了聚合根 id，是同一个理由。"
+    },
+    "currency": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S23 §6.1 行 1152（示例 `USD`）。**S23 只做单币种账本**：DDL 里 budget 有 `currency` 列且有 `budget_self_parent` 等约束，但 S23 §1 明确「多币种不在本期范围」。不收窄为 ISO 4217 enum，因为 DDL 没有 CHECK，且 `USD` 是示例不是闭集。"
+    },
+    "delta_reserved_micro": {
+      "type": "integer",
+      "description": "来源：S23 §6.1 行 1153（示例 `-800000`）。**带符号**：正数是增加预留，负数是释放。SETTLE 条目里它把预留冲掉所以是负的。单位是 micro（百万分之一货币单位）。**DDL 里账本表的这几列没有 `>= 0` 约束**，因为它们是带符号的差量。消费方若假设非负会算错。"
+    },
+    "delta_consumed_micro": {
+      "type": "integer",
+      "description": "来源：S23 §6.1 行 1154（示例 `780000`）。带符号，单位 micro。SETTLE 时它把实际消耗加上去。**`delta_reserved_micro + delta_consumed_micro` 的符号可以相反**（示例就是 -800000 与 +780000），所以不能只看其中一个判断这笔账是加还是减。"
+    },
+    "reservation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S23 §6.1 行 1155 + §4 DDL 行 330（`reservation_id text REFERENCES reservation(reservation_id)`，可空）。**必须可 null**：`LIMIT_SET` / `LIMIT_ADJUST` 这类不涉及预留的条目没有 reservation。"
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S23 §6.1 行 1156 + DDL 行 331（可空）。同上，非预留类条目可为 null。"
+    },
+    "provider_job_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S23 §6.1 行 1157 + DDL 行 332（可空）。供应商作业 ID。**注意它与 `attribution.provider_job` 是同一个值重复出现**——见 x-conflicts PFL-1。"
+    },
+    "settled_micro": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "来源：S23 §6.1 行 1158（示例 `780000`）。**必须可 null**：只有 SETTLE 类条目有结算额，`RESERVE` 没有。DDL 里没有单独的同名列（它在 `reservation` 表上），所以这是事件层的字段。"
+    },
+    "overage_micro": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "来源：S23 §6.1 行 1159（示例 `0`）。超支额。**非 null 且 > 0 是重要的运维信号**：它意味着实际消耗超过了授权额。S23 §12 把它列为对账输入之一。可 null（非 SETTLE 条目没有这个概念）。"
+    },
+    "pending_reconciliation": {
+      "type": "boolean",
+      "description": "来源：S23 §6.1 行 1160（示例 `false`）。**这条是「账已记但金额待确认」的标记**，不是一个独立状态。S23 §13 的 `SUBMISSION_UNKNOWN` 场景会先按估算记一笔并置 true。S44 做成本报表时必须区别对待——pending 的条目金额可能变。"
+    },
+    "attribution": {
+      "type": "object",
+      "description": "来源：S23 §6.1 行 1161–1165 + 行 1178（「`attribution` 必须完整（docs/12 §3 列了全部维度）。S44 靠它做成本归因，缺一个维度就得回源。」）。**九个维度全部 required**——这不是我推测的，S23 明说必须完整。见 x-conflicts PFL-2：docs/12 §3 列的维度比这里多两个（`price_snapshot`、`tenant`）。",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1162（示例 `\"...\"`）。docs/12 §3 维度之一。"
+        },
+        "series_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1162。"
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1162（示例 `ep3`）。"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1163（示例 `\"...\"`）。"
+        },
+        "shot_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1163（示例 `shot_3_2`）。**注意是 `shot_id` 而不是 `shot_lineage_id`**——所有 `production.*.ready` 事件用后者，账本用前者。若两者不是同一套 ID，S44 就无法把成本挂到生产事件上，见 x-conflicts PFL-3。"
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1163。与顶层的 `attempt_id` 同值（示例两处都是 `attempt_...`）——见 PFL-1。"
+        },
+        "provider_job": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1163（示例 `job_xyz`）。与顶层的 `provider_job_ref` 同值——见 PFL-1。**注意属性名不同**：`provider_job` vs `provider_job_ref`。"
+        },
+        "modality": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1164（示例 `video`）。**不收窄为 enum**：S23 没有列取值集合，DDL 是 jsonb 无 CHECK。从生产侧看至少应有 image / video / speech / lipsync / sfx / music / text / understanding / training，但那是推断不是契约。见 x-needs-owner。"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1164（示例 `\"...\"`）。具体模型标识。它与 `channel` 一起标识「哪个模型走哪条渠道」，也是 S24 报价快照的键的一部分。"
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S23 §6.1 行 1164（示例 `seedance_volcengine`）。渠道标识，与池命名（S22 的 `pool_seedance_volc_a1`）呼应但**不是同一个命名空间**——池名带 cell 后缀，channel 不带。见 PFL-4。"
+        }
+      },
+      "required": [
+        "project_id",
+        "series_id",
+        "episode_id",
+        "run_id",
+        "shot_id",
+        "attempt_id",
+        "provider_job",
+        "modality",
+        "model",
+        "channel"
+      ],
+      "additionalProperties": false
+    },
+    "budget_after": {
+      "type": "object",
+      "description": "来源：S23 §6.1 行 1166–1174。**记账后的 budget 快照**。它与 delta 两个字段构成「增量 + 绝对值」的组合，消费方可以用任意一种做对账——这是刻意的冗余，因为它让 S44 不必维护自己的余额副本（AGENTS.md：S23 是钱的唯一权威）。**注意它没有 envelope 的 sequence 保护**：一个 budget 的 `aggregate_sequence = entry_seq` 严格有序（行 1139），所以 `budget_after` 的「最后一条即当前」是成立的。",
+      "properties": {
+        "limit_micro": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S23 §6.1 行 1167（示例 `50000000`）。预算上限。**DDL 的 budget 表有 `CHECK (limit_micro >= 0)` 类的约束**（§4 行 74 附近同族），非负。"
+        },
+        "consumed_micro": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S23 §6.1 行 1168（示例 `12780000`）。已消耗。**DDL 里这一列是否有 `>= 0` 取决于实现**——S23 §1 明确账本金额理论上可以因 ADJUST 变成负数（退款多于消耗时），所以本 schema 只用 `>= 0` 是因为示例与 §4 的形态；见 x-needs-owner。"
+        },
+        "outstanding_reserved_micro": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S23 §6.1 行 1169（示例 `1900000`）。尚未结算的预留总额。**`limit - consumed - outstanding = available`** 是恒等式（示例：50000000 - 12780000 - 1900000 = 35220000，与 `available_micro` 一致）。这条等式 JSON Schema 表达不了，由 S23 保证；消费方应校验它来发现 S23 的 bug。"
+        },
+        "available_micro": {
+          "type": "integer",
+          "description": "来源：S23 §6.1 行 1170（示例 `35220000`）。可用额。**可能为负**（若 ADJUST 让 consumed 超过 limit，或 outstanding 增长超过剩余），所以不收 `>= 0`。这也说明不能把 `available_micro` 当「还能花多少」——它是算术结果，不是可用性的判定；真正的判定看 `state`。"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ACTIVE",
+            "FROZEN",
+            "EXHAUSTED",
+            "CLOSED"
+          ],
+          "description": "来源：S23 §4 DDL 行 74（`CHECK (state IN ('ACTIVE','FROZEN','EXHAUSTED','CLOSED'))`）。四个值照收。**`EXHAUSTED` 是记账的结果而不是入参**：行 725 说预算耗尽时「发 `finance.ledger.entry-posted`，`data.budget_after.state = EXHAUSTED`」——即消费方应当从事件里学「这个预算没钱了」，而**不应当自己算 available <= 0 来判定**。这正是 AGENTS.md「不让某个服务变成第二个权威」的用法。"
+        }
+      },
+      "required": [
+        "limit_micro",
+        "consumed_micro",
+        "outstanding_reserved_micro",
+        "available_micro",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "entry_id",
+    "entry_type",
+    "budget_id",
+    "currency",
+    "delta_reserved_micro",
+    "delta_consumed_micro",
+    "reservation_id",
+    "attempt_id",
+    "provider_job_ref",
+    "settled_micro",
+    "overage_micro",
+    "pending_reconciliation",
+    "attribution",
+    "budget_after"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "attribution.modality 的取值集合",
+      "demanded_by": "plans/S23-budget-ledger.md §6.1 行 1164 + docs/12 §3（成本归因维度）",
+      "s23_status": "DDL 是 jsonb 无 CHECK，S23 没有列取值集合。**S44 按它分组做成本报表**，若各生产者自己拼字符串（`video` / `Video` / `video_gen`）报表就散了。本 schema 只收非空字符串。生产侧至少覆盖 image / video / speech / lipsync / sfx / music / text / understanding / training，但这是从 S29–S34、S19/S20 等服务的产物推断的，**不是契约里写的**。"
+    },
+    {
+      "field": "budget_after.consumed_micro 是否可为负",
+      "demanded_by": "plans/S23-budget-ledger.md §6.1 行 1168 + §1（ADJUST / REFUND 的语义）",
+      "s23_status": "示例非负，§4 的 budget 表也未给这几列的 CHECK 约束（行 74 只给了 `state` 的）。**`REFUND` 与 `ADJUST` 的存在意味着 consumed 理论上可以减到负数**（例如订阅取消后退回全年费用）。本 schema 收了 `minimum: 0`——**若这个下界在契约层并不存在，这条约束会拒掉合法事件**。需要 S23 明确 consumed 是否允许为负；若允许，这里应去掉 `minimum`。`available_micro` 我故意没设下界，因为它是算术结果。"
+    },
+    {
+      "field": "currency 的取值集合",
+      "demanded_by": "plans/S23-budget-ledger.md §6.1 行 1152",
+      "s23_status": "DDL 无 CHECK，示例只出现 USD。S23 §1 说多币种不在本期范围，但**没有说 currency 恒为空/cny/usd 之一，也没有说一个 budget 的 currency 能不能变**。本 schema 只收非空字符串。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PFL-1",
+      "summary": "同一批值在 payload 里出现两次，属性名不同，schema 无法强制相等",
+      "s23": "§6.1：顶层有 `attempt_id`（行 1156）与 `provider_job_ref`（行 1157）；`attribution` 里又各有 `attempt_id`（行 1163）与 `provider_job`（行 1163）",
+      "why_it_matters": "示例里四处两两相同（`attempt_...` / `job_xyz`），但**命名不一致**：顶层叫 `provider_job_ref`（带 `_ref` 后缀，暗示是引用），归因里叫 `provider_job`（裸值）。若有一天顶层改成存引用、归因保留原值，两个字段就会合法地不同，而**消费方无从知道该信哪个**。更实际的风险是生产者漏填其中一个——`additionalProperties: false` 与全 required 只能保证「有键」，不能保证「两处相等」。S44 按 attribution 做归因、按顶层做对账，两边不一致时会算出不同的账。本 schema 两边都收，不表达等式。"
+    },
+    {
+      "id": "PFL-2",
+      "summary": "S23 要求 attribution 含 docs/12 §3 的全部维度，但 docs/12 列的比事件里多",
+      "s23_claim": "§6.1 行 1178：「`attribution` 必须完整（docs/12 §3 列了全部维度）。S44 靠它做成本归因，缺一个维度就得回源。」",
+      "docs12": "§3：「每条费用关联 tenant/project/series/episode/run/shot/attempt/provider_job/modality/model/channel/price_snapshot」——共 12 个维度",
+      "s23_payload": "§6.1 行 1161–1165 的 attribution 只有 10 个键（project, series, episode, run, shot, attempt, provider_job, modality, model, channel）",
+      "why_it_matters": "两个缺的：`tenant` 与 `price_snapshot`。**(1) `tenant` 不在 attribution 里是可以理解的**——它是 envelope 的字段，每条事件都带，放进 attribution 是冗余；docs/12 说「关联」不是说「必须在这个对象里」。**(2) `price_snapshot` 的缺失更严重**：DDL 的 ledger 表有 `price_snapshot_ref jsonb` 列（§4 行 333），但**事件里根本没发出来**。这意味着消费方拿到一条账，无法知道它是按哪份报价算的——而 S23 §2 的 `PRICE_SNAPSHOT_STALE` 错误码（行 771）说明报价过期是一个真实场景。审计或争议时「这笔钱按什么价算的」答不出来。收进 attribution（`price_snapshot_ref` 四字段）或作为顶层字段都可以，但**现在两边都没有**。本 schema 按 S23 的 payload 收 10 个键；补 `price_snapshot_ref` 是 additive。"
+    },
+    {
+      "id": "PFL-3",
+      "summary": "attribution 用 `shot_id`（分支内的版本），生产事件用 `shot_lineage_id`（跨分支身份）——两者是 S06 明确定义的两个东西",
+      "s23": "§6.1 行 1163：`\"shot_id\": \"shot_3_2\"`",
+      "s06": "S06 §2 行 70：「`shot_id` 与 `shot_lineage_id` 分开的理由：分支是从某个 manifest 分叉出来的，分叉后的两个分支各自演进同一个镜头（一个走写实风、一个走风格化），**它们是同一个镜头的两个版本，不是两个镜头**」；行 51：「`shot_lineage_id` 在镜头第一次被创造时铸造一次，此后不论重规划、重生成、跨 Run、跨分支继承，都不改变、不复用」",
+      "production": "S29/S30/S31/S32/S33 的 `production.*.ready` payload 一律用 `shot_lineage_id`（本仓库本批刚固化的六个 schema）",
+      "why_it_matters": "这不是命名不一致，**是两个真的不同的字段**——而这一点让成本归因出现一个未定义的选择。一个镜头在分支 A（写实）与分支 B（风格化）上各生成一次，是**同一个 `shot_lineage_id`、两个 `shot_id`**。S23 的账记的是 `shot_id`，所以两笔账分开——这多半是对的（两次生成确实花了两份钱）。但**要回答「这个镜头一共花了多少钱」（跨分支、跨 run 的总成本），靠 `shot_id` 求不出来**，必须拿到 lineage 映射。更麻烦的是 `shot_id` 在 `(tenant, series)` 内可变（S06 行 66 的变更规则表里 `shot_lineage_id` 标「不允许变」，`shot_id` 没有这个待遇），所以**同一个镜头的旧账与新账可能挂在不同 `shot_id` 上**，而账本是不可变的——历史账不会跟着改。本 schema 照 S23 收 `shot_id`。要么 S23 在 attribution 里同时带 `shot_lineage_id`（additive），要么明确成本归因只做分支内、不做跨分支汇总。"
+    },
+    {
+      "id": "PFL-4",
+      "summary": "attribution.channel 与 S22 的 pool_id 用不同命名空间表示同一件事",
+      "s22": "§6.1 行 767：`\"pool_id\": \"pool_seedance_volc_a1\"`（带 cell 后缀 `_a1`）",
+      "s23": "§6.1 行 1164：`\"channel\": \"seedance_volcengine\"`（不带 cell）",
+      "why_it_matters": "两者都描述「这个模型走哪条渠道」，但粒度不同：池是 cell 级的（S22 的并发隔离单位），渠道是供应商级的（S23 的计费单位）。**这不构成矛盾**——计费按渠道、限流按池是合理的设计。但它意味着**「这个池消耗了多少预算」无法从这两个字段直接得出**：把多条账按 channel 求和，得到的是所有 cell 的合计。S47 若要做「每池成本」看板，需要 pool_id 也在账上，而 PFL-2 说明 attribution 的维度本来就是不全的。本 schema 照 S23 收 channel，不要求 pool_id。"
+    }
+  ]
+}

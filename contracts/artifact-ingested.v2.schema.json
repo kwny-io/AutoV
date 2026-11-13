@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/artifact-ingested.v2.schema.json",
+  "title": "artifact.ingested payload v2",
+  "description": "event `artifact.ingested` 的 data 部分。权威定义在 plans/S28-artifact-ingest.md §6.8（示例）与 §2.2 artifact_revision（列与类型），本文件只是把那份定义变成可校验的形状——不含任何从消费方散文推断出来的字段。字段名一律用 S28 的名字（duration_ms / frame_rate_num+frame_rate_den / audio_channels），不采用消费方的 observed_duration_ms / natural_duration_ms / frame_rate / channel_count 别名；S30/S31/S33/S34 需在各自侧做改名映射。可测量元数据全部 nullable，因为 §2.2 的列允许为空（probe_ok DEFAULT false）——schema 不替 S28 决定未探测的 revision 能不能发布，那是 S28 §4.1 与 DDL 之间尚未解决的内部矛盾（见 x-conflicts AI-2）。消费方强依赖的 codec / frame_count / timecode_start / ingesting_service 在 S28 里没有定义，见 x-needs-owner，不要从这里读。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "来源：contracts 约定，与 event-envelope 的 schema_version 同步。"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "来源：S28 §6.8。与 envelope 的 data_ref 同形，但指向的就是本条事件的 subject，故内联而不复用 envelope 的 data_ref（后者用于指向另一个 artifact，例如大缩略图或证据包）。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "来源：S28 §6.8。恒为 S28——S28 是 artifact bytes 与 hash 的唯一权威。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 §2.1 artifact.artifact_id（art_<ulid>）。必须等于 envelope.subject。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S28 §2.2 artifact_revision.revision。必须等于 envelope.aggregate_sequence（§6.8 注释：aggregate_sequence = revision）。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S28 §2.2 artifact_revision.content_hash（char(64)，小写 hex）。调用方据此校验下载到的字节。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "content_class": {
+      "type": "string",
+      "enum": [
+        "generated_video",
+        "generated_image",
+        "generated_audio",
+        "rendered_master",
+        "proxy",
+        "thumbnail",
+        "waveform",
+        "subtitle_track",
+        "audio_stem",
+        "uploaded_reference",
+        "evidence",
+        "model_archive"
+      ],
+      "description": "来源：S28 §1.5 闭集 / §2.1 artifact.content_class 的 CHECK。闭集变更 = 全体发版。"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S28 §2.2 artifact_revision.size_bytes（bigint NOT NULL，>= 0）。单位：字节。恒存在于事件里——它不是探测结果，是流式下载时边读边数的计数（§4.1 步骤 9 observed_size_bytes）。"
+    },
+    "mime_type": {
+      "type": "string",
+      "description": "来源：S28 §2.2 artifact_revision.mime_type（text，可空）/ §6.8 示例 video/mp4。探测产出；未探测时缺省。注意 §2.4 另有 mime_declared / mime_detected 两列——事件里报的是探测后的值（即 mime_detected 落库后的 artifact_revision.mime_type），不是调用方声明的那个。"
+    },
+    "container": {
+      "type": "string",
+      "description": "来源：S28 §2.2 artifact_revision.container（text，可空，注释列出 mp4|mov|mkv|wav|png|jpeg|webvtt...）。S28 没有把它做成闭集，故此处不收窄为 enum——收窄会拒绝掉 S28 自己允许的容器。S31/S33/S34 依赖此字段。"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S28 §2.2 artifact_revision.duration_ms（bigint，CHECK >= 0，可空）。单位：毫秒。语义：容器实测的总时长，不是估算、不是取整、不是业务意义上的有效区间。消费方的入库别名：observed_duration_ms（S30、S31）、natural_duration_ms（S33、S34）——都是这一个量。S31 另有一个对外名 audio_duration_ms：它在 production.speech.ready 里发布 observed_duration_ms 的值，给别人当「台词跨度的上界」用（S31 §4.5）。上界是用法不是语义——S31 §4.5 自己写的是「归档音频容器的实测总时长」，容器总长必然 >= 台词跨度，所以当下界用是安全的；S31 §4（行 459）与 §4.5 说的是同一件事（见 x-conflicts AI-3）。注意：S30/S31/S33/S34 的库表都写的是 > 0 NOT NULL，而 S28 允许 0 与 NULL；落差见 x-conflicts AI-1 / AI-2。"
+    },
+    "width_px": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S28 §2.2 artifact_revision.width_px（integer，CHECK > 0，可空）。单位：像素。"
+    },
+    "height_px": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S28 §2.2 artifact_revision.height_px（integer，CHECK > 0，可空）。单位：像素。"
+    },
+    "frame_rate_num": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S28 §2.2 artifact_revision.frame_rate_num（integer，CHECK > 0，可空）。帧率的精确有理数分子——S28 存分子分母而不是小数，为的是 30000/1001 这类 NTSC 帧率不丢精度。必须与 frame_rate_den 成对出现。S30 的 frame_rate numeric(8,3) 与 S32 的 fps 都由这一对折算而来。"
+    },
+    "frame_rate_den": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S28 §2.2 artifact_revision.frame_rate_den（integer，CHECK > 0，可空）。帧率分母，与 frame_rate_num 成对。"
+    },
+    "audio_channels": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S28 §2.2 artifact_revision.audio_channels（smallint，可空）。消费方的别名是 channel_count（S31/S33/S34）。S28 未给下限，此处按「通道数 >= 1」约束（0 通道的音轨在语义上不存在）；若 S28 认为只需可空即可，可放宽。"
+    },
+    "sample_rate_hz": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S28 §2.2 artifact_revision.sample_rate_hz（integer，可空）。单位：赫兹。S31/S33/S34 依赖此字段。S28 未给下限。"
+    },
+    "source": {
+      "type": "object",
+      "description": "来源：S28 §6.8（provider_job_id / attempt_id）与 §2.4 artifact_import.source_kind（NOT NULL，4 值闭集）/ source_ref（可空 text）。§6.8 的示例只画了 provider_url 这一种，故 kind 与其余成员均可缺省。S34 §12 C4 的多候选归位依赖 provider_job_id。",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "provider_url",
+            "upload_session",
+            "internal_object",
+            "derived"
+          ],
+          "description": "来源：S28 §2.4 artifact_import.source_kind 的 CHECK。§6.8 的示例没有画它，但它是 NOT NULL 列，且缺了它就无法解释 provider_job_id 为何有时缺席。"
+        },
+        "provider_job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 §6.8。出处有保留：§2.4 没有为它设独立列，只把它和其它来源混存在 source_ref text 里（注释：provider_job_id / upload_id / 派生源）。所以 S28 要发出这个字段，必须按 source_kind 从 source_ref 里取；类型信息在存储层是丢失的（见 x-conflicts AI-5）。"
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 §6.8 示例。出处存疑：全文只有 §6.1 请求体与 §6.8 事件这两处示例出现它，任何表里都没有对应列，也不在任何 DDL/状态机里被写入或读取。保留此字段是因为它出现在 S28 已经公开的事件示例里；它的取值从哪来，需要 S28 确认。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "dedup": {
+      "type": "object",
+      "description": "来源：S28 §6.8 + §4.4（行 700–702）。",
+      "properties": {
+        "hit": {
+          "type": "boolean",
+          "description": "来源：S28 §6.8 / §4.4。只有同租户同 scope 且调用方对已存在 artifact 有读权限时才为 true；跨 scope、跨租户一律 false（§6.8 末条、T28-36/T28-37）。"
+        },
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 §4.4（行 701–702）。仅当 hit=true 时出现；hit=false 时不得携带（否则就是 §4.4 禁止的跨 scope 存在性泄漏）。schema 无法表达这个条件依赖，须由 S28 自己保证。"
+        }
+      },
+      "required": [
+        "hit"
+      ],
+      "additionalProperties": false
+    },
+    "derivative_hint": {
+      "type": "array",
+      "description": "来源：S28 §6.8（示例只有 proxy 一项）+ §2.6 artifact_derivative.kind 的 CHECK。表示 S28 已入队哪几类派生。",
+      "items": {
+        "type": "string",
+        "enum": [
+          "proxy",
+          "thumbnail",
+          "waveform",
+          "contact_sheet"
+        ]
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "artifact_ref",
+    "content_class",
+    "size_bytes",
+    "source",
+    "dedup",
+    "derivative_hint"
+  ],
+  "additionalProperties": false,
+  "dependentRequired": {
+    "frame_rate_num": [
+      "frame_rate_den"
+    ],
+    "frame_rate_den": [
+      "frame_rate_num"
+    ]
+  },
+  "x-needs-owner": [
+    {
+      "field": "codec",
+      "demanded_by": "plans/S32-lipsync.md §12 C4、§5（行 1119）",
+      "s28_status": "S28 §4.1 步骤 10 与 §0（行 57）都写了探测产出编码，但没有给出字段名、没有列、没有格式。事实被产出了，契约没有。须由 S28 定义（例如 codec 落在 probe_result jsonb 的哪个键）。"
+    },
+    {
+      "field": "frame_count",
+      "demanded_by": "plans/S32-lipsync.md §12 C4",
+      "s28_status": "S28 全文没有此字段。帧数上限只出现在 §11 的炸弹防护（行 1223），是安全限额，不是元数据，不能拿来当帧数。S32 的 output_frame_count > 0 与 s32_frame_count_mismatch_total 都依赖它。"
+    },
+    {
+      "field": "timecode_start",
+      "demanded_by": "plans/S32-lipsync.md §12 C4",
+      "s28_status": "S28 全文没有此字段，也没有 timecode 概念。"
+    },
+    {
+      "field": "ingesting_service",
+      "demanded_by": "plans/S32-lipsync.md §4.9 与 §12 C4（派生出 origin_service，用于链式自我叠加判断）、plans/S33-sound-effects.md §12 C4",
+      "s28_status": "S28 全文没有此字段，而且这不是加一个 payload 字段就能补的：§6.1 的 POST /artifact-imports 请求体里根本没有请求方/actor 字段。要发 ingesting_service，S28 得先有一个可信的来源身份（mTLS/workload identity 是有的，见 §4.1 步骤 1，但没被写进任何表）。S32 还指出这是 E01「谁提交的」审计的必要字段。属 S28 的输入缺口，不是本 schema 的缺口。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "AI-1",
+      "summary": "duration_ms 的取值域：S28 允许 NULL 与 0，四家消费方要求 > 0 且非空",
+      "s28": "§2.2 duration_ms bigint CHECK (IS NULL OR >= 0)",
+      "consumers": "S30 §3.2 observed_duration_ms integer NOT NULL CHECK (> 0)；S31 同（行 718）；S33/S34 natural_duration_ms integer NOT NULL CHECK (> 0)",
+      "why_it_matters": "S28 是权威，所以本 schema 按 S28 的域（可空、>= 0）写。这意味着合法的事件也可能完全不带时长，消费方的 NOT NULL 列就会在 READY 之前拦住它——各家方案已经用「阻塞在 INGESTING 并告警」兜住了（T30-13 / S31 F14 / T31-32 / T33-36），但那是防御，不是契约。要消掉落差，得先由 S28 决定未探测的 revision 能不能发布（AI-2）。未裁决，本文件不选边。"
+    },
+    {
+      "id": "AI-2",
+      "summary": "S28 内部矛盾：探测发生在发布之前，但 DDL 允许发布未探测的 revision",
+      "s28": "§4.1 步骤 10（INSPECTING）产出 MIME/时长/尺寸/编码，步骤 12（PUBLISHING）才写 revision 并发事件；状态机 §3.2 也只有 INSPECTING → PUBLISHING，没有先发布后探测。但 §2.2 的探测列全部可空、probe_ok boolean NOT NULL DEFAULT false，并为此建了 ix_rev_unprobed (tenant_id, published_at) WHERE probe_ok = false 索引——一个没有对应重探测任务、也没有对应状态的索引。",
+      "why_it_matters": "若探测确实先于发布，则事件里探测列恒非空、probe_ok 恒为 true，消费方的 NOT NULL 天然成立，AI-1 也就自动消解。若允许发布后探测（索引的存在暗示这条路径），则本 schema 的 nullable 是必须的，且事件还需要一个 probe_ok 之类的信号，让消费方区分「未探测」与「探测了但没有这个量」。本文件按后者（保守，与 DDL 一致）写，并且没有加 probe_ok——加了就等于替 S28 承认「未探测也能发布」。这一条需要 S28 的方案负责人裁决。"
+    },
+    {
+      "id": "AI-3",
+      "summary": "一个量三个名字",
+      "s28": "duration_ms / audio_channels",
+      "consumers": "observed_duration_ms（S30、S31 入库名）、natural_duration_ms（S33、S34 入库名）、audio_duration_ms（S31 对外发布名，S31 §4.5）、channel_count（S31、S33、S34）、frame_rate（S30）、fps（S32）",
+      "why_it_matters": "本 schema 用 S28 的名字。消费方改名的成本是真实的（列名、日志、指标、下游事件 payload 全要跟着改），但让生产方去迁就消费方的私有叫法是反的——S28 是这份事实的唯一权威。映射：observed_duration_ms、natural_duration_ms、audio_duration_ms 三者都等于 duration_ms；channel_count 等于 audio_channels；frame_rate 与 fps 都由 frame_rate_num/frame_rate_den 折算。S31 的两个名字分属两层（入库 observed_duration_ms、对外 audio_duration_ms），不是两个字段。"
+    },
+    {
+      "id": "AI-4",
+      "summary": "frame_rate 的表示：精确有理数 vs 三位小数",
+      "s28": "frame_rate_num / frame_rate_den（integer 对，可表示 30000/1001）",
+      "consumers": "S30 §3.2 frame_rate numeric(8,3)；S32 的 fps",
+      "why_it_matters": "30000/1001 = 29.97002997…，numeric(8,3) 只能存 29.970，累计到 10 分钟约 0.6 帧漂移。S28 的表示严格更优，本 schema 跟着 S28 走。消费方若确实只需三位小数，应在自己侧折算并明确接受该误差，而不是要求 S28 降精度。"
+    },
+    {
+      "id": "AI-5",
+      "summary": "provider_job_id 在存储层没有独立列",
+      "s28": "§2.4 artifact_import.source_ref text — 注释写 provider_job_id / upload_id / 派生源，一个列混装三种语义；artifact_revision 没有 provider_job_id",
+      "consumers": "S34 §12 C4 明确说 artifact.ingested 的 payload schema 必须包含 provider_job_id，否则 S34 的多候选模型无法实现",
+      "why_it_matters": "§6.8 的事件示例里已经有 provider_job_id，所以本 schema 保留它——但 S28 要把它作为有类型的字段发出来，得先从 source_ref 里按 source_kind 取，再决定是否给它加列。不加列也能发（source_ref 原样带出），代价是类型保障只在事件层、不在存储层。这是 S28 的实现选择，不是 schema 能定的。"
+    }
+  ]
+}

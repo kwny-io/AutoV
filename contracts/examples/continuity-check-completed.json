@@ -1,0 +1,103 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBDQ3N5R7T9V1X3Z5B7D9F1",
+  "source": "S17",
+  "type": "continuity.check.completed",
+  "subject": "series_demo/canon/ep003",
+  "time": "2026-11-06T17:12:40Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "series_demo:canon:ep003",
+  "aggregate_sequence": 12,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "evt_01JBCQ7R2M4P6S8T0V2W4X6Y8Z",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "check_id": "chk_01JBDQ1A2B4C6D8E0F2G4H6J8K",
+    "report_id": "rep_01JBDQ2M3N5P7Q9R1S3T5V7W9X",
+    "verdict": "defects",
+    "severity_max": "blocking",
+    "defect_count": 2,
+    "abstain_count": 1,
+    "coverage_ratio": 0.94,
+    "memory_checkpoint": {
+      "branch_id": "br_main",
+      "commit_sequence": 27,
+      "content_hash": "9f4c2a7e1b8d0356f2a9c4e7b0d3f61928a5c1e7b4d0f3a69258b1c4e7d03f6a"
+    },
+    "manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 4,
+      "content_hash": "2b8e5d1f3a7c9024e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2"
+    },
+    "defect_summary": [
+      {
+        "defect_id": "d_1",
+        "category": "KNOWLEDGE_VIOLATION",
+        "severity": "blocking",
+        "shot_id": "shot_3_2_1",
+        "claim_ref": {
+          "service_id": "S16",
+          "id": "claim_chenmo_identity",
+          "revision": 3,
+          "content_hash": "5d1a8f3c6b0e2947a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9"
+        },
+        "suggested_action": "rewrite_dialogue_or_add_reveal",
+        "fault_hypothesis": "script",
+        "fault_owner_service": "S04",
+        "evidence_refs": [
+          {
+            "kind": "script_span",
+            "service_id": "S04",
+            "id": "rev_ep3_script_07",
+            "revision": 2,
+            "content_hash": "7c3e9b5d1f8a2406c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4",
+            "shot_id": "shot_3_2_1",
+            "memory_claim_ref": {
+              "service_id": "S16",
+              "id": "claim_chenmo_identity",
+              "revision": 3,
+              "content_hash": "5d1a8f3c6b0e2947a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9"
+            }
+          }
+        ]
+      },
+      {
+        "defect_id": "d_2",
+        "category": "INJURY_REGRESSION",
+        "severity": "high",
+        "shot_id": "shot_3_2_3",
+        "claim_ref": {
+          "service_id": "S16",
+          "id": "claim_linlan_injury",
+          "revision": 2,
+          "content_hash": "a1c3e5b7d9f2a4068c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a"
+        },
+        "suggested_action": "regenerate_shot_with_injury_state",
+        "fault_hypothesis": "generation",
+        "fault_owner_service": "S30",
+        "evidence_refs": [
+          {
+            "kind": "keyframe",
+            "service_id": "S28",
+            "id": "art_01JBDQ4C5D6E7F8G9H0J1K2L3M",
+            "revision": 1,
+            "content_hash": "c9e1b3d5f7a9c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0",
+            "shot_id": "shot_3_2_3",
+            "timecode_start_ms": 1240,
+            "timecode_end_ms": 1240,
+            "frame_hash": "f3a91c7e"
+          }
+        ]
+      }
+    ]
+  },
+  "data_ref": {
+    "service_id": "S17",
+    "id": "rep_01JBDQ2M3N5P7Q9R1S3T5V7W9X",
+    "revision": 1,
+    "content_hash": "e4b19c5d7a2f0386b9e4c1a7d5f20b8e3c6a9d4f1b7e0528c3a6f9d2b5e84017"
+  }
+}

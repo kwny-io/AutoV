@@ -1,0 +1,42 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBE4D1F3H5J7L9N1P3R5T7V9",
+  "source": "S08",
+  "type": "snapshot.manifest.committed",
+  "subject": "manifest/manifest_ep3",
+  "time": "2026-11-06T09:15:42Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "manifest_ep3",
+  "aggregate_sequence": 13,
+  "correlation_id": "cmd_01JBE4C0E2G4J6L8N0Q2S4U6W8",
+  "causation_id": "plan_01JBE4B9D1F3H5J7L9N1P3R5T7",
+  "traceparent": "00-5d7f9b1c3e5a7c9e1b3d5f7a9c1e3b5d-5d7f9b1c3e5a7c9e-01",
+  "data": {
+    "schema_version": "2.0",
+    "manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 13,
+      "content_hash": "c1e3a5b7d9f1c3e5a7b9d1f3c5e7a9b1d3f5c7e9a1b3d5f7c9e1a3b5d7f9c1e3"
+    },
+    "parent_manifest_ref": {
+      "id": "manifest_ep3",
+      "revision": 12,
+      "content_hash": "8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a"
+    },
+    "execution_fence": 2,
+    "changed_node_epochs": [
+      {
+        "node_id": "shot_3_2.video",
+        "from": 4,
+        "to": 5
+      }
+    ],
+    "accepted_pointers_delta": [],
+    "accepted_revision": 12,
+    "source_revisions": [],
+    "trigger": "COMMIT"
+  },
+  "data_ref": null
+}

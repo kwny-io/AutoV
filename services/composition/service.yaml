@@ -22,6 +22,12 @@ publishes:
   - event_type: post.master.rendered
     topic: drama.composition.v2
     retention_days: 14
+  - event_type: post.mix.completed
+    topic: drama.composition.v2
+    retention_days: 14
+  - event_type: post.render.failed
+    topic: drama.composition.v2
+    retention_days: 14
 
 depends_on:
   - S41

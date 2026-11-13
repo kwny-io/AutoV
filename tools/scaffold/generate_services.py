@@ -121,12 +121,19 @@ def render_yaml(s, topic_by_type):
     return '\n'.join(lines)
 
 
+# 状态一词必须与 maturity 同时变：只换标签不换说法，读起来就是自相矛盾。
+MATURITY_CN = {
+    'design_only': '尚未实现',
+    'implemented': '已实现最小内核，尚未部署',
+}
+
+
 def render_md(s):
     spec = 'S%s-%s.md' % (s['service_id'][1:], s['slug'])
     return '\n'.join([
         '# %s · %s' % (s['service_id'], s['name']),
         '',
-        '状态：`%s` —— 尚未实现。' % s['maturity'],
+        '状态：`%s` —— %s。' % (s['maturity'], MATURITY_CN[s['maturity']]),
         '',
         '| 项 | 值 |',
         '|---|---|',

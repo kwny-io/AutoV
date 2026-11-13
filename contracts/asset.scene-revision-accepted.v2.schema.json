@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/asset.scene-revision-accepted.v2.schema.json",
+  "title": "asset.scene.revision.accepted 的 data 载荷",
+  "description": "S13 场景资产一版 revision 被接受时发布的载荷。来源是 plans/S13-scene-assets.md §5.3 行 562–586 的事件块（11 个 data 键）+ §2.1 行 111–131 的 scene_asset DDL + §2.2 行 148–175 的 scene_revision DDL + §2.4 行 215–240 的 anchor/lighting DDL + §4.2 行 447–469 的接受事务。\n\n**这个主题的设计目的是「让 S09 依赖图与 S17 缓存知道要不要重算空间检查」**（行 590）。本 schema 能校验的是：一个 payload 在结构上是否说得通。它校验不了的是：这个事件的两处核心承诺——影响计划可被追溯、拓扑变更可被下游做差异——在方案里都没有可解析的对象或可读的旧值。见 SCN-1、SCN-5、SCN-6。\n\n三个键的取值在方案里有真 DDL 依据，因此这里收得比 S04 那份紧：`topology_hash` 收 `^[0-9a-f]{64}$`（行 170 的 `sr_topohash_len` 是真 CHECK，不是注释）、`location_class` 收四值 enum（行 120–121 是真 CHECK）、`anchor_ids` 的下限按 `location_class` 分档（行 435 的硬门）。`lighting_axes` 的元素**不收 enum**：行 238 的六个光照值只在注释里，`scene_lighting_variant` 建表语句没有 CHECK。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "载荷版本，与 envelope 的 `schema_version` 分开。全仓库统一为 `2.0`。"
+    },
+    "scene_ref": {
+      "type": "object",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false,
+      "description": "四键引用，出处：§5.3 行 574 的事件块 `{\"service_id\":\"S13\",\"id\":\"scn_office_3f\",\"revision\":4,\"content_hash\":\"…\"}`，与 §4.3 行 490 的 `/topology` 响应同形。`revision` 的最小值 1 来自 `scene_revision` 的行 151 `revision integer NOT NULL CHECK (revision >= 1)`；`content_hash` 的 hex 长度来自行 169 的 `sr_hash_len` CHECK 与行 152 的 `char(64)`；主键 `(tenant_id, scene_asset_id, revision)`（行 168）说明三键合起来唯一确定一行。\n\n**与 envelope 的一致性本文件表达不了**：§5.3 行 564 定 `aggregate_sequence = revision`，而 envelope 的 `aggregate_sequence` 与本处的 `scene_ref.revision` 是两个不同位置的同一个数。JSON Schema 无法跨 `data` 边界比较，所以「两个数必须相等」只能由生产者保证、由消费方另行校验。"
+    },
+    "topology_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "仅拓扑的 hash（不含 artifact 与光照）。出处：§5.3 行 575；DDL 行 153 `topology_hash char(64) NOT NULL, -- 仅拓扑`；行 170 的 `sr_topohash_len CHECK (topology_hash ~ '^[0-9a-f]{64}$')`。\n\n**这里收 hex 是有依据的，与 S04 的 `structure_hash` 相反**：S04 那个字段在 DDL 里根本不存在（见 narrative.script-revision-created.v2.schema.json 的 NAR-2），本字段既在 DDL 里、又有真 CHECK 约束其长度与字符集。行 173 的 `sr_topology_hash` 索引用它做查询，所以它的形态是机器可读的。\n\n**consumer 拿不到旧值**：本事件只带一个（新的）`topology_hash`。E09-D1（行 686）要求 S09「能拿到新旧 topology_hash 做差异」，而旧值在 parent revision 上（行 153），本事件不带 `parent_revision`（那是 DDL 行 163 的列）。见 SCN-5。"
+    },
+    "topology_changed": {
+      "type": "boolean",
+      "description": "相对 parent revision 是否改了拓扑。出处：§5.3 行 576；DDL 行 164 `topology_changed boolean NOT NULL`。\n\n行 177 说明它是**显式声明而非自动比对**，并承诺封存时会校验（行 440 的 `TOPOLOGY_CHANGE_NOT_DECLARED` / `TOPOLOGY_CHANGE_DECLARED_BUT_NONE`），因此「下游可以信任这个布尔值」。本 schema 无法校验该声明的真伪——真假取决于 parent revision 的 `topology_hash`，而那个值不在本 payload 里。所以这里收 `boolean` 只是收下这个声明，不是背书它。"
+    },
+    "impact_plan_ref": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "service_id": {
+              "type": "string",
+              "pattern": "^S[0-9]{2}$"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "service_id",
+            "id",
+            "revision"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "拓扑变更时的影响计划引用。出处：§5.3 行 577 `{\"service_id\":\"S09\",\"id\":\"impact_01J...\",\"revision\":1}`；必填条件见行 590「`impact_plan_ref` 在拓扑变更时必填」；接受事务的行 459 `impact_plan_ref IS NULL → 422 IMPACT_PLAN_REQUIRED`。\n\n**只有三个键，没有 `content_hash`**——这一点与紧邻的 `scene_ref`（四键、带 hash）不同，是照行 577 原样收的，不是漏写。\n\n**指向谁说不清**：`service_id` 写 `S09`，但 S09 方案 §2.8 行 468 明写「`impact_plan` | 那是 S07 的 `change_plan`。S09 只有 `impact_analysis`」。S07 的 `change_plan` 表（§2.1 行 112）主键是 `plan_id`（行 114），不是 `plan_` 也不是 `impact_` 前缀。而本事件的 id 前缀 `impact_01J...` 在仓库任何方案里都不出现。行 631 的 F18 补充又说明 S13 只校验「有值」，从不 dereference——所以一个指向不存在对象的值与一个真值在本服务内不可区分。见 SCN-1。\n\n**条件必填用 allOf/if-then 表达**（下见顶层 `allOf`）：这只是把行 590 的散文变成可测的形状，并不解决「这个 ref 指向谁」的问题。"
+    },
+    "became_canonical": {
+      "type": "boolean",
+      "description": "这次接受是否同时把该 revision 设成 canonical。出处：§5.3 行 578；来源是接受命令的参数 `set_canonical`（§4.2 行 448 的命令体），事务第 7 步（行 461）在它为真时 supersede 旧 pointer、插新 pointer。\n\n**DDL 里没有这一列**：`canonical_pointer`（行 291–305）记的是 `revision` 与 `decision_kind`/`decided_by`/`reason_text`/`prior_canonical`/`superseded_at`，没有「本次是否新设」这个布尔。所以该字段是事件现场算出来的派生值，不是可回查的事实。行 578 的示例给的是 `true`，而 `set_canonical=false` 的接受同样会发本事件、同样会被本 schema 接受。"
+    },
+    "canonical_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ],
+      "description": "该场景当前的 canonical revision。出处：§5.3 行 579（示例值 4）；DDL 行 123 `canonical_revision integer,`（**可空**），行 130 的 `scene_canonical_within_head` 只约束 `canonical_revision <= current_revision`。\n\n**`became_canonical=false` 时它是什么意思没定义**：两种读法都说得通——(a) 当前 canonical 是别人（旧 revision），(b) 当前根本没有 canonical（行 130 允许 NULL，§2.1 也允许 `background` 类场景无 canonical）。事件里只有一个数，无法区分「4 是因为 4 一直是 canonical」与「4 是因为这一版刚成为 canonical」。当 `became_canonical=true` 时本字段应当等于 `scene_ref.revision`，但 JSON Schema 无法表达跨字段相等，所以这条只能靠生产者。见 SCN-2。\n\n**更关键的是没有事件的那条路**：`POST /scene-assets/{id}:set-canonical`（§5.1 行 554）是独立命令，能不产生新 revision 就改 canonical；而 `event-topics.v2.json` 里 S13 只有本主题一个 topic——所以 canonical 可以在零事件的情况下移动。任何按本事件缓存 canonical 的消费方，在此之后会永久陈旧。"
+    },
+    "location_class": {
+      "type": "string",
+      "enum": [
+        "primary_set",
+        "recurring_location",
+        "one_off",
+        "background"
+      ],
+      "description": "场景在主次上的分级。出处：§5.3 行 580；DDL 行 120–121 的真 CHECK `location_class IN ('primary_set','recurring_location','one_off','background')`。\n\n**收 enum 有 DDL 依据**：这四个值是建表语句里 CHECK 出来的，不是注释。本字段同时是 `anchor_ids` 下限与主场景拓扑门的判据（行 435、行 461 第 4 步），所以消费方按它分流是有语义依据的，不只是标签。"
+    },
+    "era": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "year_band": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": false,
+      "description": "年代。三个键名取自 DDL 行 119 的注释 `-- {label:'contemporary', year_band:'2015-2025', region:'cn_urban'}`；本事件的示例（行 581）只给 `{\"label\":\"contemporary\"}`，而 §4.3 行 495 的 `/topology` 响应给 `{\"label\":...,\"year_band\":...}`。所以只有 `label` 在事件里出现过有值的例子，另两个键名有出处但事件里从未出现，故设为可选。\n\n**同一个对象在仓库里走了三个形状**（三键注释 / 一键事件 / 两键读响应），而行 133 的 `scene_by_era` 索引恰好按 `era->>'label'` 与 `era->>'year_band'` 建——也就是说被索引查询的那个键（`year_band`）正是事件不带的那一个。按年代找场景的消费方拿不到它。见 SCN-3。\n\n**哪一份 era 也没说清**：`era` 是 `scene_asset` 的列（行 119，随资产可变），`era_snapshot` 是 `scene_revision` 的列（行 160，「封存时的 era，供历史解析」）。本事件是关于一版 revision 的，按语义应带 snapshot，但键名叫 `era`。若资产上的 era 被改过，两者会不同。见 x-needs-owner 第 4 项。"
+    },
+    "lighting_axes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "该 revision 声明要覆盖的光照轴。出处：§5.3 行 582 `[\"day\",\"night\",\"dusk\"]`；DDL 行 158 `lighting_axes jsonb NOT NULL, -- ['day','night','dusk','interior_warm',...]`；行 238 的 `lighting text NOT NULL, -- day|night|dusk|dawn|interior_warm|interior_cold`。\n\n**故意不收 enum**：六个光照值只出现在两处行尾注释里，`scene_lighting_variant`（行 232–240）的建表语句**没有任何 CHECK**。按本仓库既定口径（S09 的 `seed_kind` 三值亦然），注释里的值集不构成 enum 依据。收成 enum 就等于替 S13 把「光照轴是闭集」这件事定死，而方案明确要它可扩（行 158 的注释以 `...` 结尾）。\n\n`uniqueItems: true` 的依据是行 239 的主键 `(tenant_id, scene_asset_id, revision, anchor_id, lighting)`：同一 anchor 同一光照只能有一行，所以「轴」在结构上就是个集合。未设 `minItems`——行 443 第 4 步的覆盖校验（「每个轴每个 anchor 都要有变体」）在空集上恒真，方案没有给非空下限。"
+    },
+    "anchor_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "该 revision 的 anchor 方向集合。出处：§5.3 行 583 `[\"front\",\"back\",\"left\",\"right\",\"from_door\"]`；DDL 行 219 `anchor_id text NOT NULL, -- 'front'|'back'|'left'|'right'|'from_door'|...`（注释，六值且以 `...` 结尾，故不收 enum）；行 156 `anchor_manifest jsonb NOT NULL, -- {front:{artifact_ref,camera}, left:{...}, ...}` 的键集与之同构。`uniqueItems: true` 依据行 229 的主键 `(tenant_id, scene_asset_id, revision, anchor_id)`。\n\n**下限按 `location_class` 分档**（见顶层 `allOf`）：行 435 是硬门——`primary_set` 要求 ≥4 向（覆盖 360°），`recurring_location` ≥2，`one_off` ≥1，失败即 422 `ANCHOR_COVERAGE_INSUFFICIENT {required, actual}`。`background` 没有给下限，故不设。这条是本事件里少数几个能从事件自身字段完整推出的不变量，因此放进 schema 而不是只写在描述里。"
+    },
+    "rights_ref": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true,
+      "description": "权利引用指针。出处：§5.3 行 584 `\"rights_ref\":{...}`；DDL 行 161 `rights_ref jsonb NOT NULL,`——**S13 全文没有一处写出它的键集**。§2.8 行 367 的反模式表只说「❌ `scene_rights_status`（只存指针）」，即刻意只存指针、不存状态。\n\n**为什么不照 S10/S11 的四键收**：`{rights_owner, rights_id, rights_revision, rights_hash}` 这个形状在 S10 §2.2 行 223 与 S11 §2.2 行 146 出现过，但那是它们各自表上的列注释，不是 S13 的定义。跨服务照抄一个未在本方案出现的形状，属于替 S13 编造契约。所以这里收 `object` + `minProperties: 1` + 允许任意键，形式与 `integration.command-accepted.v2.schema.json` 的 `target` 同（该文件对「形状随另一个字段变」的 jsonb 就是这么收的）。见 x-needs-owner 第 2 项。\n\n**E30 的防线不在本事件里**：E30-D1（行 701）要求「授权撤销后仍返回 revision」时带 `rights_recheck_required=true`，而该字段出现在 §4.3 行 496 的 `/topology` 响应中，**不在本事件里**。也就是说：读接口的消费方能看见「该不该复查权利」，事件驱动的消费方看不见。只吃事件的一方若信任 `rights_ref` 而不实时复查，按构造就违反 E30-D1。见 SCN-4。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "scene_ref",
+    "topology_hash",
+    "topology_changed",
+    "impact_plan_ref",
+    "became_canonical",
+    "canonical_revision",
+    "location_class",
+    "era",
+    "lighting_axes",
+    "anchor_ids",
+    "rights_ref"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "location_class": {
+            "const": "primary_set"
+          }
+        },
+        "required": [
+          "location_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "anchor_ids": {
+            "minItems": 4
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "location_class": {
+            "const": "recurring_location"
+          }
+        },
+        "required": [
+          "location_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "anchor_ids": {
+            "minItems": 2
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "location_class": {
+            "const": "one_off"
+          }
+        },
+        "required": [
+          "location_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "anchor_ids": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "topology_changed": {
+            "const": true
+          }
+        },
+        "required": [
+          "topology_changed"
+        ]
+      },
+      "then": {
+        "properties": {
+          "impact_plan_ref": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  ],
+  "x-needs-owner": [
+    {
+      "field": "`impact_plan_ref` 到底指向哪种对象、由哪个服务拥有、id 前缀是什么",
+      "demanded_by": "S13 的 `topology-audit` runbook（§7 行 667「列出所有 `topology_changed=true` 的 revision，确认都有 `impact_plan_ref`」）、任何要回答「这次拓扑变更经过了影响分析」的审计路径（§5.3 行 590、E08-D1 行 683）",
+      "s13_status": "未决。本事件写 `service_id:\"S09\"`（行 577），S09 方案行 468 明说不建 `impact_plan`、那是 S07 的 `change_plan`；S09 自己的 id 列是 `analysis_id`（§2.3 行 283），S07 的 `change_plan` 主键是 `plan_id`（行 114）。示例的 `impact_` 前缀两个都不是。S14 行 564 用同一字段名、同样没定义键集。见 SCN-1。"
+    },
+    {
+      "field": "`rights_ref` 的键集",
+      "demanded_by": "S02（权利实时复查的唯一权威）、S45（审计：任意 revision 能追溯到权利依据）、任何事件驱动的生成前检查",
+      "s13_status": "未决。S13 全文只有 `rights_ref jsonb NOT NULL`（行 161）与事件里的 `{...}`（行 584），没有键表。S10/S11 的四键形是一个可疑的类比，但照抄就是跨服务编造。本 schema 收 `object` + 允许任意键。见 SCN-4。"
+    },
+    {
+      "field": "`canonical_revision` 在 `became_canonical=false` 时的语义；以及 canonical 变更是否应有独立事件",
+      "demanded_by": "S10（binding 需要 revision，行 252 的 `variant_selector` 语义归 S13）、S17（缓存 canonical 判据）、S07/S09（影响分析的父版本）、任意把「当前 canonical」当依据的 gate（E05-D1 行 706）",
+      "s13_status": "未决。`canonical_revision` 在 DDL 里可空（行 123），事件给非空示例（行 579），而 `set-canonical` 命令（行 554）能在不发本事件的情况下改它。要么补一个 canonical 变更事件，要么在文档里明确「本事件只报接受那一刻的快照」。见 SCN-2。"
+    },
+    {
+      "field": "事件里的 `era` 是 `scene_asset.era`（可变）还是 `scene_revision.era_snapshot`（封存值）",
+      "demanded_by": "S05（按年代匹配场次）、S16（年代连续性的判定基线）、按 `era->>'year_band'` 查询的 `scene_by_era` 索引（行 133）",
+      "s13_status": "未决。行 119 与行 160 是两列、语义不同；C13-6 也说 era 变化算不算新场景要靠 §1.3 判。本事件键名是 `era`，形状只到 `label`，`year_band`（被索引的那个）从未在事件里出现。见 SCN-3。"
+    },
+    {
+      "field": "`topology_changed=true` 时，下游如何取得旧 `topology_hash`",
+      "demanded_by": "S09（E09-D1 行 686 明确要求「能拿到新旧 topology_hash 做差异」，E09-D2 行 687 要求 false 时不重算）、S17（缓存失效判定）、S13 自己的 `topology-diff`（§7 行 666「给两个 revision，输出差异」）",
+      "s13_status": "未决。本事件只带新的 `topology_hash`，且不带 `parent_revision`（DDL 行 163 有这一列，事件没有）。消费方无法从事件推出该去读哪一版旧拓扑。要么事件补 `parent_revision`（或 `previous_topology_hash`），要么把 E09-D1 降级为「先查 `GET /revisions/{rev-1}`」。见 SCN-5。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "SCN-1",
+      "summary": "`impact_plan_ref` 指向 S09，而 S09 方案「不建的表」里明确否认拥有 `impact_plan`、说那是 S07 的 `change_plan`；S07 的对象 id 是 `plan_id`、S09 的是 `analysis_id`，示例的 `impact_` 前缀两个都不是",
+      "s13_event": "§5.3 行 577：`\"impact_plan_ref\":{\"service_id\":\"S09\",\"id\":\"impact_01J...\",\"revision\":1},`",
+      "s13_prose": "§4.2 行 400：「`topology_changed=true` 的接受**强制要求** `decision_kind='human_approved'`，且必须带 `impact_plan_ref`（S07/S09 的影响计划引用）。没有影响计划就不接受。」行 590：「`impact_plan_ref` 在拓扑变更时必填，让消费者能追溯『这次变更经过了影响分析』。」",
+      "s09_plan": "§2.8 行 468：`| impact_plan | 那是 S07 的 change_plan。S09 只有 impact_analysis |`。S09 的实际列名见 §2.3 行 283 `analysis_id text NOT NULL,` 与行 302 的主键 `PRIMARY KEY (tenant_id, analysis_id)`；对外载荷同名列，见 contracts/lineage.impact-computed.v2.schema.json 的 `required`。",
+      "s07_plan": "§2.1 行 112–114：`CREATE TABLE change_plan ( tenant_id text NOT NULL, plan_id text NOT NULL,`——对象名是 `change_plan`，id 列名是 `plan_id`，且行 157 有 `cp_hash_uniq` 要求 `plan_hash` 配套。",
+      "why_it_matters": "三份文档描述了一个对象、三个不同的名字，而**没有一个名字生成 `impact_` 前缀**。`service_id` 写 S09 时，S09 的 id 列叫 `analysis_id`（`analysis_` 前缀）；写 S07 时，对象叫 `change_plan`、id 列叫 `plan_id`（`plan_` 前缀）。示例里的 `impact_01J...` 既不是前者也不是后者。这不是命名口味问题：`impact_analysis` 与 `change_plan` 是两个不同的东西——S09 行 60 说 `impact_analysis` 是「一次影响计算的**不可变结论**」，S07 行 57 说 `change_plan` 是「一次修改的完整方案……不是授权，不是执行」。引用其中一个，无法替代另一个：前者回答「改这个会波及什么」，后者回答「准备怎么改」。",
+      "consequence": "行 631 的 F18 补充说明 S13 只校验 `impact_plan_ref` **有值**、从不 dereference，`topology-audit`（行 667）也只查「都有这一项」。于是三种错误都不会被发现：(a) 指向不存在的 id；(b) `service_id` 写错的服务；(c) 指向一个 `impact_analysis` 而实现方以为是变更计划。审计问「这次拓扑变更经过谁的分析、结论是什么」时，手上只有一个从未被解析过的字符串。行 590 承诺的「可追溯」在整条链路上没有任何一步真正解析过这个引用——而 S14 行 564 的示例干脆把它设为 `null`，说明在非 `story_critical` 路径上连「有个值」都不成立。",
+      "fix_shape": "需 owner 定：拓扑变更真正依赖的是 S09 的 `impact_analysis`（「会波及什么」），还是 S07 的 `change_plan`（「准备怎么改」），还是两者都要。①若依赖 `impact_analysis`：`service_id` 保持 S09，但 id 字段名与示例前缀要改成 `analysis_` （对齐 S09 §2.3 行 283 的列名），并给出读该对象的接口（S09 方案里按 `analysis_id` 查的路径）；②若依赖 `change_plan`：`service_id` 改 `S07`，id 前缀改 `plan_`，并按 S07 §2.1 的 `plan_id` + `plan_hash` 补齐 ref 形态（现在只有 rev、没有 hash，而 S07 的 `cp_hash_uniq` 说明 hash 是其身份的一部分）；③若两者都要：拆成两个字段，各按各的形态收。本 schema 只按行 577 原样收三键、不收 `content_hash`，并把 `service_id` 留在 `^S[0-9]{2}$` 而不写死为 `S13`／`S09`，使三种修法都不必改结构。",
+      "s14_usage": "S14 子方案用了同一个字段名与同一个命令体：plans/S14-prop-assets.md 行 436 `{command_id, expected_current_revision, set_canonical, decision_kind, reason_text, impact_plan_ref}`、行 449 `story_critical AND impact_plan_ref IS NULL → 422 IMPACT_PLAN_REQUIRED`、行 564 的示例 `\"impact_plan_ref\": null,`。S14 也没写出它的键集——两处一致地「有名字、无定义」，说明这是 docs/10 那一层的概念，而不是 S13 独有的笔误。"
+    },
+    {
+      "id": "SCN-2",
+      "summary": "canonical 可以不经本事件就改变——`set-canonical` 是独立命令，而 S13 只注册了一个 topic；同时 `canonical_revision` 在 `became_canonical=false` 时没有任何定义",
+      "s13_commands": "§5.1 行 554：`| POST | `/scene-assets/{id}:set-canonical` |`，与 `:accept`（行 447）是并列的两条命令。",
+      "s13_accept_txn": "§4.2 行 461：`7) set_canonical → supersede 旧 pointer，插新 pointer，更新 scene_asset` —— canonical 在**接受事务内**由参数触发。",
+      "s13_ddl": "§2.6 行 291–305 的 `canonical_pointer` 列：`revision` / `topology_hash` / `decided_at` / `decided_by` / `decision_kind` / `reason_text` / `prior_canonical` / `superseded_at`。事件（行 577–584）一个都没带。行 123 的 `scene_asset.canonical_revision` 可空。",
+      "topics": "contracts/event-topics.v2.json 里 `producer: \"S13\"` 只有 `asset.scene.revision.accepted` 一条；没有 canonical 变更主题。",
+      "why_it_matters": "本事件的 `became_canonical` 只在**接受**这一条路径上有意义。第 554 行的 `set-canonical` 能不产生新 revision、也不发任何事件地移动 canonical——一旦发生，所有按本事件缓存「当前 canonical 是哪一版」的消费方都会永久陈旧，而且**没有任何信号会告诉他们**。更糟的是 `canonical_pointer` 里真正决定「谁定、凭什么定」的 `decision_kind`/`decided_by`/`prior_canonical` 不进事件，于是消费方也拿不到「这次换 canonical 是否经过人审」。E05-D1（行 706）恰恰把场景 canonical 当作 gate 依据，且要求未设时判 `require_human`/`deny`——用陈旧值判 gate 会给出与事实相反的结论。",
+      "consequence": "实现方的两种自然选择都错。(a) 把 `canonical_revision` 当「当前 canonical」缓存——`set-canonical` 之后全错，且 E05 gate 会放行不该放行的。(b) 把它当「本次接受的 revision（当 became_canonical=true 时）」——那 `became_canonical=false` 时这个字段就是脏数据，而事件仍要求必须有值（本 schema 按行 579 收为非空或 null）。而 `became_canonical=false, canonical_revision=<某旧值>` 这个组合究竟表示「canonical 在别人身上」还是「根本没有 canonical」（行 130 允许 NULL、§11.2 也说 `background` 可无 canonical），事件没有区分手段。",
+      "fix_shape": "需 owner 定二选一：①补一个 canonical 变更事件（例如 `asset.scene.canonical-changed`，带 `decision_kind`/`decided_by`/`prior_canonical`），让 canonical 的每次移动都有信号；②或在文档里把本事件的 `canonical_revision` 明确定义为「接受那一刻的快照，之后可能变」，并要求消费方按 `GET /scene-assets/{id}/canonical`（§4.3 行 493）复核——但那样 E05 gate 就必须实时读，不能信事件。无论哪种，`became_canonical=false` 时 `canonical_revision` 允许 null 的理由都要写出来。本 schema 收 `oneOf [null, integer>=1]`，两种修法都不必改结构。"
+    },
+    {
+      "id": "SCN-3",
+      "summary": "`era` 在 DDL 注释里是三键、在事件里一键、在读响应里两键；而被 `scene_by_era` 索引查询的 `year_band` 恰好是事件不带的那一个；同一个词还分指资产列与 revision 快照列",
+      "s13_ddl": "§2.1 行 119：`era             jsonb NOT NULL,            -- {label:'contemporary', year_band:'2015-2025', region:'cn_urban'}`（在 `scene_asset` 上）。§2.2 行 160：`era_snapshot     jsonb NOT NULL,           -- 封存时的 era，供历史解析`（在 `scene_revision` 上）。",
+      "s13_event": "§5.3 行 581：`\"era\":{\"label\":\"contemporary\"},` —— 只一个键，且键名是 `era` 不是 `era_snapshot`。",
+      "s13_read": "§4.3 行 495：`\"era\":{\"label\":\"contemporary\",\"year_band\":\"2015-2025\"},` —— 两键。",
+      "s13_index": "§2.1 行 133：`CREATE INDEX scene_by_era ON scene_assets.scene_asset (tenant_id, (era->>'label'), (era->>'year_band'));`",
+      "why_it_matters": "三处三形状，而**索引按 `year_band` 建**——说明「按年代查场景」是设计中的真实查询，而它用的键正是事件不带的那个。一个只吃事件的消费方（例如 S05 要按年代匹配场次、S16 要判年代连续性）只能拿到 `label`，拿不到 `year_band`、也拿不到 `region`。而 `label` 本身是自由字符串（行 119 只是注释举例），没有闭集，所以连「同一部剧里两个场景是不是同一时代」都不能靠它判断。",
+      "consequence": "消费方会先按 `label` 精确匹配，发现匹配不上（「contemporary」vs「现代」vs「当代」），然后退化成模糊匹配或干脆忽略年代。而 `era` 与 `era_snapshot` 的区分在事件里被抹掉了：若资产的 era 被人改过（行 119 是可变的列），一条关于旧 revision 的事件里 `era` 到底报的是旧快照还是新资产值，方案没说。审计回放时这一点会让「这一版当初属于哪个年代」永远无法确定。",
+      "fix_shape": "需 owner 定三件：(1) 事件里的 `era` 是资产当前值还是 revision 快照——建议改名 `era_snapshot` 并明确是后者，因为这是 revision 事件；(2) 是否把 `year_band` 与 `region` 一起放进事件（若不进，消费方必须读接口，事件就不能被单独消费）；(3) `label` 是否该有闭集（若没有，就不该被当作匹配键，索引的 `era->>'label'` 部分也就只能做等值过滤）。本 schema 收三键、只要求 `label`，是对「有出处但事件从未出现」的中性处理。"
+    },
+    {
+      "id": "SCN-4",
+      "summary": "E30 的防线（`rights_recheck_required`）只在读响应里，不在事件里；而事件携带的 `rights_ref` 在 S13 全文没有键集定义——事件驱动的消费方按构造无法满足 E30-D1",
+      "s13_ddl": "§2.2 行 161：`rights_ref       jsonb NOT NULL,` —— **无注释、无键集**。",
+      "s13_antipattern": "§2.8 行 367：`- ❌ scene_rights_status（只存指针）。` —— 刻意只存指针，不存状态，理由是「存了就得失效，失效就会错」（同 S10 §6 的说法）。",
+      "s13_event": "§5.3 行 584：`\"rights_ref\":{...}` —— 三字符省略号，没有任何键。",
+      "s13_read": "§4.3 行 496：`\"rights_recheck_required\": true` —— 在读响应里，**不在事件里**。E30-D1（行 701）：`| E30-D1 授权撤销后仍返回 revision | rights_recheck_required=true |`。",
+      "why_it_matters": "「只存指针、不存状态」是一条正确的设计（状态会失效），它把复查责任推给调用方。E30-D1 承认了这一点，所以给出 `rights_recheck_required=true` 作为提示。问题在于**这个提示只出现在读路径**：`GET /scene-assets/{id}/revisions/{revision}/topology` 有它，`asset.scene.revision.accepted` 没有。于是同一份权利依据，走读接口的人被提醒要复查，走事件的人不会。",
+      "consequence": "事件驱动是本系统的主路径（S07/S09 都按事件编排）。一个只订阅事件的消费方会拿到 `rights_ref` 并认为「有指针就是有授权」——这正是 §2.8 行 367 与 S10 行 371 反复警告的那个错误，而现在它由事件形状本身引导出来。撤销发生后，没有任何一条事件会告诉这些消费方「你手上那份 `rights_ref` 已经不能用了」。E30-D1 只在读路径上可测，所以集成测试会通过，漏洞不会被发现。",
+      "fix_shape": "需 owner 定：(1) `rights_ref` 的键集（S13 自己的定义，不是照抄 S10/S11 的四键）；(2) 本事件是否也带 `rights_recheck_required`——建议带，且恒为 `true`，理由与行 496 同：S13 不缓存权利状态，所以任何时刻都必须复查；(3) S02 撤销时是否有事件能让消费方失效缓存（若不打算有，就说明为什么只能靠 TTL）。本 schema 收 `object` + `minProperties: 1` + 任意键，既不为 S13 编造键集，也不阻止将来定义后收紧。"
+    },
+    {
+      "id": "SCN-5",
+      "summary": "E09-D1 要求消费方能「拿到新旧 topology_hash 做差异」，而事件只带新的一个、也不带 `parent_revision`——消费方连该去读哪一版旧拓扑都推不出来",
+      "s13_event": "§5.3 行 575：`\"topology_hash\":\"…\",` —— 单个值。事件块（行 570–585）里没有 `parent_revision`。",
+      "s13_ddl": "§2.2 行 163：`parent_revision  integer,` —— 这一列存在，且行 171 有 `sr_parent_lt CHECK (parent_revision IS NULL OR parent_revision < revision)`。",
+      "s13_promise": "行 177：「这样下游（S07/S09）可以信任这个布尔值。」行 590：「订阅方（S09 依赖图、S17 缓存）靠它决定是否要重算空间检查。」",
+      "e09": "E09-D1（行 686）：`| E09-D1 S09 消费 topology_changed 事件 | 能拿到新旧 topology_hash 做差异 |`。E09-D2（行 687）：`| E09-D2 补图不触发影响分析 | topology_changed=false；S09 不重算闭包 |`。",
+      "why_it_matters": "`topology_changed` 这个布尔本身是可消费的——E09-D2 那半（false 就不重算）成立。但 E09-D1 那半不成立：要「做差异」必须有旧 hash，而旧 hash 只在 parent revision 上。事件不带 `parent_revision`，所以消费方唯一能猜的是「revision - 1」，而 DDL 明确允许 `parent_revision` 不是 `revision - 1`（行 171 只要求 `parent_revision < revision`，配合 `derived`/`imported` 这类 `source_kind`（行 162）与 `:merge` 命令（行 555），跳过若干版是合法的）。猜 `rev-1` 会读到错的基线，并算出一个假的差异闭包。",
+      "consequence": "S09 若严格实现 E09-D1，只能二选一：(a) 按 `rev-1` 猜——在 `parent_revision != rev-1` 的合法数据上得到错误的影响面（漏掉或凭空多出受影响镜头）；(b) 先调 `GET /scene-assets/{id}/revisions/{rev}` 拿 `parent_revision`，再调一次拿旧拓扑——两跳，且第二次是跨服务同步调用，正好落进行 631 想避开的那个依赖里。两种都让「事件自足」这个前提失效。",
+      "fix_shape": "需 owner 定：事件补 `parent_revision`（最省事，DDL 已有该列），或补 `previous_topology_hash`（消费方直接可算差异，连一跳都省），或明确降级 E09-D1 为「false 时不重算；true 时按读接口取基线」。第一种最符合「事件里已经有 `topology_hash`」的现状——两个键对称。本 schema 按行 577 原样收 11 键，**故意不擅自加 `parent_revision`**，以免把「事件应该带父版本」这个尚未裁定的决定伪装成既成事实。"
+    },
+    {
+      "id": "SCN-6",
+      "summary": "接受事务要求 `impact_plan_ref` 在事务内已存在，但产生它的外部服务没有读候选的接口——先有影响计划、后有被接受的 revision，中间那一步没有 API",
+      "s13_accept_txn": "§4.2 行 448：命令体 `{command_id, expected_current_revision, set_canonical, decision_kind, reason_text, impact_plan_ref}`；行 459：`--      impact_plan_ref IS NULL           → 422 IMPACT_PLAN_REQUIRED`（在事务内校验）。",
+      "s13_candidates": "§2.6 行 275–289 的 `scene_candidate` 表有 `payload`（完整 revision 内容）与 `spatial_check`，即候选内容是落库的。",
+      "s13_read_paths": "§4.3 行 488–494 的七条读路径全部作用在 `revisions` / `canonical` / `lookup` 上：`GET /scene-assets/{id}`、`/revisions/{revision}`、`/revisions/{revision}/anchors`、`/revisions/{revision}/topology`、`/revisions/{revision}/fixed-objects`、`/canonical`、`:lookup`。**没有一条能读候选。**",
+      "why_it_matters": "拓扑变更时，`impact_plan_ref` 必须在 accept 命令里就有值（行 459），而它的内容取决于「这次拓扑改了什么」——那要等 revision 被接受之后才有 revision 号。S13 的处理方式是让影响分析基于**候选**（表里有完整 `payload`），这本身合理；但 S13 没有暴露读候选的接口，所以 S09/S07 无法从 S13 拿到「候选的拓扑长什么样」。它们只能由调用方（人或前端）把候选内容转述过去，或干脆绕过影响分析填一个占位 ref。",
+      "consequence": "最可能的实现是把 `impact_plan_ref` 当成必填的字符串塞一个值（因为 F18 行 631 明说不 dereference），于是行 400「没有影响计划就不接受」这道最硬的闸门，实际变成「有一个非空字符串就接受」。这与 SCN-1 是同一处漏洞的两个方向：SCN-1 说那个 ref 无法解析，SCN-8 说它无法被正确产出。两者叠加的净效果是：拓扑变更的强制影响分析，在数据上只留下一串无人核对、也无法产出正确的字符。",
+      "fix_shape": "需 owner 定：(1) 是否补一条读候选的路径（例如 `GET /scene-assets/{id}/candidates/{cid}` 或 `/candidates/{cid}/topology`），让 S09 能在 accept 之前算影响面——这是最干净的修法，也符合「影响分析基于候选」的隐含设计；(2) 若不加接口，则须明确影响分析的输入从哪来（调用方自带候选内容？还是允许先接受后补影响计划？后者会推翻行 400），并把 `impact_plan_ref` 的校验从「形态」升级为至少能 dereference（但那把 C13-8 的同步依赖问题重新引入）。本 schema 无法表达时序约束，只能记录：`impact_plan_ref` 在 `topology_changed=true` 时必须是对象（见顶层 `allOf` 第四条）。"
+    },
+    {
+      "id": "SCN-7",
+      "summary": "本事件唯一可确认的消费方是 S10，而 S10 消费它只刷新检索投影的 `owner_revision`——`topology_hash`/`topology_changed`/`impact_plan_ref` 都没有读它的人；S13 行 590 点名的 S09 与 S17 在各自方案里从未提到本事件",
+      "s13_claim": "§5.3 行 590：「`topology_hash` 与 `topology_changed` **必须**在事件里。订阅方（S09 依赖图、S17 缓存）靠它决定是否要重算空间检查。」行 402：「因为场景拓扑变了，所有在该场景生成的镜头都可能作废。」",
+      "s10_consumes": "plans/S10-asset-catalog.md §5.3 行 625：`| asset.character.revision.accepted 等 | S11–S15 | **不消费内容**，只刷新检索投影的 owner_revision 引用 | 重试；失败不影响解析 |`。S10 §1.1 行 27 又把「场景平面图、anchor、光照变体」列为 S13 拥有的资产，所以本事件落在那个「等」里。",
+      "s09_absent": "plans/S09-lineage-impact.md 全文对 `asset.scene.revision.accepted`、`topology_hash`、`scene_asset` 的命中为 0；`S13` 只作为无关的字段来源出现。",
+      "s17_absent": "plans/S17-continuity.md 全文对 `asset.scene.revision.accepted` 与 `topology_hash` 的命中为 0。",
+      "s09_edges": "§1.2 行 70–80 的 `edge_kind` 是闭集 11 项（`PACK_USES_CLAIM` / `SCRIPT_DERIVED_FROM_PACK` / `SCENE_DERIVED_FROM_SCRIPT` / `SHOT_DERIVED_FROM_SCENE` / `SHOT_FIELD_DEPENDS` / `ARTIFACT_FROM_SHOT` / `ASSET_BINDING` / `MEMORY_DEPENDS` / `AUDIO_FROM_DIALOGUE` / `SUBTITLE_FROM_AUDIO` / `EDIT_FROM_ARTIFACT`）。",
+      "why_it_matters": "「有人消费」与「有人读这个字段」是两件事。S10 消费本事件是成立的（行 625 明确覆盖 S11–S15），但它读的是 `scene_ref.revision` 与 `scene_ref.content_hash` 用来刷新投影——恰好是本事件里最不需要解释的两个键。行 590 点名要靠 `topology_hash`/`topology_changed` 做重算判定的 S09 与 S17，一份方案里都没有订阅它。于是本事件真正被读的键，与它宣称存在的理由，是两组不相交的键。",
+      "consequence": "「场景拓扑变了 → 该场景下的镜头要重做」这条因果，今天没有任何服务在实现。E08-D1（行 683）写成「事件带 `impact_plan_ref`」，E09-D1（行 686）写成「S09 消费 topology_changed 事件」，两条断言都只在 S13 自己这一侧可测，S09 那侧的方案里没有对应的订阅与处理，所以 E09-D1 无法被现有文档支撑。等到真要做这条重做链路，`ASSET_BINDING`（S09 行 76，source = S10 asset revision）是唯一可能承载它的边——因为 S10 的 binding 已经把「这一镜绑了哪个 scene 资产」记下了（S10 行 223 的 `role_key = scene:<owner_local_id>` 与 `owner_revision`）。走这条路是可行的，但它要求 S10 在收到本事件后推进 binding 的 `owner_revision`，再让 S09 从 binding 边推出影响面——两跳，且第一步的「失败不影响解析」（S10 行 625）与「拓扑变了必须重做」的强度不匹配。",
+      "fix_shape": "需 owner 定：(1) 行 590 是否真的成立——若不成立，改成「S10 刷新投影；S09/S17 的订阅为未来计划」，并同步修 S13 的 E09-D1；(2) 若要它成立，则须在 S09 §1.2 增一个能从 S13 拓扑走到镜头/artifact 的 `edge_kind`（或明确复用 `ASSET_BINDING`），并在 S17 补订阅与缓存失效逻辑；(3) 若走 `ASSET_BINDING` 两跳，S10 行 625 的「失败不影响解析」要改成对 scene 资产更严的处理，否则一次投影刷新失败就静默丢掉拓扑变更。本 schema 只描述载荷形状，**不在自己的描述里复述「S09/S17 会消费」**——那句是待核实的说法，不是既成事实。"
+    },
+    {
+      "id": "SCN-8",
+      "summary": "同一个「场景」在仓库里有三种 id 形态、五个名字，且 S10 同一张表里两个都叫 `scene` 的 id 字段分指 S05 的分场与 S13 的资产",
+      "s05": "plans/S05-breakdown.md 行 285：「`scene_id` 由 S05 铸造（`scn_` + ULID）」，行 598 `scene_id text NOT NULL, -- 'scn_01J...'，永不复用`。",
+      "s13": "plans/S13-scene-assets.md 行 113 `scene_asset_id text NOT NULL, -- 'scn_01J...'`；但本事件示例（行 569/571/574）与读响应示例（行 490）都用 `scn_office_3f`。",
+      "s10_registry": "plans/S10-asset-catalog.md 行 107 `asset_type text PRIMARY KEY, -- character|costume|scene|prop|voice|adaptation`；行 91 的 `role_key` 例：`scene:loc_office_3f`。",
+      "s10_binding": "同文件行 215–216：`scope_kind text NOT NULL CHECK (scope_kind IN ('series','episode','scene','shot')), scope_id text NOT NULL, -- series_id / episode_id / scene_id / shot_id`；行 133（§1.3）`role_key = \"<asset_type>:<owner_local_id>\"`，例 `scene:loc_office_3f`。",
+      "why_it_matters": "在 S10 的 `binding_entry` 同一行里，`scope_kind='scene'` 的 `scope_id` 按行 216 是 `scene_id`（S05 的分场），而 `role_key = 'scene:<owner_local_id>'` 里的那个 id 是 S13 的场景资产（行 133 说 role_key 用 owner 的本地 ID）。两个字段都叫 scene、都在同一行、指向两个系统里的两个不同对象，形状还都是字符串。再加上 S10 的 registry 示例写 `loc_office_3f`，同一个概念就有了三套前缀：`scn_`（S05 分场）、`scn_`（S13 资产，与前者无法区分）、`loc_`（S10 示例里的场景资产）。",
+      "consequence": "最直接的后果在血缘：S09 的 `ASSET_BINDING`（行 76）source 是 S10 的 asset revision。若实现方在 binding 里混用了 scope_id 与 owner_local_id，S09 会把「S05 第 2 集第 3 场」当成「S13 的 scn_office_3f」，于是拓扑变更的影响面落到一个不存在于 S13 的 id 上，静默为空。另一处：本事件自己的示例违反 S13 行 113 与 S05 行 285 共同声明的 `scn_` + ULID 格式（`office_3f` 不是 ULID），而 S05 行 285 把该格式当安全约束（「Agent 不可能知道合法格式之外的东西」）。照示例写夹具，会得到一个 S05 会拒、S13 也没规定过要接受的 id。",
+      "fix_shape": "需 owner 定：(1) `scn_` 归谁——建议 S13 改用独立前缀（如 `scna_`），与「一服务一库、id 不跨服务复用」一致；另一种是两边都带服务命名空间，但要改动所有已写下的 id。(2) S10 的 `role_key` 与 `scope_id` 都要在文档里区分「分场 scene」与「场景资产」，至少改一个名字，否则读代码的人无法判断。(3) 示例统一格式：要么都 `scn_office_3f` 并删掉行 113 的 ULID 说法，要么都 `scn_01J...` 并把示例改成 ULID。本 schema 的 `scene_ref.id` 只收 `string, minLength: 1`，**不设 pattern**——三种修法都能通过，且当前没有一处文档能裁定该用哪个。"
+    }
+  ]
+}

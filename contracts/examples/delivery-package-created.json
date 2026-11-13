@@ -1,0 +1,40 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCG7A1B2C3D4E5F6G7H8J9K0",
+  "source": "S43",
+  "type": "delivery.package.created",
+  "subject": "dp_01JCG7B2C3D4E5F6G7H8J9K0M1",
+  "time": "2026-11-06T15:02:11Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "dp_01JCG7B2C3D4E5F6G7H8J9K0M1",
+  "aggregate_sequence": 1,
+  "correlation_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+  "causation_id": "cmd_01JCG7C3D4E5F6G7H8J9K0M1N2",
+  "traceparent": "00-9a1b4c7d2e5f80314253647586970819-1a2b3c4d5e6f7081-01",
+  "data": {
+    "schema_version": "2.0",
+    "package_id": "dp_01JCG7B2C3D4E5F6G7H8J9K0M1",
+    "package_type": "formal",
+    "episode_id": "ep_01J9Z5T5N0Q6R1S8U4V9W3X7Y5",
+    "purpose": "broadcast",
+    "master_candidate_id": "mc_01JCG7D4E5F6G7H8J9K0M1N2P3",
+    "state": "BLOCKED",
+    "gaps": [
+      {
+        "gate": "G3",
+        "reason": "subtitle_missing",
+        "blocking": true
+      }
+    ],
+    "gate_results": {
+      "G1": "pass",
+      "G2": "pass",
+      "G3": "fail",
+      "G4": "deferred"
+    },
+    "created_at": "2026-11-06T15:02:11Z"
+  },
+  "data_ref": null
+}

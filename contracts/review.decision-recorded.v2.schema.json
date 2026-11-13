@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/review.decision-recorded.v2.schema.json",
+  "title": "review.decision.recorded payload v2",
+  "description": "event `review.decision.recorded` 的 data 部分。权威定义在 plans/S40-human-review.md §10.2（行 656）。**只有五个字段**，因为 S40 明确写了「事件 payload **不含**理由全文与预览 URL（敏感），用 `data_ref`」，并把 `data` 定死为 `decision_id / review_task_id / decided_against / status / stale_reason`。**`recorded` 是刻意的命名**（行 479–481）：「`APPLIED` 与 `review.decision.recorded` 的语义是『记录了一个决定』，与『已接受』必须区分开」。消费者据此不得把它当放行依据——S47 行 679 把 `review_decision_projection` 列为「可以作为展示、但不能被任何逻辑当依据」。**`decided_against` 是冻结副本而不是引用**（行 243）：任务被 supersede 之后仍要能回答「这个人当时批的是什么版本」。`aggregate_id = review_task_id`，`aggregate_sequence = review_task.revision`（行 634）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。来源：S40 §10.2 未画示例（只列了字段名），按 contracts 既有 payload 约定补。"
+    },
+    "decision_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S40 §10.2 行 656 + §3.2 行 208（示例 `rd_01J...`）。`review_decision` 的主键之一（DDL 行 586，`PRIMARY KEY (tenant_id, decision_id)`）。**注意它不是 envelope 的 `aggregate_id`**——`aggregate_id = review_task_id`（行 634），所以一条 task 上的多张票共用聚合但各有 decision_id。"
+    },
+    "review_task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S40 §10.2 行 656 + §3.2 行 209。与 envelope 的 `aggregate_id` 同值（行 634）。**S21 靠它判断「这个任务属不属于本 Run」**（S21 §5.6 行 888：「若该 ReviewTask 属于本 Run → signal resume/wait」，幂等键按 task_id）。"
+    },
+    "decided_against": {
+      "type": "object",
+      "description": "来源：S40 §3.2 行 219–223 + 行 243 的冻结副本说明。**七个键全部来自任务创建时的 `binding`（§2.2 行 76–86），但形状不是原样照抄**：`binding.artifact` 是四字段引用，这里拍平成一个 `artifact_content_hash` 字符串；`binding.pack_hash` 提为同级。**这是刻意的**——判定 stale 只需要哈希，不需要引用整对象（§6.3 的 `STALE_IF_DIFFER` 表逐条列的也是 `artifact.content_hash` 而不是 `artifact`）。注意 `manifest_ref.revision` **不在** `STALE_IF_DIFFER` 里（行 424：需要节点级差异判断，这是唯一一处「不是无条件 stale」的绑定）。",
+      "properties": {
+        "manifest_ref": {
+          "type": "object",
+          "description": "来源：S40 §3.2 行 220 + §2.2 行 77（示例 `{\"id\": \"mf_ep3\", \"revision\": 7, \"content_hash\": \"sha256:...\"}`）。三字段形状与 S35 的 manifest_ref 定义一致（全仓唯一定义，见 contracts/production.image-ready.v2.schema.json 里对同一形状的引用）。",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "本仓所有 schema 的 `content_hash` 都是裸 64 位小写十六进制（见 contracts/execution-context.v2.schema.json 行 49–51、episode-manifest.v2.schema.json 行 63–65）。S40 的示例写的是 `sha256:...` 前缀形式——那是散文展示形态，不是落库形态（S40 自己的 DDL 用 `request_hash char(64)`，行 607）。见 x-conflicts PRD-4。"
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "content_hash"
+          ],
+          "additionalProperties": false
+        },
+        "execution_fence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S40 §3.2 行 220。**在 `STALE_IF_DIFFER` 里是硬绑定**（§6.3 行 415：`(\"execution_fence\", \"EXECUTION_FENCE_ADVANCED\")`，注释「取消/灾备切主」）。E07-03 专门测这条：「`execution_fence` 变化而 `node_epoch` 不变 → 仍 `STALE`」。这是 run/branch 级游标（AGENTS.md 速查表），与 `node_epoch` 作用域不同。"
+        },
+        "node_epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S40 §3.2 行 220。**单个 `logical_node` 的局部版本**（AGENTS.md 速查表）。E07-01：绑定 epoch=4、S08 提交 epoch=5 → `STALE NODE_EPOCH_ADVANCED`。"
+        },
+        "lock_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S40 §3.2 行 221（示例 `11`）。S08 的行版本层（S08 §2 DDL 行 54：`lock_version integer NOT NULL DEFAULT 0`；行 612：「附带 `lock_version` 递增，供乐观读方检测」）。**`minimum` 是 0 不是 1**——S08 的默认值就是 0，与其余版本号从 1 起的约定不同。人工锁定走的是它（`STALE` 原因 `NODE_LOCKED` / `NODE_LOCK_CHANGED`）。"
+        },
+        "artifact_content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S40 §3.2 行 221。**对应 `binding.artifact.content_hash`（§2.2 行 82），拍平携带**。`STALE_IF_DIFFER` 行 418 收的也是这一个（`ARTIFACT_REPLACED`）。**注意它不含 service_id/id/revision**——所以「哪个 artifact」只能从 `review_task` 查，光凭这条事件无法独立重建判定依据。见 x-conflicts PRD-2。"
+        },
+        "policy_ref": {
+          "type": "object",
+          "description": "来源：S40 §3.2 行 222 + §2.2 行 83（示例 `{\"service_id\":\"S02\",\"id\":\"policy_p1\",\"revision\":3,\"content_hash\":\"sha256:...\"}`）。四字段形状与 contracts/execution-context.v2.schema.json 的 `policy_ref` 同构。**`content_hash` 变了就 stale**（§6.3 行 419 `POLICY_SUPERSEDED`），而 `revision` 本身不参与判定——判定用的是哈希。",
+          "properties": {
+            "service_id": {
+              "type": "string",
+              "pattern": "^S[0-9]{2}$",
+              "description": "S02 是策略权威（S40 §2.2 行 83 即 `S02`）。这里不 const，因为 `policy_ref` 的形状是通用的、由 S02 产生。"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "service_id",
+            "id",
+            "revision",
+            "content_hash"
+          ],
+          "additionalProperties": false
+        },
+        "pack_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S40 §3.2 行 222 + §2.3 行 167–178。**证据包整体哈希**：`sha256(canonical_json({manifest_ref, node_epoch, lock_version, artifact.content_hash, policy_ref, evidence.qc_reports[*].{id,revision,content_hash}, evidence.defects[*].defect_id, evidence.continuity_ref}))`。作用（行 178）：「决定提交时，S40 用 `pack_hash` 一次性确认『人批的还是现在这个』。任何一项被替换 → 哈希不匹配 → 决定 stale。这比逐字段比较更难漏。」**它与同级那六个字段是冗余的**——`pack_hash` 涵盖它们，但它们不涵盖 `pack_hash`（证据可被替换）。见 x-conflicts PRD-3。"
+        }
+      },
+      "required": [
+        "manifest_ref",
+        "execution_fence",
+        "node_epoch",
+        "lock_version",
+        "artifact_content_hash",
+        "policy_ref",
+        "pack_hash"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "RECORDED",
+        "APPLIED",
+        "STALE",
+        "REJECTED_INVALID",
+        "WITHDRAWN"
+      ],
+      "description": "来源：S40 §3.2 行 236 的注释（`RECORDED | APPLIED | STALE | REJECTED_INVALID | WITHDRAWN`），五个值照收。**注释是唯一的定义处**——`review_decision` 的 DDL（行 584–592）里 `status` 是裸列，没有 `CHECK (... IN (...))`。这与本批另外几个事件不同（S21/S22 都有真 DDL CHECK），所以这五个值严格来说是 S40 内部约定。**状态机（行 271）：`RECORDED → APPLIED` 或 `RECORDED → STALE` 或 `RECORDED → REJECTED_INVALID`，终态不回退**——注意 `WITHDRAWN` 不在任何一条从 `RECORDED` 出发的边上。见 x-conflicts PRD-1（更关键的是：这个事件发在哪个 status 上，两处说法不一致）。**`APPLIED` 只能由 S08 CAS 的成功结果赋**（行 345 加粗：「不得因为『我们觉得应该能过』就写。这是 S40 最容易造第二权威的一步」）。"
+    },
+    "stale_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S40 §3.2 行 237（示例 `null`）。**不收窄为 enum**：S40 全文出现的值至少有三套互不一致的写法——§5 行 341–343 的 `MANIFEST_ADVANCED` / `NODE_EPOCH_ADVANCED` / `NODE_LOCKED`；§6.3 行 414–420 的 `STALE_IF_DIFFER` 表用 `MANIFEST_CHANGED` / `EXECUTION_FENCE_ADVANCED` / `NODE_LOCK_CHANGED` / `ARTIFACT_REPLACED` / `POLICY_SUPERSEDED` / `EVIDENCE_CHANGED`；以及行 378 的格式化值 `TASK_{task.state}`（即 `TASK_SUPERSEDED` / `TASK_EXPIRED` / `TASK_WITHDRAWN` / `TASK_DECIDED`）。另外行 395 的 `BINDING_MISMATCH`、行 463 的 `DEADLINE_PASSED`、行 551 的 `POLICY_ROLE_NARROWED`。**同一个条件（manifest 变了）在两处叫两个名字**。见 x-needs-owner 与 PRD-5。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "decision_id",
+    "review_task_id",
+    "decided_against",
+    "status",
+    "stale_reason"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "stale_reason 的取值集合",
+      "demanded_by": "plans/S40-human-review.md §5 行 341–343、§6.3 行 414–420、行 378、行 395、行 463、行 551",
+      "s40_status": "**DDL 里 `stale_reason` 是裸列**（行 586，`status, stale_reason, validation jsonb, downstream jsonb`，无 CHECK）。正文给出至少 13 个值且互相冲突：`MANIFEST_ADVANCED`（§5）与 `MANIFEST_CHANGED`（§6.3）指的是同一件事；`NODE_LOCKED`（§5）与 `NODE_LOCK_CHANGED`（§6.3）同理。`TASK_{task.state}` 是格式化模板而不是字面值，实际会产生哪几个串取决于任务状态集合。**S47 与运维面板要按它分组展示**，一个既无闭集又有同义异名的字段会让「同一个原因」显示成两类。本 schema 只收 `[string, null]`。"
+    },
+    {
+      "field": "status 的取值集合",
+      "demanded_by": "plans/S40-human-review.md §3.2 行 236（注释）",
+      "s40_status": "五个值只写在 **JSON 注释里**，`review_decision` 表的 `status` 列（DDL 行 586）没有 CHECK。S40 是本系统里人工决定的唯一权威（AGENTS.md 单权威表：S40 管人的决定），所以这个值集合实际上已经被 S21/S39/S47/S08 依赖，但没有既非散文又非注释的机器可读定义。本 schema 收为 enum，来源是行 236——**这是本批里唯一一处「enum 来自注释而非 DDL」**，若 S40 后续加值，这里要同步。"
+    },
+    {
+      "field": "WITHDRAWN 是否会出现在本事件里",
+      "demanded_by": "plans/S40-human-review.md §3.2 行 236（列了 `WITHDRAWN`）+ 行 271（状态机只给三条从 RECORDED 出发的边）",
+      "s40_status": "`WITHDRAWN` 在状态的枚举里，但**状态机（行 271）写的是「`RECORDED → APPLIED` 或 `RECORDED → STALE` 或 `RECORDED → REJECTED_INVALID`。终态不回退」**——没有到 `WITHDRAWN` 的边。任务侧倒是有 `*→WITHDRAWN`（行 282，S02 说 gate 不再 required）。所以两种可能：要么决定级的 `WITHDRAWN` 是遗留，要么状态机漏画了一条边。本 schema 照行 236 收五个值，包括 `WITHDRAWN`。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PRD-1",
+      "summary": "事件里没有「决定了什么」，但两个消费者都要靠它分流；而且事件发在哪个 status 上，两处说法不一致",
+      "s40_payload": "§10.2 行 656：「`review.decision.recorded` 的 `data` 含 `decision_id / review_task_id / decided_against / status / stale_reason`，不含 `reason` 原文」——**没有 `decision`，没有 `option_id`**",
+      "s21_need": "plans/S21-orchestration.md §5.6 行 888：「`review.decision.recorded` | S40 | 若该 ReviewTask 属于本 Run → **signal resume/wait**」",
+      "s39_need": "plans/S39-repair-planning.md 行 837：「人工结论回填。`recorded` ≠ `accepted`：S40 只记录决定……S39 据此把计划标 `human_resolved`」",
+      "s40_emit": "§5 行 340：「`committed` | 所有相关决定 → `APPLIED`；任务 → `DECIDED`；**发 `review.decision.recorded`**」 vs §10.1 行 630：「**`review.decision.recorded` 与 `review_decision` 行必须同一本地事务**」",
+      "why_it_matters": "两件事叠在一起，都是致命的。**(a) 内容缺失**：`accept`、`reject`、`request_repair` 三者在 payload 里完全同形——都是 `status=APPLIED` 加一份 `decided_against`。S21 要决定 signal `resume` 还是 `wait`，S39 要决定把计划标 `human_resolved` 还是 `escalated`，**都需要「决定了什么」而事件不给**。唯一出路是收到事件后回查 S40（GET 决定），但事件与回查之间有一段窗口，且 `review_decision` 之后还可能被 supersede 成 `STALE`——回查得到的可能与事件发生时不同。而 `review_decision` 的 DDL 里 `decision` 与 `option_id` **是存在的**（行 586），只是没进事件。**(b) 发射时机矛盾**：§5 说 S08 返回 `committed` 之后才发（此时 status 已是 `APPLIED`），§10.1 说事件与决定落库**同一事务**（此时 status 必然是 `RECORDED`，因为还没调 S08）。两者不可能同时成立：要么事件在 CAS 之后发（那就不是同一事务，且有 §10.1 自己警告的「落库先于事件，决定永久停在 RECORDED 而无人推动下游」之外的另一种风险——CAS 成功但事件没发出），要么在落库时发（那 `APPLIED` 这个 status 永远不会出现在事件里，S21/S39 收到的永远是 `RECORDED`，而它们被要求按 `recorded ≠ accepted` 处理，即**永远不知道该不该 resume**）。`status` 字段本身因此也是自相矛盾的：如果按 §10.1，这个事件的 `status` 恒为 `RECORDED`，那它就没有必要作为字段存在；如果按 §5，`STALE` / `REJECTED_INVALID` 永远不会出现在本事件里（那些路径不发事件），那 `stale_reason` 也就恒为 null。**这一条决定了本 payload 是否成立**，所以我按 §10.2 的字面收了五个字段、不做增补。"
+    },
+    {
+      "id": "PRD-2",
+      "summary": "decided_against 拍平了 artifact 引用，导致这条事件无法独立回答「批的是哪个产物」",
+      "s40": "§3.2 行 219–223：`decided_against` 的七个键是 `manifest_ref, execution_fence, node_epoch, lock_version, artifact_content_hash, policy_ref, pack_hash`",
+      "s40_task": "§2.2 行 82：任务 binding 里是完整的 `artifact: {service_id, id, revision, content_hash}`",
+      "s40_ddl": "review_task DDL 行 578：`binding jsonb` —— 完整引用存在任务里，不随事件走",
+      "why_it_matters": "S08 收到本事件要落 `review_evidence`（S08 §6.2 行 677：「只落 `review_evidence`（不可变），**不**自动接受」）。落库要能唯一定位一条证据，而 `artifact_content_hash` 只是一个哈希——**同一个内容哈希可以对应多个 artifact id**（同一个文件被两个 job 登记是 S29 §7.2 行 848 明写要处理的场景），也可以对应同一个 id 的多个 revision（revision 只在对象内有意义，docs/04 §1）。所以 S08 落 `review_evidence` 时唯一能用的键是 `review_task_id`，必须回查 S40 才能知道是哪条证据。这与「冻结副本」的目的（行 243：「任务被 supersede 后仍然要能回答『这个人当时批的是什么版本』」）正好相反——**恰恰是任务被 supersede 之后，回查 S40 才最不可靠**。若要真正做到自足，`decided_against.artifact` 应当保留四字段。本 schema 照 §3.2 收拍平形态。"
+    },
+    {
+      "id": "PRD-3",
+      "summary": "pack_hash 与同级六个字段重复，重复的两份可以在同一个 payload 里不一致",
+      "s40": "§3.2 行 219–223：`pack_hash` 与 `manifest_ref` / `node_epoch` / `lock_version` / `artifact_content_hash` / `policy_ref` 平级",
+      "s40_formula": "§2.3 行 170–178：`pack_hash = sha256(canonical_json({binding.manifest_ref, binding.node_epoch, binding.lock_version, binding.artifact.content_hash, binding.policy_ref, evidence.qc_reports[*].{id,revision,content_hash}, evidence.defects[*].defect_id, evidence.continuity_ref}))`",
+      "why_it_matters": "`pack_hash` 的**输入**是同级那五个字段（加证据）。所以 `pack_hash` 与它们之间有一个强约束：哈希必须等于这组输入的规范序列化。**这个约束在 JSON Schema 里表达不了**，而 payload 里两套值同时存在，就可能出现「哈希说 A、字段说 B」的 payload。消费方必须知道该信哪个：信 `pack_hash` 则同级字段是装饰，信同级字段则 `pack_hash` 是装饰。S40 自己明确信 `pack_hash`（行 178：「这比逐字段比较更难漏」），但 `STALE_IF_DIFFER`（§6.3 行 414–420）**把两者并列成七条独立规则**，逐条比较——也就是说 S40 的参考实现是逐字段比，而不是先验哈希。**这正是 `pack_hash` 存在的理由被绕过的地方**：若逐字段已经够，`pack_hash` 多余；若 `pack_hash` 更强，`STALE_IF_DIFFER` 应当只有一条。另外 `pack_hash` 覆盖了 `evidence.qc_reports[*].content_hash`，而那些证据**完全不在本事件里**——所以消费方没有办法验证 `EVIDENCE_CHANGED`，只能信任 S40 已经验过。"
+    },
+    {
+      "id": "PRD-4",
+      "summary": "所有哈希在契约里是裸 64 位十六进制，S40 的示例却写 `sha256:` 前缀",
+      "s40": "§2.2 行 77–83、§3.2 行 208 / 216 / 222：`\"content_hash\": \"sha256:...\"`、`\"pack_hash\": \"sha256:...\"`、`\"request_hash\": \"sha256:...\"`",
+      "contracts": "contracts/execution-context.v2.schema.json 行 49–51、episode-manifest.v2.schema.json 行 63–65、production.image-ready.v2.schema.json 行 55–58：一律 `\"pattern\": \"^[0-9a-f]{64}$\"`",
+      "s40_ddl": "§10.1 行 607：`request_hash char(64) NOT NULL` —— 落库形态没有前缀",
+      "why_it_matters": "这不是 S40 独有的问题——`sha256:` 前缀在 plans/ 下共出现 90 次，横跨 20 个 plan，而 **contracts/ 下没有一个 schema 接受它**。也就是说计划文档与契约层对同一个量的表示形态不一致，且这个不一致是全局的。它之所以在这里值得单列，是因为本 payload 直接把哈希当字段传：`pack_hash` 与 `artifact_content_hash` 若按散文形态带前缀传输，会与本 schema 的 `^[0-9a-f]{64}$` 冲突，与本批其余 payload（`production.*.ready` 的 `content_fingerprint`、`artifact_ref.content_hash`）也不一致。本 schema 全部按契约层形态收裸哈希。若最终决定保留前缀，那是**全部** schema 的一次统一变更，不是本文件单独改。"
+    },
+    {
+      "id": "PRD-5",
+      "summary": "S08 说按 `decision.manifest_ref.revision` 缓冲乱序，但 payload 里没有这个路径",
+      "s08": "plans/S08-revision-snapshot.md §6.2 行 677：「`review.decision.recorded` | S40 | 只落 `review_evidence`（不可变），**不**自动接受 | 重试；**乱序则按 `decision.manifest_ref.revision` 缓冲**」",
+      "s40": "§10.2 行 656 的字段清单与 §3.2 的行结构里，`manifest_ref` 位于 `decided_against` 之下，**顶层没有 `decision` 这个键**",
+      "why_it_matters": "S08 的这一行是它处理本事件的乱序策略，而它引用的路径在 payload 里不存在。两种可能：(a) S08 的意思是 `data.decided_against.manifest_ref.revision`——那是笔误，实现时按错的路径读会永远取到 null（Python 的 `dict.get` 链式读法会静默返回 None），**缓冲策略静默失效**；(b) S08 假设事件里有一个 `decision` 包裹对象——那与 §10.2 的扁平结构冲突。这不是命名约定问题：乱序缓冲是 E07（旧审核晚到）的核心防线，静默失效意味着旧决定会按到达顺序被处理。另外 `decision.manifest_ref.revision` 这个量本身也不完整——§6.3 行 424 明说 `manifest_ref.revision` **不在** `STALE_IF_DIFFER` 里，因为它需要节点级差异才能精确判断；用一个不参与 stale 判定的量来做乱序缓冲，语义上也不是同一件事。"
+    },
+    {
+      "id": "PRD-6",
+      "summary": "stale_reason 与 REJECTED_INVALID 的关系，同一份文档两处结论相反",
+      "s40_s92": "§9.2 行 551：「`assignee_roles` 收紧后，**已投的票若来自不再合格的 actor → 该票作废**（`REJECTED_INVALID`，`stale_reason=POLICY_ROLE_NARROWED`），重开投票」",
+      "s40_e27": "§11 行 725：「E27-03 | 委派（delegation）过期 → 拒绝，**`stale_reason` 不适用**（是 invalid 不是 stale）」",
+      "s40_semantics": "§6.1 行 486：「旧 epoch 的决定 ──► 历史上存着，status=STALE」",
+      "why_it_matters": "`stale` 与 `invalid` 在 S40 里是两个不同的判定：`STALE` 表示「决定本身合法，但依据已经过期」，`REJECTED_INVALID` 表示「这个决定从来就不合法」。行 551 给 `REJECTED_INVALID` 配了一个 `stale_reason`，行 725 明确说 invalid 不带 `stale_reason`。**若取行 551，消费方不能用 `stale_reason != null` 判断「是否 stale」；若取行 725，行 551 就是错的。** 而 S39 正是按这个字段区分「人重做了一遍」与「人的票被作废了」——两者的业务后果不同（前者应当 `human_resolved`，后者应当重开投票）。本 schema 让 `stale_reason` 可 null 且不约束它和 `status` 的组合。"
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/delivery.package-created.v2.schema.json",
+  "title": "delivery.package.created payload v2",
+  "description": "event `delivery.package.created` 的 data 部分。**§6.3 对这条事件只给了一个事件名**（行 655 的「发布」行），没有字段清单、没有示例、没有 aggregate_sequence 语义之外的任何一句话；本 schema 的每个键都取自 §5 的 `delivery.package` DDL（行 377–404，23 列），不是从散文推出来的形状。**「发哪些列」这个选择本身仍是判断**——DDL 有 23 列，本 schema 选 9 列 + `schema_version`（共 10 个属性），取舍理由写在各自 description 里，决定权在 owner（见 x-needs-owner 第 1 条）。这条事件发在什么时刻有两种读法，本 schema 两种都容得下：§4.1 的行 278 是「事务写 package(DRAFTING) + items + outbox」，若事件在事务内落 outbox 则 `state='DRAFTING'`；行 280 的签名成功路径会把同一个包推到 `SEALED`。**事件目录里没有第二条「包状态变了」的事件**（§6.3 行 655 只有 created/sealed/published/failed 四条），所以 `state` 保留 §5 DDL 的五值枚举而不是收成常量——收窄会让 `BLOCKED` 与 `DRAFTING` 无法在事件流里出现。见 x-conflicts PDC-1。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补——与 `delivery.package-published.v2` 及 `post.mix-completed.v2` 一致。"
+    },
+    "package_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 379（主键，行 403）与 §6.1 行 599（201 响应示例 `dp_...`）。**四条发布事件的 `aggregate_id` 都是它**（§6.3 行 659–660）：`DeliveryPackage` 不可变，一次修正就是新 `package_id`，所以同一个包的事件天然有序、不会被另一个包打断。§6.3 行 661–662 说 `aggregate_sequence` 的 `created`=1，即本事件在同包事件序里的序号恒为 1——这是四条里唯一序号被文档钉死的一条。"
+    },
+    "package_type": {
+      "type": "string",
+      "enum": [
+        "missing_material",
+        "preview",
+        "formal"
+      ],
+      "description": "来源：§5 DDL 行 384–385（`CHECK (package_type IN ('missing_material','preview','formal'))`）与 §1.1 行 61–73（三种包的定义）。三值照收——本 schema 里有 DDL `CHECK` 依据的闭集之一。**这个字段决定下游允许做什么**：§2.3 行 151 说「预览包只过 G2/G3(部分)/G6(部分)；缺素材包只要求 G2 覆盖已存在的项」，所以消费方看到 `package_type` 就该知道 `gate_results` 里有多少项是被刻意跳过的，而不是失败的。"
+    },
+    "episode_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：§5 行 382（`episode_id text`，**可空**）与 §6.1 行 584（请求体示例 `ep_3`）。**必须可 null**：DDL 本来就可空，§12 未决问题 1 与 §11 C7 都说支持系列级包（`episode_id` 与 `series_id` 二选一）。这与 `delivery.package-published.v2` 的同一个键取值一致（那里记的是 x-conflicts PDL-4），本条不另开冲突。"
+    },
+    "purpose": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§5 行 386（`purpose text, -- broadcast | archive | review | partner`）与 §6.1 行 583（请求体示例 `\"purpose\":\"broadcast\"`）。**不收成 `enum`**：四个值只存在一句 SQL 行注释里，列本身是裸 `text`，没有 CHECK——与 `delivery.package-published.v2` 的 x-needs-owner 第 1 条同一条规矩（取值域只在 DDL 有 CHECK 时才收窄）。**可 null**：DDL 没有 NOT NULL，示例也只是其中一个取值。这条事件与 `published` 不同，它带 `purpose` 而不带 `package_hash`：创建时用途已知，而 `package_hash` 是 §5 行 393 的 `NOT NULL` 列、注定在 §4.1 行 278 写 `package(DRAFTING)` 时就已算出，可是**全文 876 行没有一处写出它的算法**（它只出现 4 次：行 393 的列、行 408 的唯一索引、行 602/670 的示例；§4.2 行 299 算的是 `manifest_hash`，不是它），消费方此刻更不该拿它当定稿依据。"
+    },
+    "master_candidate_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§5 行 387（`master_candidate_id text, -- S42 候选`，**可空**）与 §6.1 行 586（请求体示例 `mc_...`）。**可 null 与 `published` 不同**：`published` 那条要求它非空（走到外发必然有 master），而建包时 `missing_material` 类型本身就可能是「master 还没渲染出来」——那正是它叫缺失素材的原因（§1.1 行 61–73）。**这是候选，不是被接受的 master**：谁是当前有效版归 S08（§0 判据），S43 只引用。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "DRAFTING",
+        "BLOCKED",
+        "SEALED",
+        "PUBLISHED",
+        "PUBLISH_FAILED"
+      ],
+      "description": "来源：§5 DDL 行 394–395（`CHECK (state IN ('DRAFTING','BLOCKED','SEALED','PUBLISHED','PUBLISH_FAILED'))`）与 §3.1 行 198–221 的状态机。五值照收，**不收成常量 `DRAFTING`**，理由有两层：(1) §4.1 行 277–280 的创建路径有两条出口——`formal` 且 gaps 非空 → `BLOCKED`（行 277），否则事务写 `DRAFTING` 后在**同一个请求内**签名成功即 `SEALED`（行 280）；§6.1 行 601 的 201 响应示例注释就写着 `\"state\":\"SEALED\", // 或 BLOCKED`。若事件在响应前发出，`SEALED` 与 `BLOCKED` 都是合法值。(2) 事件目录里没有「包状态变了」的通用事件（§6.3 行 655 仅四条），所以 `created` 事实上还承担了「包以什么状态出现」的通知职责。**消费方不能假设 `state='DRAFTING'`**：把它当常量写死的代码会拒掉两个真实分支。见 x-conflicts PDC-1。"
+    },
+    "gaps": {
+      "type": "array",
+      "description": "来源：§5 行 396（`gaps jsonb NOT NULL DEFAULT '[]'::jsonb`）、§4.1 行 276（「计算 gaps（缺什么）」）、行 277（「缺什么」→ `BLOCKED` 并返回）与 §6.1 行 604（响应示例 `\"gaps\": []`）。**这是 `BLOCKED` 的全部可观测内容**：包被挡住时没有错误码，只有这份清单。元素形状文档**从未定义**——DDL 只说 `jsonb`，示例只给了空数组，§1.1 与 §2.3 也没有字段表。本 schema 因此不约束元素结构（`\"items\": {}` 即任意 JSON），这是**刻意的不收窄**：从散文猜元素键会让 schema 变成 S43 没同意过的契约（AGENTS.md「契约与文档冲突 → 停下」，contracts/README「不从散文推断这些值」）。**空数组与 `state` 的关系也没有 DDL 约束**（没有 `CHECK (state <> 'BLOCKED' OR jsonb_array_length(gaps) > 0)`），所以本 schema 不复制一个 DDL 里不存在的约束。见 x-needs-owner 第 2 条。"
+    },
+    "gate_results": {
+      "type": "object",
+      "description": "来源：§5 行 397（`gate_results jsonb NOT NULL DEFAULT '{}'::jsonb`）、§2.3 行 138–147（G1–G10 十道门与失败码）与 §6.1 行 605–607（响应示例 `{\"G1\":\"pass\",…,\"G8\":\"deferred\",…}`）。**键是 G1..G10，值是门的结果**。示例里出现了三个取值：`pass` / `deferred` / （`fail` 未画出但由 §2.3 的失败码表隐含）。**本 schema 不约束这个对象的键与值**：DDL 是裸 `jsonb`，「十道」是 §2.3 的散文数字而非 `CHECK`，而 §2.3 行 151 明说预览包与缺失素材包只过一部分门——把键收成 `G1..G10` 全必填会拒掉合法的预览包。**`deferred` 是这条事件最有信息量的取值**：§6.1 行 612 说「`G8: \"deferred\"`：策略门在**外发时**评估，创建时不判定」，即创建时策略门根本没跑过——消费方若把 `deferred` 读成 `pass` 就是 AGENTS.md 明令禁止的「把审核已通过当放行依据」。见 x-conflicts PDC-3。"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 400（`created_at timestamptz NOT NULL DEFAULT now()`）。**带上它是因为本事件与 envelope 的 `time` 在重投递下会错开**：outbox 落库（行 546–549）与 `published_at` 是两列，一条积压的事件可能在 `created_at` 之后很久才被发出去。消费方要按「包是什么时候建的」排序必须用这个字段，用 envelope `time` 会把补发的旧包排到新包后面。这与 `post.mix-completed.v2` 刻意不带 `created_at` 的取舍相反，因为那条事件没有消费者、也没有乱序风险（x-conflicts MIX-3），本事件有 S47 的「交付进度」投影在读（plans/S47-realtime-projection.md 行 84）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_id",
+    "package_type",
+    "episode_id",
+    "purpose",
+    "master_candidate_id",
+    "state",
+    "gaps",
+    "gate_results",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`delivery.package.created` 的 payload 键集合本身",
+      "demanded_by": "plans/S43-delivery.md §6.3 行 655（只列事件名）、§11 C8 行 865（已裁决登记进 `event-topics.v2.json`，明说「**payload schema 仍缺**」）",
+      "s43_status": "全文 876 行里**没有任何一段定义这条事件的字段**：没有 `data` 块、没有示例、没有字段表。本 schema 的 10 个属性里 1 个是 `schema_version`，其余 9 个全部从 §5 的 `delivery.package` DDL 23 列里挑出。取舍是：去掉 `tenant_id`（信封已有）、`project_id` / `series_id`（可选，见下一条）、`branch_id`（可选，`episode_id` 已够粗定位）、`master_artifact_ref` / `timeline_ref`（大对象引用，可由 `master_candidate_id` 回查）、`execution_fence`（§6.3 的 `published` 示例也没带，且它是 G1 的判据输入而非结果）、`manifest_hash` / `package_hash`（`manifest_hash` 在 DDL 行 391 可空、创建时确未定稿；`package_hash` 行 393 为 `NOT NULL` 却全文无算法，见 `purpose` 的说明）、`canonical_version`（只影响 hash 算法）、`created_by`（actor 形状未定义，见下一条）、`sealed_at` / `published_at`（此刻未发生）。**这个取舍是判断，不是文档给的事实**：owner 若认为 S47 需要 `branch_id` 才能区分同集多分支，加上是扩大；若认为 `gate_results` 不该上事件（可在 `GET /delivery-packages/{id}` 拿到），删掉是收窄。"
+    },
+    {
+      "field": "`gaps[]` 的元素形状与 `gate_results` 的键值域",
+      "demanded_by": "plans/S43-delivery.md §5 行 396–397（两列都是裸 `jsonb`）、§2.3 行 138–149（G1–G10 十道门及失败码）、§4.1 行 276–277",
+      "s43_status": "**两列都没有元素级定义**。`gaps` 只出现过空数组（§6.1 行 604）；`gate_results` 的示例（行 605–607）画出 `G1..G10` 十个键和 `pass`/`deferred` 两个值，但 §2.3 的失败码表（行 138–147）暗示至少还有 `fail`，而 §2.3 行 149 又引入第三个结果 `DEPENDENCY_UNAVAILABLE`「不是门通过」——它是 `gate_results.G#` 的取值，还是包级的另一个字段，文档没有说。本 schema 因此对两者都只收 `array` / `object`，不收窄。要收窄需要 S43 owner 先给出：`gaps` 的元素键（缺的 role？缺的 service？缺的原因码？）、`gate_results` 的取值闭集（`pass`/`fail`/`deferred`/`unavailable`？）、以及预览包与缺失素材包被跳过的门是**省略键**还是**填一个第四种值**。"
+    },
+    {
+      "field": "`created_by` 的 actor 形状（本 schema 未收）",
+      "demanded_by": "plans/S43-delivery.md §5 行 399（`created_by jsonb NOT NULL`）",
+      "s43_status": "DDL 只说 `jsonb NOT NULL`，**全文没有任何一处定义 actor 的形状**。仓内另有三处出现过 actor 类字段：`contracts/execution-context.v2.schema.json` 的 `actor`、`automation-policy.v2.schema.json` 与 `policy.revision-published.v2.schema.json` 的 `created_by`（脚本核对），三处形状是否相同文档没说过，`execution-context` 的 `actor` 也没有被任何 payload schema 引用。本 schema **不带**这个字段：它是审计信息的来源，而审计归 S45（§5 行 566「不建 `audit_log` —— 归 S45」），S45 拿的是 outbox 里的 envelope + 事件，不是重发一份 actor。若 owner 认为「谁建的包」必须随事件出去，需要先定 actor 形状（大概率是 execution-context 的 `actor` 引用），这是跨服务的形状决定，不该由本批次替 owner 定。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PDC-1",
+      "summary": "四条发布事件里没有「包状态变了」，于是 `created` 必须自己承载「包以什么状态出现」",
+      "s43_events": "§6.3 行 655：「`delivery.package.created`、`delivery.package.sealed`、`delivery.package.published`、`delivery.publish.failed`」——四条都是**动作**（建、封、发、失败），没有一条是**状态迁移**",
+      "s43_states": "§5 行 394–395 的 DDL CHECK 是五态 `DRAFTING` / `BLOCKED` / `SEALED` / `PUBLISHED` / `PUBLISH_FAILED`；§3.1 行 198–216 的图还画出 `SEALED → SEALED`（可重试失败后各自再试）与 `SEALED → PUBLISH_FAILED`",
+      "why_it_matters": "四个动作名映射不到五个状态上，缺口在三处：(1) **`BLOCKED` 没有自己的事件**——它只能靠 `created` 带 `state='BLOCKED'` 表达，而「一个 `DRAFTING` 包后来因为什么变成了 `BLOCKED`」如果发生在**建包之后**（素材在 `DRAFTING` 期间被撤销），事件流里彻底没有信号；(2) **`SEALED` 有两条路径进入**：建包时同步签名成功（§4.1 行 280）、之后单独调 `:seal`（§4.2 行 288–303）。两条路径都发 `delivery.package.sealed`，于是同一个包可能收到**两条** `sealed` 事件（若建包时已经发过一次）——`aggregate_sequence` 会推进，但消费方无法分辨「同一件事报告了两次」与「真的又封了一次」；(3) §3.1 行 214 那条「外发失败（可重试）→ `SEALED`（可再试）」的边在事件层完全不可见，与 x-conflicts PDL-1 记的尝试级空白是同一处的两面。要定的是：`created` 是否允许非 `DRAFTING` 的 `state`（本 schema 取允许，见 `state` 字段说明），以及「建包时同步封包」是否发两条事件。"
+    },
+    {
+      "id": "PDC-2",
+      "summary": "建包是两步非原子操作，而 `created` 事件落在哪一步、带哪个 state，文档有互相矛盾的两处表述",
+      "s43_flow": "§4.1 行 278–286：「9. 事务写 package(DRAFTING) + items + outbox」「10. 同步封包：规范化 manifest → manifest_hash → 请求签名 ├─ 签名成功 → SEALED └─ 签名不可用 → 保持 DRAFTING，返回 202 + 可重试」；行 284「**包的创建与签名分两个事务**」",
+      "s43_response": "§6.1 行 599–609 的 201 响应：`\"state\":\"SEALED\", // 或 BLOCKED`，即**响应里不出现 `DRAFTING`**",
+      "why_it_matters": "第 9 步把 outbox 写进了 `DRAFTING` 那个事务，所以按字面读，事件是在**签名之前**落的——那它带出去的 `state` 必然是 `DRAFTING`（或 `BLOCKED`，若第 8 步判了）。但 §6.1 的 201 响应只承诺 `SEALED` 或 `BLOCKED`，而一个「签名不可用」的请求（行 281）返回 202 且包停在 `DRAFTING`——**这条路径下 `created` 的 `state='DRAFTING'` 是唯一能告诉调用方「包建了但没封」的信号**，可文档没有说事件会这么发。反过来，若实现选择在签名后补发一条带 `SEALED` 的 `created`，那就与行 302 的 `sealed` 事件重复。本 schema 保留五值，让两种实现都能通过校验，但**「哪种是契约」必须 owner 定**：它决定消费方能否把 `state='DRAFTING'` 当成「需要触发封包重试」的可靠输入。"
+    },
+    {
+      "id": "PDC-3",
+      "summary": "`deferred` 的门結果进了事件，而 `deferred` 与 `pass` 在消费侧无法区分用途",
+      "s43_example": "§6.1 行 605–607 的 201 响应：`\"gate_results\":{\"G1\":\"pass\",…,\"G8\":\"deferred\",…}`；行 612 解释「策略门在**外发时**评估（§2.2 规则 1），创建时不判定。这是刻意的——创建包可以慢慢准备，外发必须实时授权」",
+      "s43_rules": "§2.2 行 123–128 四条硬规则（每次外发重新 evaluate；`abstain` 不是 `allow`；`require_human` 不是 `allow`；`valid_until` 过期即失效）；§2.3 行 149「门是」与「关系，且全部实时」…任何一项无法判定（依赖 503）→ 整体失败，错误码 `DEPENDENCY_UNAVAILABLE`，**不是门通过**」",
+      "why_it_matters": "`deferred` 是「这道门没跑过」，`pass` 是「跑了并且过了」。两者在 `gate_results` 里是同一个 map 的两个字符串值，而 §2.3 行 149 又把「无法判定」定为整体失败——那么一个 503 导致的门在**创建时**应该体现为 `deferred` 还是整体 503？行 149 说的是外发时，创建时的行为没写。更要紧的是消费侧：S47 的交付进度看板（plans/S47-realtime-projection.md 行 84）若把 `gate_results` 原样展示，用户看到 `G8: deferred` 会读成「策略门待定，应该快好了」，而实际含义是「这张允许票**根本还不存在**，外发时要从头评估」。AGENTS.md 明令「把审核已通过当成放行依据」，`deferred` 是这个禁令在事件层最容易被误读的一处。要定的是：`deferred` 的语义是否需要在事件里显式标成「未评估」（例如独立字段 `gates_evaluated: [\"G1\",…]`），以及创建时依赖 503 是否也整体失败。"
+    }
+  ]
+}

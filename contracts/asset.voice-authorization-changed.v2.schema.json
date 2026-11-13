@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/asset.voice-authorization-changed.v2.schema.json",
+  "title": "asset.voice.authorization.changed payload v2",
+  "description": "event `asset.voice.authorization.changed` 的 data 部分。权威定义在 plans/S15-voice-assets.md §5.3（行 744–767，9 个字段的示例）、§2.3（行 225–244，`voice_authorization` DDL）、§2.4（行 275–288，`authorization_event` DDL）、§2.8（行 418–441，outbox 与 `aggregate_sequence` 的注释）、§3.1（行 478–491，合法转移表）、§4.2（行 546–597，`check-eligibility`）、§4.3（行 599–642，撤销事务与 `effective_at` 的选择）、§10（行 987–998，C15-1..C15-8）。**这条事件是 S15 唯一的契约事件（§5.3 行 742「S15 只发布一个契约事件，`service.yaml` 明写」），而它同时是「撤销音色授权」这一个动作对外的全部信息**：`to_state` 一落，S26 必须立刻停止为该音色提交付费任务（E30-C3）。形状本身清楚，问题在可用性——`aggregate_sequence` 在方案里有两个互相矛盾的定义（VAC-1）、创建事件的 `reason_code` 没有来源而库里是 NOT NULL（VAC-2）、9 个字段里有 3 个在 `authorization_event` 表里根本没有列（VAC-4、VAC-5）、审计要求的 `actor` 只存在于表里不存在于事件里（VAC-7）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§5.3 行 754 起的 `data` 示例未画这一项，按 contracts 既有 payload 约定补。"
+    },
+    "voice_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.3 行 755（示例 `vox_linlan`）+ §2.3 DDL 行 227（`voice_id text NOT NULL`）+ §2.8 行 421 与 441（`aggregate_id` 列注释 `voice_id`、行 441「`aggregate_id = voice_id`」）。**与 envelope 的 `aggregate_id` 是同一个值，冗余是设计使然**：S15 的授权状态主键是 `(tenant_id, voice_id)`（§2.3 行 239），而 partition 用的是 `tenant_id:voice_id`（§5.3 行 744）——收件方按 partition 分组时拿到的是 envelope，按业务键索引时拿到的是 payload，两边都要能独立成键。**字段形态未约束**：DDL 行 166 的注释写 `voice_id text NOT NULL, -- 'vox_01J...'`（ULID 形态），而 §5.3 的示例写 `vox_linlan`（可读别名）。全文没有定义 `voice_id` 的词法，本文件只收非空字符串，见 VAC-8。"
+    },
+    "from_state": {
+      "enum": ["granted", "suspended", "revoked", "expired", null],
+      "description": "变更前的授权状态。来源：§5.3 行 756（示例 `granted`）+ §2.4 DDL 行 279（`from_state  text,`——**可空，无 CHECK**）+ §2.3 DDL 行 228（`state text NOT NULL CHECK (state IN ('granted','suspended','revoked','expired'))`——枚举的真实出处在这张表）。**这里收 `null` 不是宽松，是照 DDL**：`authorization_event.from_state` 允许空，而首个事件的 `from_state` 必然是空——§4.1 行 544 的建音色事务明文写 `authorization_event(seq=1)` 与 outbox 同事务落库，而 §3.1 行 482 的合法转移表第一行是「（无）→ `granted`」，**没有前一状态**。所以创建事件是 `from_state: null` + `to_state: granted`，本文件必须能表达它。**这是本批里第一份不由 schema 制造、而由 DDL 自己解决的同类问题**——对照 S08 的 SMC-4、S09 的 MSC-3、S10 的 ABS-5、S01 的 AGC-4，那四处都是示例只画「中间版本」、DDL 又没说清首版该填什么；S15 的 DDL 写明了可空，于是没有缺口。代价是消费方必须处理 `null`，见 VAC-3。"
+    },
+    "to_state": {
+      "enum": ["granted", "suspended", "revoked", "expired"],
+      "description": "变更后的授权状态。来源：§5.3 行 757（示例 `revoked`）+ §3.1 行 478–491 的合法转移表 + §2.3 DDL 行 228 的 `CHECK`。**枚举在这里是真的 `CHECK`，但出处错位**：这个事件是由 `authorization_event` 表驱动的（§4.3 行 615 的事务第 5 步把事件写进 outbox，第 4 步写 `authorization_event`），而 `authorization_event.to_state` 是 `text NOT NULL`（§2.4 行 280）——**没有 CHECK**。真正带四值 `CHECK` 的是另一张表 `voice_authorization.state`。两张表由同一事务同时写（§4.3 行 612–615），所以四值约束在正常路径上成立；但本事件若由任何别的路径产生（重放、修复、补发），DB 不会拦第三个值。本文件收四值是照 §3.1 的状态机与 `voice_authorization` 的 CHECK，不是照事件表本身。**`revoked` 是终态**（§3.1 行 489「`revoked` → * 禁止（DB 触发器）」、行 258–268 的 `deny_revoked_transition` 触发器、§5.4 行 794 的 `REVOCATION_TERMINAL`），所以这个枚举**没有** `revoked → 别的` 的合法事件——一个 voice 的 `to_state` 序列里 `revoked` 只可能出现在最后一条。这与 S01 的 `access.grant.changed` 不同：那边的 `state` 允许 `revoked → pending`、`expired → active`，语义是一次覆盖一次；这边是单向终结。消费方若按 S01 的习惯把状态当作「可反复覆盖的当前值」，在 S15 上恰好也安全（因为不会再变），但会误以为可以订阅到「复活」事件。见 VAC-3。"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "授权状态的单调序号，来自 §5.3 行 758（示例 `9`）+ §2.3 DDL 行 235（`state_seq bigint NOT NULL`，行 250「**`state_seq` 单调递增。** 每次状态变更 +1」）+ §2.4 DDL 行 278（`seq bigint NOT NULL, -- = 变更后的 state_seq`，主键 `(tenant_id, voice_id, seq)`）。**它是 S15 全部正确性属性的锚点**：§6.3 行 829–844 的时序保证靠它做乐观检查（§4.2 行 594「调用方（S26）可以在提交付费任务前记录 `state_seq`，在真正调用前带 `if_state_seq` 再查一次」、F7 行 690 的 `STATE_SEQ_STALE`、E30-C9 行 910）。**`minimum: 1`** 与 DDL 无 CHECK 但创建时写死 1（§4.1 行 544 `state_seq=1`）一致。**它与 envelope 的 `aggregate_sequence` 是同一个数吗——方案里有两个答案**：§5.3 行 744 说 `aggregate_sequence = state_seq`，而 §2.8 行 441 说 `aggregate_sequence = revision`（内容 revision）。本文件不收 envelope 字段，但这条矛盾决定 outbox 的唯一约束 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`（§2.8 行 429）会不会在第二次授权变更时炸掉事务——见 VAC-1。"
+    },
+    "reason_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "变更原因码。来源：§5.3 行 759（示例 `RIGHTS_WITHDRAWN`）+ §2.4 DDL 行 281（`reason_code text NOT NULL`——**无 CHECK、无注释**）+ §2.3 DDL 行 237（`reason_code text,`——**可空**）。**全文只有 `RIGHTS_WITHDRAWN` 这一个字面量**：§3.1 行 483–484 的转移表只说「需 `reason_code`」，§5.4 行 786–796 的错误码表里没有原因码，§9 的行 979 也没有。所以值集是**开放**的，本文件不写 `enum`——写一个只含一个值的闭集会拒掉全部合法事件，写一个猜出来的集合会与 `contracts/README.md` 的「不从散文推断这些值」冲突。**但两张表的可空性在这里不对称，且方向是要命的那一边**：`voice_authorization.reason_code` 可空，`authorization_event.reason_code` **NOT NULL**，而建音色的命令体（§4.1 行 529–535）**根本没有 `reason_code` 参数**——`{command_id, series_scope, display_name, voice_kind, character_ref, language_profile, emotion_profile, rate_profile, voice_sample_refs, rights_ref, authorization:{authorized_uses, scope_notes, expires_at}}` 里没有它。于是创建事件（`seq=1`）的 `reason_code` 无处可取，而这一列是 NOT NULL：`POST /voices` 的整个事务会在这条 INSERT 上失败。见 VAC-2。"
+    },
+    "effective_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "变更的生效时刻（审计用）。来源：§5.3 行 760（示例 `2026-10-31T09:00:00Z`）+ §4.3 行 603（命令体 `{command_id, reason_code, reason_text, evidence_ref, effective_at?}`——**带问号，可省**）+ §4.3 行 642（「如果提供未来的 `effective_at`，S15 记录它，但**立即**开始拒绝新调用？本文的选择：**立即拒绝**，`effective_at` 仅作审计记录」）。**这是全份 payload 里唯一带时刻语义的字段，而它恰恰是不能用来判时刻的那个**：方案明确 S15 在撤销提交的瞬间就返回 `eligible=false`（§4.2 行 597 的读时判定、E30-C1「同一秒内可读到」），`effective_at` 可以是**未来**的三天、三十天，只进审计。消费方若把 `effective_at` 当作「从这一刻起才停用」→ **在整段宽限期内继续为已撤销的音色提交付费任务**，这是 fail-open 且方向与合规相反。本文件收 `null` 是因为命令体写的是可选，而 `authorization_event` **没有 `effective_at` 列**（§2.4 行 275–287 的 10 列里没有它），这张表也存不下「没提供」与「提供了」的区别之外的东西——见 VAC-4。"
+    },
+    "evidence_ref": {
+      "type": ["object", "null"],
+      "description": "撤销依据（合同／法务函件）的引用。来源：§5.3 行 761（示例 `{\"service_id\":\"S02\",\"id\":\"rights_doc_01J...\",\"revision\":2}`）+ §2.4 DDL 行 283（`evidence_ref jsonb,`——可空）+ 行 291（「`evidence_ref` 必须保留。docs/10：『授权撤销事件禁止新调用，历史交付处理按企业保留合同决定』—— 但『谁依据什么撤销』必须可追溯，否则撤销本身无法被审计（E39）」）+ §7 行 695（F12：缺 `evidence_ref` 撤销 → 422 `REVOCATION_EVIDENCE_REQUIRED`）。**三键，没有 `content_hash`**。全仓 91 处带 `service_id` 的引用中 90 处同时带 64 位 `content_hash`（唯一例外 `quality-semantic-completed.json` 的 `{\"service_id\":\"S17\",\"ref_revision\":7}` 连键名都不同，不算四键引用），而 envelope 的 `data_ref` 把 `content_hash` 列为 required。于是**本文件是契约集里第一处刻意记住的例外**：收三键是照 §5.3 的示例，不加 `content_hash` 是不自己发明字段。后果是 DDL 行 291 要的「可追溯」只到「指向哪份文档」，到不了「那份文档的哪一版内容」——若被引文档在同 id+revision 下被改写（或引用方本就不保证 revision 不可变），审计无法发现。见 VAC-6。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$",
+          "description": "依据文档的所属服务。示例写 `S02`（§5.3 行 761）。**这个值本身是 C15-5 的争点**：§10 行 995（C15-5）报告 docs/10 说资格检查由「S02/S15」执行，而 `plans/S02-governance-policy.md` 的 `rights_current` 来源写的是 `S10:binding_set@r12`——所以「权利文档归 S02 还是 S10」在方案集里没有裁决，而示例把 `S02` 写死了。本文件只约束形态（`^S[0-9]{2}$`，与 envelope 的 `data_ref.service_id` 同形），不约束取值。见 VAC-6。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "依据文档在本地的 id。示例 `rights_doc_01J...`（§5.3 行 761）。**注意它与同表 `rights_ref` 的 `rights_id` 是两个不同的键名**（§2.3 行 229：`rights_ref jsonb NOT NULL, -- {rights_owner,rights_id,rights_revision,rights_hash}`）——同一份权利文档在一个服务里有两个形状、两套键名、一边有 hash 一边没有。见 VAC-6。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "依据文档的 revision。示例 `2`（§5.3 行 761）。与 `rights_ref.rights_revision` 同名不同键（那个在 `rights_ref` 里叫 `rights_revision`）。"
+        }
+      },
+      "required": ["service_id", "id", "revision"],
+      "additionalProperties": false
+    },
+    "authorized_uses_before": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "变更前该音色被授权的用途。来源：§5.3 行 762（示例 `[\"series:series_demo\",\"modality:speech\"]`）+ §2.3 DDL 行 230（`authorized_uses jsonb NOT NULL, -- ['series:series_demo','modality:speech']`——**DDL 注释给出的就是同一个串形态**）+ §4.1 行 542（「`authorized_uses` 必须非空。空表示『没有明确用途』，无法审计」→ `minItems: 1`）+ F10 行 693（`USE_SCOPE_REQUIRED`）。**两条问题都在这一个字段上**：(a) **`_before` 后缀描述一个不存在的差量**——§3.1 行 478–491 的合法转移里没有任何一条修改 `authorized_uses`（`suspend`/`resume`/`revoke`/`renew` 分别改 `state` 与 `expires_at`，§4.3 行 610–615 的撤销事务只 SET `state`/`state_seq`/`state_changed_at`），`authorized_uses` 只在建音色时写一次（§4.1 行 544）。所以这个字段**恒等于当前值**，它是快照而不是变更前值；叫 `_before` 会让消费方去找一个从来不存在的 `_after`，也可能让实现方误以为要保存历史版本（而 `authorization_event` 表没有这一列）。(b) **串词法没有任何注册处**：`prefix:value` 的唯一来源是 DDL 注释里的两个例子（`series:` 与 `modality:`），没有前缀清单、没有 schema、没有说明是否允许多值/通配。而 §4.2 行 596 的判定是「`requested_use` 不在 `authorized_uses` 内 → `USE_NOT_AUTHORIZED`」，`requested_use` 是**对象**（行 551 `{series_id, modality:'speech', provider_id?, channel_id?, model_snapshot?, region?}`）——**对象对字符串数组的成员判定没有任何定义**。这是 licensed_actor 的核心限制（行 596 原话），而它的算法不存在。见 VAC-5。"
+    },
+    "expires_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "该音色授权的到期时刻，`null` = 长期有效。来源：§5.3 行 763（示例 `2027-03-01T00:00:00Z`）+ §2.3 DDL 行 233（`expires_at timestamptz, -- NULL = 长期`）+ 行 251–256（`voice_kind IN ('cloned','licensed_actor')` → `expires_at IS NOT NULL` 的应用层断言）+ §4.1 行 541（`AUTHORIZATION_EXPIRY_REQUIRED`）。**必须可空，否则 `platform_preset` 与 `synthetic` 撤不了**：DDL 行 233 明写 NULL = 长期，而 §2.1 行 187 说 `platform_preset` 是「平台自有声音，授权由平台统一授予（通常长期有效）」——它的 `expires_at` 是 NULL，它的撤销事件若因本字段必填而被拒，`platform_preset` 就永远无法发撤销事件。**与 `effective_at` 同病：`authorization_event` 没有这一列**（§2.4 行 275–287），所以它是从 `voice_authorization` 当前行快照出来的，不是那次变更的记录。而撤销之后这一列**不会被清空**（§4.3 的 UPDATE 只动 state/state_seq/state_changed_at），于是 `revoked` 事件里的 `expires_at` 仍是一个未来的日期——消费方若用「`expires_at` 还没到」判断「还能用」，会与 `to_state='revoked'` 直接矛盾。§5.3 行 771 给的规则是 `to_state IN ('revoked','expired') → 禁止新调用`，也就是说 `to_state` 优先、`expires_at` 不可用于判定。见 VAC-4、VAC-5。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "voice_id",
+    "from_state",
+    "to_state",
+    "state_seq",
+    "reason_code",
+    "effective_at",
+    "evidence_ref",
+    "authorized_uses_before",
+    "expires_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`reason_code` 的取值集合",
+      "demanded_by": "plans/S15-voice-assets.md §2.4 DDL 行 281（`reason_code text NOT NULL,`——无 CHECK 无注释）、§2.3 DDL 行 237（`reason_code text,`）、§3.1 行 483–484（两条转移的「需 `reason_code`」）、§8 行 871（`s15_revocation_total{voice_kind,reason_code}`——按它做指标维度，等于给每个新原因码加一条时序）、§9 行 979（反模式只提到「`authorized_uses` 为空就放行」，没有原因码）",
+      "s15_status": "全文只有 `RIGHTS_WITHDRAWN`（§5.3 行 759）这一个字面量。§5.4 行 786–796 的错误码表（HTTP 码层面的 `REVOCATION_EVIDENCE_REQUIRED` / `REVOCATION_TERMINAL` / `ALREADY_REVOKED`）与 `reason_code` 是**两套不同的码**，不能混用；§3.1 只要求「需 `reason_code`」而不给集合。于是这个字段今天**既是 NOT NULL 又没有词表**——实现方必须自己发明一套，而它会被 S17（音色缓存）、S45（审计）、以及 §8 的 Prometheus 指标同时消费，三方各发明一套就再也对不上。**本文件不写 `enum`**：写一个只含 `RIGHTS_WITHDRAWN` 的闭集会拒掉 `suspended`/`expired` 的全部事件（那两种转移不可能都是「权利撤回」），写一个补全的集合则是在替 owner 做决定。要 owner 定：是照 S01 §4.3 行 484–512 的 `reason_code` 那样收成 UPPER_SNAKE 七值枚举（`RIGHTS_WITHDRAWN` 正是那种风格），还是保持开放文本 + 一个受控建议表。"
+    },
+    {
+      "field": "`authorized_uses` 的 `prefix:value` 词法，以及 `requested_use`（对象）到它的成员判定规则",
+      "demanded_by": "plans/S15-voice-assets.md §4.2 行 596（「**`requested_use` 不在 `authorized_uses` 内 → `USE_NOT_AUTHORIZED`。** 例如授权『仅限本剧』，请求另一部剧 → 拒绝。这条常被漏掉，但它是 licensed_actor 的核心限制。」）、§4.2 行 551（`requested_use: {series_id, modality:'speech', provider_id?, channel_id?, model_snapshot?, region?}`）、§7 行 687（F4）、§2.3 DDL 行 230（`authorized_uses jsonb NOT NULL, -- ['series:series_demo','modality:speech']`）",
+      "s15_status": "一边是字符串数组、元素形如 `前缀:值`；另一边是带 6 个命名键（其中 3 个可选）的对象。方案说「不在里面就拒」，但**没有说怎么比**。至少有三种读法会给出不同结论：(1) `requested_use` 的每个**非空**字段都必须在数组里有对应的 `field:value`；(2) 只要**任一**字段匹配即通过；(3) 数组里的每个元素都必须被满足（即数组是 AND，缺失即拒）。三者在「授权了 `series:series_demo`，请求同一部剧但指定了 `provider_id`」这个最常见的请求上给出**不同**答案——(1) 因为数组里没有 `provider:_p_azure` 而拒，(2) 通过，(3) 拒。前两种差异就是「合法请求被拒」与「越权请求被放行」的差别。**另外三个前缀没有任何登记处**：`series:` 与 `modality:` 只出现在 DDL 注释与示例里；`requested_use` 的 `channel_id` / `model_snapshot` / `region` 前缀叫什么、要不要进 `authorized_uses`、以及是否允许 `modality:*` 这种通配，全部没有定义。这是 licensed_actor 限制的全部实现依据（行 596 原话），却是全份方案里唯一一处「判定规则不存在」的地方。要 owner 定：前缀清单与每个前缀对应的 `requested_use` 键；多字段时的 AND/OR；以及 `_before` 究竟是不是快照（若确认恒等于当前值，应改名为 `authorized_uses` 并去掉 `_before`）。"
+    },
+    {
+      "field": "`evidence_ref` 是否补 `content_hash`，以及权利文档的 owner 是 S02 还是 S10",
+      "demanded_by": "plans/S15-voice-assets.md §2.4 行 283（`evidence_ref jsonb,`）、行 291（「『谁依据什么撤销』必须可追溯，否则撤销本身无法被审计（E39）」）、§5.3 行 761（示例三键含 `service_id:\"S02\"`）、§10 行 995（C15-5）、contracts/event-envelope.v2.schema.json 的 `data_ref`（四键含 required `content_hash`）",
+      "s15_status": "两件事挤在一起。**(a) 形状**：示例是 `{service_id,id,revision}`，而 envelope 的 `data_ref`、S10 的 `binding_set_ref`、S11–S14 的 `*_ref` 都是四键带 `content_hash`。缺 `content_hash` 时审计只能证明「指向某 id 的第 2 版」，不能证明「那一版的内容是什么」；一旦被引方允许同 revision 重写或跨服务 id 空间重叠，撤销依据就不可复算。这不影响撤销本身（撤销已经发生且 `revoked` 是终态），只影响事后追责——而那正是 E39 要的。**(b) owner**：C15-5 报告 docs/10 说资格检查由「S02/S15」，而 `plans/S02-governance-policy.md` 的 `rights_current` 来源写的是 `S10:binding_set@r12`；示例把 `service_id` 写死为 `S02`。同一份权利文档在 `voice_authorization.rights_ref` 里是四键 `{rights_owner,rights_id,rights_revision,rights_hash}`（带 hash！），在 `evidence_ref` 里是三键无 hash——**同一个服务的两张表对同一概念用了两套形状**。要 owner 定：`evidence_ref` 是否统一成 `rights_ref` 的四键形状；如果是，`rights_owner` 与 `rights_id` 的哪个对应 `service_id` 与 `id`；以及权利文档的权威在 S02 还是 S10（C15-5 若能裁决，`service_id` 的示例值应随之改）。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "VAC-1",
+      "summary": "`aggregate_sequence` 在方案里有两个定义（`= state_seq` / `= revision`），按后者创建事件 seq=0 违约、第二次授权变更撞 outbox 唯一约束使撤销事务回滚",
+      "event_claim": "plans/S15-voice-assets.md §5.3 行 744：「`asset.voice.authorization.changed` on `drama.voice-assets.v2`，partition key `tenant_id:voice_id`，`aggregate_sequence = state_seq`」",
+      "outbox_claim": "§2.8 行 441：「`aggregate_id = voice_id`，`aggregate_sequence = revision`」——同一份方案，隔了 300 行，同一根字段两个含义",
+      "outbox_ddl": "§2.8 行 418–429：`aggregate_id text NOT NULL,  -- voice_id` / `partition_key text NOT NULL,  -- tenant_id || ':' || aggregate_id` / `UNIQUE (aggregate_id, aggregate_sequence, event_type)`",
+      "content_revision": "§2.1 DDL 行 175（`current_revision integer NOT NULL DEFAULT 0`）、§2.2 DDL 行 198–219（`voice_revision` 主键 `(tenant_id, voice_id, revision)`、行 201 `revision integer NOT NULL CHECK (revision >= 1)`、行 217 `CHECK (parent_revision IS NULL OR parent_revision < revision)`）——`revision` 是**音色内容**的版本，与授权状态的 `state_seq` 毫无关系",
+      "why_it_matters": "两条读法各有一个硬失败。**(甲) 按 §2.8 的 `= revision`**：(1) 创建事件发不出去——§4.1 行 544 的建音色事务同时写 `voice`（`current_revision` 默认 0）与授权事件（`seq=1`），此刻 `current_revision = 0`，而 envelope 的 `aggregate_sequence` 是 `integer` + `minimum: 1`（contracts/event-envelope.v2.schema.json 行 45–48），于是**每一个新建音色的授权事件都因 seq=0 而被 schema 拒**，事件永远卡在 outbox 重投。(2) 撤销会失败在数据库——一个音色从 `granted` → `suspended` → `granted` → `revoked` 的三次授权变更，`current_revision` 若一直是 3（内容没变），三次事件的 `(aggregate_id, aggregate_sequence, event_type)` 全等于 `(vox_x, 3, asset.voice.authorization.changed)`，`UNIQUE`（行 429）在**第二次**就抛错，而这三条 INSERT 与 `UPDATE voice_authorization` 在**同一个事务**里（§4.3 行 610–615）。也就是说 **suspend 和 revoke 这两个写操作会整体回滚**——撤销授权这个 E30 的核心动作直接不可用。**(乙) 按 §5.3 的 `= state_seq`**：两个失败都消失（`state_seq` 从 1 起、每次 +1、DDL 行 235 保证严格递增），剩下的唯一代价是 §2.8 行 441 那句注释与 §2.8 行 424 的 `partition_key` 注释（`tenant_id || ':' || aggregate_id`，这个仍然对）变成了误导。**所以这条不是「两种都行」的审美问题**：一个方向会让撤销失败在 DB 层，另一个方向只让一句注释错。本文件不能替方案选（AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」），但消费方必须知道 `aggregate_sequence` 在 S15 事件上的**语义是未定的**，且在按 `state_seq` 去重/保序之前要等这一条裁决。要定的是：§2.8 行 441 是否应改成 `aggregate_sequence = state_seq`（那么 outbox 的 `UNIQUE` 正好是「每个 `state_seq` 一条事件」，天然防重）；还是 `voice_revision` 与授权事件本就该进不同的 aggregate（那 `aggregate_id` 也要分叉）。"
+    },
+    {
+      "id": "VAC-2",
+      "summary": "建音色事件必须写 `reason_code`（库里 NOT NULL），而建音色的命令体里没有这个参数——`POST /voices` 的事务会在这条 INSERT 上失败",
+      "ddl": "plans/S15-voice-assets.md §2.4 DDL 行 281：`reason_code text NOT NULL,`——**事件表强制要求**；§2.3 DDL 行 237：`reason_code text,`——**状态表允许为空**",
+      "transaction": "§4.1 行 544：「事务内：写 `voice` + `voice_authorization(state='granted', state_seq=1)` + `authorization_event(seq=1)` + outbox（`asset.voice.authorization.changed`）」——**建音色就要写一条 `authorization_event`**，即 `seq=1` 的创建事件",
+      "command_body": "§4.1 行 529–535：「```\\nPOST /voices\\n{\\n  command_id, series_scope, display_name, voice_kind, character_ref,\\n  language_profile, emotion_profile, rate_profile,\\n  voice_sample_refs, rights_ref,\\n  authorization: {authorized_uses, scope_notes, expires_at}\\n}\\n```」——**没有 `reason_code`**",
+      "transition_table": "§3.1 行 482：「| （无） | `granted` | 有 `rights_ref`；`cloned`/`licensed_actor` 有 `expires_at` |」——创建转移的条件里**也没有** `reason_code`；只有行 483–484 的两条（`granted→suspended`、`suspended→granted`）写了「需 `reason_code`」",
+      "why_it_matters": "这是**热路径上的硬矛盾**，不是边界情形：`POST /voices` 是每次新建音色都要走的（§4.1 全文、§5.1 行 711 的第一条命令），而它的事务第 3 步要 INSERT 一行 `reason_code` 为 NOT NULL 的 `authorization_event`，命令体里却没有任何字段能填它。三种可能的实现都不对：(1) 填一个固定的 `CREATED` —— 那是实现方发明的词表，而 §8 行 871 的 `s15_revocation_total{...reason_code}` 会把它当成撤销原因统计；(2) 填空串 —— `reason_code` 是 `text NOT NULL`，空串通过 DB 约束，但会让本文件的 `minLength: 1` 拒掉事件，且「空的原因」正是 §4.1 行 542 反对的那类（「空表示没有明确用途，无法审计」）；(3) 不给创建事件写 `authorization_event` —— 那等于违反 §4.1 行 544 与 §2.4 行 286 的主键语义（`(tenant_id, voice_id, seq)` 里 `seq=1` 应当存在）。**正确的解法在两个方向之间**：要么在命令体加一个可选的 `reason_code`（创建时默认某个值，由 owner 定词表——见 `x-needs-owner` 第一条），要么把 `authorization_event.reason_code` 改成可空（与 `voice_authorization.reason_code` 一致，也与 `from_state` 的可空性一致：`seq=1` 是用省略表达「没有前一状态」的同一种手法）。**注意 `from_state` 已经这样做了**——DDL 行 279 给它可空、本文件就收 `null`——所以「创建事件缺字段」在这个服务里已被承认过一次，只是没人把它应用到 `reason_code` 上。要定的是：`reason_code` 跟 `from_state` 一起可空，还是创建命令补参数。"
+    },
+    {
+      "id": "VAC-3",
+      "summary": "`from_state` 由 DDL 解决（可空），但 `revoked` 的终态性与 `to_state` 的枚举出处错位，两处都让「按状态覆盖」的消费方读错",
+      "from_state_ddl": "plans/S15-voice-assets.md §2.4 DDL 行 279：`from_state  text,               -- 可空，无 CHECK`；§3.1 行 482 的转移表首行「（无） → `granted`」",
+      "to_state_ddl": "§2.4 DDL 行 280：`to_state    text NOT NULL,      -- 无 CHECK`；§2.3 DDL 行 228：`state text NOT NULL CHECK (state IN ('granted','suspended','revoked','expired'))`",
+      "terminal": "§3.1 行 489（「`revoked` → * | **禁止**（DB 触发器）」）、行 258–268（`deny_revoked_transition` 触发器）、行 491（「**`revoked` 转出的唯一方式是新建 `voice_id`。**」）、§5.4 行 794（`REVOCATION_TERMINAL`）、§8 行 906（E30-C5）",
+      "s01_comparison": "plans/S01-tenant-access.md §5.6 行 749–790 的 `role_grant.state` 同样是四值 CHECK，但允许 `revoked → pending`、`expired → active`（`contracts/access.grant-changed.v2.schema.json` 的 AGC 组）",
+      "why_it_matters": "两件事，都是「形状对、语义与别处不同」。(1) **枚举的出处错位**：本事件由 `authorization_event` 驱动（§4.3 行 615 的事务第 5 步写 outbox 时，第 4 步刚写了 `authorization_event`），而那张表的 `to_state` 是 `text NOT NULL` **没有 CHECK**；带四值 `CHECK` 的是 `voice_authorization.state`（另一张表）。两个表在同一事务里同时写，所以正常路径上四值成立——但本文件收 `enum` 的依据是那张**不驱动事件**的表。任何非正常路径产生的事件（outbox 手工补发、按 `authorization_event` 重建、从备份恢复后重播）都绕过了 `voice_authorization` 的 CHECK，DB 不会拦第五个值。这不是「本文件收错了」，而是**约束只覆盖了两张表里更靠后的那张**：正确的位置是在 `authorization_event.to_state` 上也加同样的 CHECK（或改成引用同一枚举类型）。(2) **`revoked` 的终态性与 S01 相反**：S01 的 grant 状态可以反复覆盖（`revoked → pending`），所以消费方习惯「`state` 是当前值，后到的覆盖先到的」；S15 里 `revoked` 是单向终结（触发器兜底、只能靠新建 `voice_id` 复活），于是**同一个 `voice_id` 的 `state_seq` 序列上 `revoked` 只出现一次且在末尾**。消费方若把 S15 的事件按「乱序到达就取后到的」处理，会得到一个**永远正确**的结果（因为不会再有后续）——但在乱序窗口内它可能先看到 `revoked` 再看到更早的 `suspended`，若按到达序覆盖就会**把终态覆盖回可恢复态**，而 `check-eligibility` 仍返回 `eligible=false`（强一致读，§4.2 行 592），两边矛盾。正确的合并规则是「按 `state_seq` 取最大」——这条规则在本事件上**是成立的**（`state_seq` 严格递增且唯一，§2.3 行 235、§2.4 行 286 主键），但方案没有写出它，而 S01 的 AGC-1 已经证明同仓另一条事件也是「没写合并规则」。要定的是：`authorization_event.to_state` 是否补 CHECK；以及消费方的合并规则是否该在 `contracts/README.md` 统一写一次（按 `aggregate_sequence` 取最大，对所有带单调序号的 topic 都适用）。"
+    },
+    {
+      "id": "VAC-4",
+      "summary": "`effective_at` 在 DDL 里没有列、语义是「审计用且可能是未来」；消费方若据它排期就是 fail-open，而 payload 里没有 `occurred_at` 可替代",
+      "payload_field": "plans/S15-voice-assets.md §5.3 行 760：`\"effective_at\":\"2026-10-31T09:00:00Z\"`",
+      "semantics": "§4.3 行 642：「`effective_at` 的语义：如果提供未来的 `effective_at`，S15 记录它，但**立即**开始拒绝新调用？本文的选择：**立即拒绝**，`effective_at` 仅作审计记录。……如果需要宽限期，应由 S02 的策略处理，不由 S15 的资格接口处理。见 §10 C15-3。」",
+      "command": "§4.3 行 603：`{command_id, reason_code, reason_text, evidence_ref, effective_at?}`——**可选**",
+      "event_ddl_columns": "§2.4 DDL 行 275–287 的十列：`tenant_id` / `voice_id` / `seq` / `from_state` / `to_state` / `reason_code` / `reason_text` / `evidence_ref` / `actor` / `occurred_at`——**没有 `effective_at`**",
+      "revoke_transaction": "§4.3 行 610–615：「1) 锁 voice_authorization 行 FOR UPDATE / 2) — / 3) UPDATE voice_authorization SET state='revoked', state_seq=state_seq+1, state_changed_at=now(), ... / 4) INSERT authorization_event (seq=new_seq, evidence_ref) / 5) INSERT outbox (asset.voice.authorization.changed, seq=new_seq)」——**第 3 步的 `...` 之外没有任何地方写 `effective_at`**",
+      "why_it_matters": "两件事。(1) **这个字段无处落库**。`authorization_event` 的十列里没有 `effective_at`，撤销事务的 UPDATE 也没有写它，而 §4.3 行 642 说「S15 **记录**它」——记录在哪？唯一的容器是 outbox 的 `payload jsonb`（§2.8 行 425），也就是**它只存在于事件里，不存活于任何表**。后果不是丢数据（事件发出去了），而是**不可重放**：按 `authorization_event` 重建历史时（这正是那张表存在的理由，§2.4 行 272「授权变更历史（审计）」），`effective_at` 会全部消失；而 §2.4 行 291 要求撤销依据可追溯，撤销的「生效时刻」显然是其中一项。同一个问题也落在 `authorized_uses_before` 与 `expires_at` 上（见 VAC-5）——**9 个 payload 字段里有 3 个在这张表里没有列**。(2) **字段名邀请的用法与方案相反**。`effective_at` 在别的服务里是「从此刻起生效」，而这里明确是「立即生效，这个值只进审计、且可以是未来」。§5.3 行 771 给消费方的规则是 `to_state IN ('revoked','expired') → 禁止新调用`（无条件、无时刻），也就是说**正确的实现完全忽略 `effective_at`**。但一个按名字推断的实现会写「`to_state=revoked` 且 `now < effective_at` → 还能用」——这正是 §4.3 行 642 特意排除的宽限期，而在合规撤销上「多用了三十天」是不可挽回的。**payload 里也没有能替代它的时刻**：`occurred_at` 在表里（行 285）但**不在 payload 里**，envelope 的 `time` 是信封时刻。于是「这次撤销是什么时候真的发生的」在 payload 层面缺席，而「什么时候允许生效」在场且会误导。要定的是：`effective_at` 是留在 payload 里并在描述上标死「不是停用时刻」，还是从 payload 移到 `data_ref` 指向的审计记录里；以及 `occurred_at`（或 envelope `time`）是否该明确为唯一的「发生时刻」。"
+    },
+    {
+      "id": "VAC-5",
+      "summary": "`authorized_uses_before` 与 `expires_at` 都不在 `authorization_event` 里，只能从当前行快照；而状态机没有任何转移会改 `authorized_uses`，`_before` 恒等于当前值",
+      "payload_fields": "plans/S15-voice-assets.md §5.3 行 762–763：`\"authorized_uses_before\":[\"series:series_demo\",\"modality:speech\"]` 与 `\"expires_at\":\"2027-03-01T00:00:00Z\"`",
+      "columns": "§2.3 DDL 行 230（`authorized_uses jsonb NOT NULL`）与行 233（`expires_at timestamptz`）——**都在 `voice_authorization`**；§2.4 DDL 行 275–287 的 `authorization_event` **两列都没有**",
+      "transitions": "§3.1 行 480–489 的合法转移表：`granted→suspended`（改 state）、`suspended→granted`（改 state）、`granted|suspended→revoked`（改 state）、`granted→expired`（改 state）、`expired→granted`（改 state + **新 `expires_at`**，行 488「续约，新 `expires_at`」）；`authorized_uses` **一次都没出现**",
+      "revoke_update": "§4.3 行 613：`SET state='revoked', state_seq=state_seq+1, state_changed_at=now(), ...`——不碰 `authorized_uses` 也不碰 `expires_at`",
+      "creation_only_write": "§4.1 行 534 是全文唯一写 `authorized_uses` 的地方（建音色的 `authorization:{authorized_uses, ...}`）",
+      "why_it_matters": "**(a) `_before` 描述一个不存在的差量。** 状态机的五条合法转移里没有一条修改 `authorized_uses`，唯一的写入点在创建（行 534）。所以对这个 voice 的每一次授权变更事件，`authorized_uses_before` 都等于 `voice_authorization.authorized_uses` 的当前值——**它就是当前值，不是变更前的值**。后缀 `_before` 会让消费方去找 `_after`（不存在），或让实现方以为要保留历史版本（而 `authorization_event` 没有这一列，留不下）。更实际的风险：S26 收到 `to_state='suspended'` 的事件、看到 `authorized_uses_before` 里有 `modality:speech`，若把它当作「暂停前的用途，恢复后可用」，那是**对**的；但若把它当作「这次变更撤销掉的用途」，就会误判「这个音色已经不能用于 speech」——而 `suspended` 只是停路由、resume 后一切照旧（§5.3 行 772）。**(b) `expires_at` 是快照而不是变更。** 它同样不在 `authorization_event` 里，撤销事务也不改它（行 613）。于是 `to_state='revoked'` 的事件会带一个**未来的** `expires_at`（示例是撤销事件带 `2027-03-01`），两个字段在语义上直接对立：`revoked` 说「现在就不能用」，`expires_at` 说「到 2027 年才过期」。§5.3 行 771 的规则（`to_state IN ('revoked','expired') → 禁止新调用`）是对的，但它要求消费方**无条件优先 `to_state`**，而方案没有在字段层面表达这层优先级——两个字段并列在同一个 `data` 里，没有哪一个被标成「以我为准」。**唯一真正需要「变更前用途」的场合是 `renew`/`resume`**（要知道恢复了哪些用途），而那两种转移下 `authorized_uses` 根本没变，所以这个字段在需要它的时候恰好不携带信息。要定的是：字段是否改名成 `authorized_uses`（承认它是快照）；`expires_at` 是否该在 `to_state='revoked'` 时置 null（撤销后到期日无意义）或加一个 `expires_at_semantics` 之类的标记；以及 `effective_at`/`expires_at`/`authorized_uses_before` 这三个「当前行快照」是否该整体搬到 `data_ref` 指向的授权视图，让 payload 只留**那次变更**本身（`from_state`/`to_state`/`state_seq`/`reason_code`/`evidence_ref`）。"
+    },
+    {
+      "id": "VAC-6",
+      "summary": "`evidence_ref` 三键无 `content_hash`（全仓 90/91 带），而同表 `rights_ref` 四键带 hash——同一概念两套形状；`service_id:\"S02\"` 又与 C15-5 的 S10 说法冲突",
+      "payload": "plans/S15-voice-assets.md §5.3 行 761：`\"evidence_ref\":{\"service_id\":\"S02\",\"id\":\"rights_doc_01J...\",\"revision\":2}`",
+      "same_table_other_shape": "§2.3 DDL 行 229：`rights_ref       jsonb NOT NULL,           -- {rights_owner,rights_id,rights_revision,rights_hash}`——**四键，带 `rights_hash`**",
+      "envelope_convention": "contracts/event-envelope.v2.schema.json 行 66–93：`data_ref` 的 required 是 `[service_id, id, revision, content_hash]`，`additionalProperties: false`",
+      "census": "contracts/examples/ 下 91 处含 `service_id` 的引用对象，90 处同时带 `content_hash`；唯一例外 `quality-semantic-completed.json` 的 `{\"service_id\":\"S17\",\"ref_revision\":7}` 用的是 `ref_revision` 而非 `revision`，不构成四键引用的反例",
+      "audit_demand": "§2.4 行 291：「`evidence_ref` 必须保留。…… 但『谁依据什么撤销』必须可追溯，否则撤销本身无法被审计（E39）。」；§8 行 907（E30-C6：「`authorization_event` 有 `evidence_ref`、`actor`、`reason_code`」）",
+      "c15_5": "§10 行 995：「docs/10 说资格检查由『S02/S15』执行，`plans/S02-governance-policy.md` 的 `rights_current` 来源写的是 `S10:binding_set@r12`」",
+      "s45_cannot_call_back": "plans/S45-audit-compliance.md §1 行 160：「S45 不反向依赖这些服务」",
+      "why_it_matters": "**(a) 形状。** 撤销依据是全份方案里唯一被明文要求「必须可追溯」的引用（行 291），却比全仓任何其他引用都少一个键：没有 `content_hash`。四键的作用正是让**收件方不必回查**就能固定被引内容；三键只能固定「同 id 同 revision」，能不能固定内容取决于被引方是否保证 revision 不可变、以及跨服务 id 空间是否唯一。而 S45（审计）**不允许回查**（行 160），所以 E30-C6 里提到的 `evidence_ref` 在 S45 手上只是一个 id 加一个数字。**更刺眼的是同一张表里还有第二套形状**：`rights_ref` 是四键、带 `rights_hash`、NOT NULL（行 229），描述的是同一份权利文档。于是「这份权利文档」在 `voice_authorization` 里有 `{rights_owner,rights_id,rights_revision,rights_hash}`、在 `authorization_event` 里有 `{service_id,id,revision}`，两套键名（`rights_owner` vs `service_id`、`rights_id` vs `id`、`rights_revision` vs `revision`）、一个有 hash 一个没有。**这不是 S15 独有**：S10 的 ABS-3 已经在 `binding_set` 上发现「权利指针集合」有第三个形状（`rights_pointer_set` 是 `[{rights_owner,rights_id,rights_revision,rights_hash}]` 的数组）。三处描述同一类对象、三种形状。**(b) owner。** 示例把 `service_id` 写死 `S02`，而 C15-5（行 995）报告 S02 的方案把 `rights_current` 的来处写成 `S10:binding_set@r12`。若裁决倾向 S10，则本示例的 `S02` 是错的；若倾向 S02，则 S02 方案里那一句是错的。**本文件收三键是照示例**（不自行补 `content_hash` 会违反「不从散文推断这些值」的反向——加一个字段同样是发明），所以这个例外是**被记录**的，不是被选择的。要定的是：`evidence_ref` 是否统一成 `rights_ref` 的四键形状（若统一，`service_id` 与 `rights_owner` 的对应关系是什么）；以及权利文档的 owner 是 S02 还是 S10。"
+    },
+    {
+      "id": "VAC-7",
+      "summary": "payload 没有 `actor`，而 `authorization_event.actor` 是 NOT NULL、E30-C6 要求审计含 actor——事件层面丢失「谁撤销」",
+      "payload_field_set": "plans/S15-voice-assets.md §5.3 行 754–764 的 `data` 九键：`voice_id` / `from_state` / `to_state` / `state_seq` / `reason_code` / `effective_at` / `evidence_ref` / `authorized_uses_before` / `expires_at`——**无 `actor`，无 `changed_by`**",
+      "table_column": "§2.4 DDL 行 284：`actor jsonb NOT NULL,`——事件表**强制有**",
+      "acceptance": "§8 行 907（E30-C6）：「撤销留审计 | `authorization_event` 有 `evidence_ref`、`actor`、`reason_code`」——三项里 `actor` 不在事件里；§8 行 908（E30-C7）无 actor 需求",
+      "s01_comparison": "plans/S01-tenant-access.md §4.4 的 `access.grant.changed` payload 含 `changed_by`（`contracts/access.grant-changed.v2.schema.json`），但只带两键、丢了 `source`/`source_ref`（AGC-3）",
+      "s45_cannot_call_back": "plans/S45-audit-compliance.md §1 行 160：「S45 不反向依赖这些服务」",
+      "why_it_matters": "E39「操作链可证明」在撤销这条路径上需要三件事：**谁**按**什么依据**撤了**哪个**授权。事件给了 `evidence_ref`（依据）与 `voice_id` + `state_seq`（哪个），**没有给「谁」**。而 `actor` 是表里的 NOT NULL 列（行 284），也就是说 S15 自己**知道**是谁，只是没发出来。收件方里 S45 是审计的权威（「S45（审计）」是仓库的单一权威之一），而它**不能回查** S15（行 160），于是审计库里永远没有这个撤销的操作人——E30-C6 的验收若在「事件链」上跑会失败，只有在 S15 自己的库上跑才通过。**这与 S01 的 AGC-3 是同一个病的第二个实例**：那边 `changed_by` 在事件里但丢了两键（`source`/`source_ref`），这边 `actor` 整个不在事件里——两者都是「审计需要的那部分恰好没发」。**并且 `actor` 的形状在本服务里也没定义**：DDL 只写 `jsonb NOT NULL`，没有注释；而 `voice.created_by`（行 176）也是 `jsonb NOT NULL` 无注释；S01 的 `changed_by` 是 `{principal_id, principal_type}` 两键、`granted_by` 是四键（AGC-3）。所以即便现在补 `actor` 进 payload，也还得先定它的键集。要定的是：`actor` 是否进 payload；若进，键集照 S01 的 `changed_by` 两键还是照 `granted_by` 四键（后者带 `source`/`source_ref`，正是 E39 要的）；以及 `voice.created_by` 是否同一形状。"
+    },
+    {
+      "id": "VAC-8",
+      "summary": "六处零散漂移：partition key 写成列名、`aggregate_id` 与 DDL 的 `vox_01J...` 形态不符、envelope `tenant_id`/`subject` 形态、无 revision accepted 事件（C15-2）、映射变更仅本地事件（C15-4）、`reason_text`/`scope_notes` 不进事件",
+      "partition_key": "plans/S15-voice-assets.md §5.3 行 744：「partition key `tenant_id:voice_id`」——**用列名**；contracts/event-topics.v2.json 的该 topic 是 `tenant_id:aggregate_id`；§2.8 行 424 的 outbox 注释是 `tenant_id || ':' || aggregate_id`。三处能对齐（行 421 说 `aggregate_id` 列存的就是 `voice_id`），但写法不一致——与 S10 的 ABS-6 是同一形态的第二次出现",
+      "aggregate_id_form": "§5.3 行 752：`\"aggregate_id\":\"vox_linlan\"`；§2.1 DDL 行 166：`voice_id text NOT NULL,               -- 'vox_01J...'`——**注释的形态是 ULID**，示例是可读别名 `vox_linlan`；`voice_revision`、`voice_candidate`、`canonical_pointer` 的主键都用同一个 `voice_id`，所以它跨四张表 join",
+      "envelope_drift": "§5.3 行 751：`\"tenant_id\":\"tenant_demo\"`——contracts/examples/ 下 48 份示例里 30 份用 `tnt_` 前缀、6 份用 `tenant_demo`、12 份是信封形态的示例根本没有 `tenant_id`，全仓没有 `tenant_id` 的词法契约；§5.3 行 750：`\"subject\":\"voice/vox_linlan\"`——`type/id` 斜杠形态，48 份示例里有 10 份用斜杠、S01 用的是裸 `prn_...`，同样无契约。**两处都在 envelope 的裸 `minLength: 1` 下无法被拦，且本文件管不到 envelope 字段**",
+      "no_accepted_event": "§5.3 行 775：「**没有 `asset.voice.revision.accepted` 事件。** 这是本文必须报告的重要缺口（C15-2）：S11–S14 都有 revision accepted 事件，只有 S15 没有。这意味着 S10 的检索投影、S17 的音色缓存都没有接受事件可订阅。本文的应对：`check-eligibility` 同时返回 `voice_revision` 的可用性；订阅方只能靠轮询/显式查询。」",
+      "local_only_mapping_event": "§5.3 行 660：「发布本地事件 `voice.provider-mapping.changed`（**本地事件**，不进契约 topic；S24/S25 通过同步查询或各自的事件获取，见 C15-4）」；§10 行 994（C15-4：「S15 的供应商映射变更（下架/恢复）没有契约事件；S24/S25 如何得知未定义」）",
+      "fields_not_in_event": "§2.3 DDL 行 231（`scope_notes text, -- 例如 \"仅限本剧，不得用于广告\"`）与行 238（`reason_text text,`）都**不进事件**——这一点是对的：`scope_notes` 是自由文本、可能含合同细节，topic 声明 `pii_payload: references_only_by_default`（contracts/event-topics.v2.json）。本条目记它是为了说明「S15 不是把所有列都堆进 payload」，对照 VAC-4/VAC-5 那三个「堆了但没列」",
+      "why_it_matters": "六处单独看都不致命，合起来是一张「这条事件对外能证明什么」的清单。**partition key 与 `aggregate_id` 形态**决定跨服务 join 能不能成立：partition 用 `tenant_id:voice_id`，而 `voice_id` 在示例里是 `vox_linlan`、在 DDL 注释里是 `vox_01J...`——若 S17 的音色缓存按 DDL 形态索引而事件里是别名形态，缓存永远命中不了，而失败是静默的（缓存 miss 只会让它多查一次 `check-eligibility`，不会报错）。**C15-2 与 C15-4 是两条「消费方收不到」**：S10 的检索投影与 S17 的音色缓存没有 revision accepted 事件（只能轮询），S24/S25 不知道供应商映射变了（只有本地事件）——而 `provider_voice_id` 变更正是「同一音色在供应商侧换成了另一个声音」，S24/S25 若不知道，路由到已下架的映射会一直失败到下次人工巡检。**`scope_notes`/`reason_text` 不进事件是对的**（自由文本、合同细节、PII），本条目把它记下来是为了让「哪些该发、哪些不该发」有对照——但这也让 VAC-4/VAC-5 里那三个「发了却没处存」的字段更显眼：真正需要持久化的 `effective_at` 没有列，不需要持久化的三个快照字段反倒进了 payload。要定的是：`voice_id` 的词法（ULID 还是可读别名，两者能否共存）；C15-2/C15-4 是补 topic 还是确认为「订阅方轮询」的长期设计；以及 outbox 注释的 `tenant_id || ':' || aggregate_id` 与方案正文的 `tenant_id:voice_id` 是否统一措辞。"
+    }
+  ]
+}

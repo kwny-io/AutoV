@@ -1,0 +1,32 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG0A1B2C3D4E5F6G7H8J9K0",
+  "source": "S21",
+  "type": "orchestration.run.state-changed",
+  "subject": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "time": "2026-11-06T10:02:41Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "aggregate_sequence": 37,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "cmd_01JBG0C3D4E5F6G7H8J9K0M1N2",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "run_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+    "previous_state": "RUNNING",
+    "state": "WAITING_REVIEW",
+    "manifest_revision": 7,
+    "execution_fence": 2,
+    "completed_nodes": 11,
+    "blocked_nodes": 1,
+    "failed_nodes": 0,
+    "waiting_reason": "QC_REQUIRES_HUMAN",
+    "blocked_reason": null,
+    "current_stage": "SHOT_QC",
+    "terminal": false
+  },
+  "data_ref": null
+}

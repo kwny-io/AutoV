@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/production.video-ready.v2.schema.json",
+  "title": "production.video.ready payload v2",
+  "description": "event `production.video.ready` 的 data 部分。权威定义在 plans/S30-video-production.md §6.4（事件体形状，行 952–971）；各字段的存储来源在 §4 的 DDL（duration_mapping 行 654–674、video_edit_plan 行 677–694、clip_candidate 行 697–720）。这个事件宣布「这条视频候选就绪，检查点前进到它」，并**同时**把「它是否还有问题」以 flags 的形式说清楚——stale_basis / truncates_* / dialogue_window_unverified / requires_recheck 都在这里，因为 S30 是全仓唯一知道这些判定结果的地方。**不含**媒体 URL、prompt 原文、供应商信息（§6.4 行 973）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有 payload 约定；S30 §6.4 的示例没有画它。"
+    },
+    "video_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S30 §6.4 行 954 + §4 的 video_job 表。发布此事件的作业。"
+    },
+    "clip_candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S30 §6.4 行 955 + §4 DDL 行 698（`clip_candidate_id text PRIMARY KEY`）。就绪的候选。与 `checkpoint.to` 同值（§6.4 示例两处都写 `cc_01J…`）——schema 表达不了相等约束，同 PIR-2 的问题。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S30 §6.4 行 956 + §4 DDL 行 703（`shot_lineage_id text NOT NULL`）。跨 Run 计数的锚点（S29 §8.2 的 `AttemptCounterKey` 含它）；S39 归因与 S09 影响闭包都以它为键。"
+    },
+    "segment_no": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S30 §6.4 行 957 + §4 DDL 行 704（`segment_no integer NOT NULL`）。示例与 DDL 都是整数。**这个字段参与业务幂等键**：S30 §7.1 行 996 的键是 `(tenant, shot_lineage_id, segment_no, input_fingerprint)`，所以类型必须统一——若某个实现把它当字符串处理，字符串 \"1\" 与数字 1 会算出不同的键，同一条视频可能被生成两次。"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "来源：S30 §6.4 行 958（`artifact_ref: {…}`，示例省略）。形状取 plans/S28-artifact-ingest.md 行 94 的规范定义，与 episode-manifest.v2 的 accepted_artifact_ref 同构；S30 §4 DDL 行 705（`artifact_ref jsonb NOT NULL`）未加 CHECK 约束。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 —— 归档产物引用恒指向 S28。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S28 行 94。S28 行 94 声明「`revision` 只在 `artifact_id` 内有意义」（docs/04 §1）。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.content_hash。S35/S36 复检靠它确认「审的是不是这份」。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "observed_duration_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S30 §6.4 行 959 + §4 DDL 行 706（`observed_duration_ms integer NOT NULL CHECK (observed_duration_ms > 0)`）。容器实测时长，来自 S28 的探测（§6.4 行 977「S28 的 artifact.ingested —— 需要 observed_duration_ms 与 frame_rate」）。minimum 1 照抄 DDL 的 `> 0`。"
+    },
+    "frame_rate": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "来源：S30 §6.4 行 960 + §4 DDL 行 707（`frame_rate numeric(8,3) NOT NULL`，无 CHECK）。示例是 `24.0`。DDL 没规定正数，但帧率不可能是 0 或负；本 schema 只排除 `<= 0`。numeric(8,3) 的精度（3 位小数）DDL 有约束而 JSON 没有对应表达，故不在此收窄——写 24.0001 会被 DDL 拒而 schema 放行，这是有意的：schema 管形状，DDL 管存储精度。"
+    },
+    "duration_mapping": {
+      "type": "object",
+      "description": "来源：S30 §6.4 行 961 + §4 DDL 行 654–674（不可变表）。八个字段逐个照搬 DDL。**这是本事件最容易被误读的部分**：`target_duration_ms` 是想要多长，`tier_duration_ms` 是供应商只能按档位生成所以实际买了多长，`resulting_duration_ms` 是裁完多长。三条 CHECK 约束里 `dm_math`（`resulting = tier - trim_head - trim_tail`）与 `dm_target_match`（`resulting = target`）是同一个量的两条路径，schema 无法表达跨字段等式——由 S30 的 DDL 保证。",
+      "properties": {
+        "target_duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S30 §4 DDL 行 659（`target_duration_ms integer NOT NULL CHECK (target_duration_ms > 0)`）。"
+        },
+        "tier_duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S30 §4 DDL 行 660（`tier_duration_ms integer NOT NULL CHECK (tier_duration_ms > 0)`）。供应商的可用时长档位。`cost_basis='tier'`（行 665 的 CHECK 只允许这一个值）意味着**按 tier 计费，不是按 target**——这是 S23 计费的输入。"
+        },
+        "trim_mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "head",
+            "tail",
+            "both"
+          ],
+          "description": "来源：S30 §4 DDL 行 661（`trim_mode text NOT NULL CHECK (trim_mode IN ('none','head','tail','both'))`）。**注意 `both` 在 DDL 上被 `dm_both_forbidden_default`（行 670–671）禁掉了**，注释说「需要显式策略时由应用层先记录 policy 再放宽」。也就是说 enum 里必须有 both（DDL 允许），但当前没有策略能让它出现。本 schema 照 DDL 收四个值，不因为 DDL 的另一条约束而砍掉一个——那会把「DDL 内部矛盾」藏进 schema。"
+        },
+        "trim_head_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S30 §4 DDL 行 662（`trim_head_ms integer NOT NULL DEFAULT 0 CHECK (trim_head_ms >= 0)`）。"
+        },
+        "trim_tail_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S30 §4 DDL 行 663（`trim_tail_ms integer NOT NULL DEFAULT 0 CHECK (trim_tail_ms >= 0)`）。"
+        },
+        "resulting_duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S30 §4 DDL 行 664（`resulting_duration_ms integer NOT NULL CHECK (resulting_duration_ms > 0)`）。裁切后的时长，`dm_target_match` 说它必须等于 target。S30 §4.4 的对白约束（行 495 一带）判的是 `dialogue_duration_ms <= target_duration_ms`——用的是 target 而不是 resulting，两者按约束相等。"
+        },
+        "cost_basis": {
+          "const": "tier",
+          "description": "来源：S30 §4 DDL 行 665（`cost_basis text NOT NULL DEFAULT 'tier' CHECK (cost_basis = 'tier')`）。恒为 tier——DDL 只允许这一个值。写成 const 而不是单值 enum，是为了让「它其实没有别的取值」这件事在 schema 层面可见。"
+        },
+        "dialogue_duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "来源：S30 §4 DDL 行 666（`dialogue_duration_ms integer`，可空）。无对白镜头为 null。**这个值的上界语义由 S31 决定**：S31 §4.5（行 1492）明确 S30 的 `dialogue_duration_ms` 应当消费 S31 的 `audio_duration_ms`，而那是**容器实测、是台词跨度的上界**（S31 行 478）。拿上界判「放不放得下」最坏是多报一点时长，反向估算则可能真截断台词（E04）。"
+        }
+      },
+      "required": [
+        "target_duration_ms",
+        "tier_duration_ms",
+        "trim_mode",
+        "trim_head_ms",
+        "trim_tail_ms",
+        "resulting_duration_ms",
+        "cost_basis",
+        "dialogue_duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    "edit_plan_ref": {
+      "type": "object",
+      "description": "来源：S30 §6.4 行 964（`edit_plan_ref: {…}`，示例省略）。**示例没画它，schema 只能按 §4 DDL 的 video_edit_plan 表（行 677–694）推形状**——这是本文件里唯一一处「按表结构而非按示例」写的字段，见 x-conflicts PVR-1。这里按最小可用集收：主键 + revision + 裁切结果。注意 `executed_by`/`executed_at` 不在这里——§4 DDL 行 691–692 说它们**必须由 S42 填**（`vep_executor CHECK (executed_by IS NULL OR executed_by = 'S42')`），而 S30 发这个事件时 S42 还没执行，所以必为 null，不必出现在事件里。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S30 §4 DDL 行 678（`edit_plan_id text PRIMARY KEY`）。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S30 §4 DDL 行 681（`revision integer NOT NULL DEFAULT 1`）+ `vep_rev_uniq UNIQUE (clip_candidate_id, revision)`（行 693）。同一候选可以有多个编辑计划版本，所以引用必须带 revision，否则不知道该按哪一版裁。"
+        },
+        "trim": {
+          "type": "object",
+          "description": "来源：S30 §4 DDL 行 682（`trim jsonb NOT NULL -- {head_ms, tail_ms, resulting_duration_ms}`）。与 duration_mapping 的裁切字段同量但**是另一份记录**——见 PVR-2。",
+          "properties": {
+            "head_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "来源：S30 §4 DDL 行 682 的 jsonb 注释 `{head_ms, tail_ms, resulting_duration_ms}`。DDL 未给列级 CHECK——jsonb 内容不受约束，故此处只按注释里的名字与符号收。"
+            },
+            "tail_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "同上，来自行 682 的 jsonb 注释。"
+            },
+            "resulting_duration_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "同上，来自行 682 的 jsonb 注释。"
+            }
+          },
+          "required": [
+            "head_ms",
+            "tail_ms",
+            "resulting_duration_ms"
+          ],
+          "additionalProperties": false
+        },
+        "first_frame_handling": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "trim_to_next_iframe"
+          ],
+          "description": "来源：S30 §4 DDL 行 683–684（`first_frame_handling text NOT NULL DEFAULT 'keep' CHECK (first_frame_handling IN ('keep','trim_to_next_iframe'))`）。直接影响「首帧是否与 S29 的关键帧对齐」——S29 的检查点结论要成立，首帧必须 keep。"
+        },
+        "last_frame_handling": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S30 §4 DDL 行 685（`last_frame_handling text NOT NULL DEFAULT 'keep'`）——**DDL 这一列没有 CHECK**，而 first_frame_handling 有。故此处只约束非空，不收窄为 enum：收窄会拒掉 DDL 允许的取值。这种不对称本身可能是 DDL 的疏漏（两个字段显然是一对），记在 PVR-3。"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "trim",
+        "first_frame_handling",
+        "last_frame_handling"
+      ],
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "来源：S30 §6.4 行 965（`checkpoint: { \"from\": null, \"to\": \"cc_01J…\", \"checkpoint_seq\": 7 }`）。**字段名与 S29 的朋友事件不同**：S29 用 `from_candidate_id`/`to_candidate_id`（S29 §4.4 行 380），S30 用 `from`/`to`。两个事件由同一批消费者读（S41、S47、S09），同构的名字会省掉一套解析——见 PVR-4。",
+      "properties": {
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "来源：S30 §6.4 行 965（示例里就是 `null`）。首个候选必为 null。字段名是 `from`，不是 S29 的 `from_candidate_id`——见 PVR-4。"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S30 §6.4 行 965（`\"to\": \"cc_01J…\"`）。与顶层 `clip_candidate_id` 同值。"
+        },
+        "checkpoint_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S30 §6.4 行 965（`\"checkpoint_seq\": 7`）。单调递增；S41 与 S08 用它判事件新旧（T30-19，§11 行 1104）。"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "checkpoint_seq"
+      ],
+      "additionalProperties": false
+    },
+    "keyframe_baseline": {
+      "type": "object",
+      "description": "来源：S30 §6.4 行 966（`keyframe_baseline: { \"candidate_id\": \"kfc_…\", \"checkpoint_seq\": 12 }`）。这条视频是照着哪一版关键帧做的。**S29 的失效传播靠这一对**：S29 发新 `production.image.ready` 后，S30 比较自己的 keyframe_checkpoint_seq 与该事件，进而把旧视频标 stale_basis（§6.5 行 982；S29 §4.4 行 390）。这里记录的是视频**构造时**用的基线，不是当前基线——两者不同才是 stale 的定义。",
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S30 §6.4 行 966 + §4 DDL 行 709（clip_candidate 表 `keyframe_baseline_id text REFERENCES video_production.keyframe_baseline_ref`）。注意事件里叫 `candidate_id`、列里叫 `keyframe_baseline_id`——见 PVR-5。"
+        },
+        "checkpoint_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S30 §6.4 行 966 + §4 DDL 行 651（`kbr_hash_uniq UNIQUE (tenant_id, candidate_id, checkpoint_seq)`）。S30 拿它与 S29 事件里更新的 seq 比，判断视频是否 stale。"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "checkpoint_seq"
+      ],
+      "additionalProperties": false
+    },
+    "stale_basis": {
+      "type": "boolean",
+      "description": "来源：S30 §6.4 行 967 + §4 DDL 行 716（`stale_basis boolean NOT NULL DEFAULT false`）。True 表示「这条视频所依据的关键帧已经换过」。**S30 标它，但不自动重生成**——§11 T30-19（行 1104）的原话：「`production.image.ready` 在生成中途到达 → 候选标 `stale_basis=true` + `requires_recheck=true`，**不自动重生成**」。与 flags 里的三个分开写（flags 是对内容本身的判定，stale_basis 是对依据的判定），照示例保留这个层次。"
+    },
+    "requires_recheck": {
+      "type": "boolean",
+      "description": "来源：S30 §6.4 行 968。True 表示这条候选必须重新过 S35/S36 才能被当已接受（T30-19，§11 行 1104）。S29 的同名概念（S29 §4.4 行 403）只出现在正文而不在形状里（见 PIR-1）——S30 这里是显式字段，是本仓库第一个把它画进事件的地方。"
+    },
+    "flags": {
+      "type": "object",
+      "description": "来源：S30 §6.4 行 969–970。三个布尔量回答「这条视频有没有伤到内容」。**为什么打在事件里而不只在 DDL 上**：S41 拿到视频后要决定能不能进正式母版（S41 的 completeness / formal_master_eligible），它不该为了三个布尔去回查 S30。§4 DDL 行 718–720 显示前两个是 clip_candidate 的 NOT NULL 列，第三个 `dialogue_window_unverified` 在 DDL 里**没有对应列**——见 x-needs-owner。",
+      "properties": {
+        "truncates_dialogue": {
+          "type": "boolean",
+          "description": "来源：S30 §6.4 行 969 + §4 DDL 行 718（`truncates_dialogue boolean NOT NULL DEFAULT false`）。画面裁切会不会切掉台词。这是 E04（不能删台词）在视频侧的落点。"
+        },
+        "truncates_action": {
+          "type": "boolean",
+          "description": "来源：S30 §6.4 行 969 + §4 DDL 行 719（`truncates_action boolean NOT NULL DEFAULT false`）。"
+        },
+        "dialogue_window_unverified": {
+          "type": "boolean",
+          "description": "来源：S30 §6.4 行 970 + §4.4 行 495：「对 `native_locked_voice`，C2 **延后**：S30 发布 `production.video.ready` 时带 `dialogue_window_unverified: true`，由 S39 在复检时用 S37 的结果判定」。**S30 的 DDL 里没有这一列**——它是请求期的一个判定结果，不落库，见 x-needs-owner。语义是「我无法判断这段视频有没有切到台词窗口，请你（S39）拿到 S37 的对齐结果后再判」。"
+        }
+      },
+      "required": [
+        "truncates_dialogue",
+        "truncates_action",
+        "dialogue_window_unverified"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "video_job_id",
+    "clip_candidate_id",
+    "shot_lineage_id",
+    "segment_no",
+    "artifact_ref",
+    "observed_duration_ms",
+    "frame_rate",
+    "duration_mapping",
+    "edit_plan_ref",
+    "checkpoint",
+    "keyframe_baseline",
+    "stale_basis",
+    "requires_recheck",
+    "flags"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "dialogue_window_unverified",
+      "demanded_by": "plans/S30-video-production.md §6.4 行 970 + §4.4 行 495",
+      "s30_status": "事件里有，DDL 没有。§4 的 clip_candidate 表（行 697–720）有 truncates_dialogue / truncates_action / stale_basis 三列，**没有 dialogue_window_unverified**。§4.4 行 495 说明了它的成因（native_locked_voice 时对白窗口要等 S37 才能判），所以它是一次性的判定结果而不是持久状态——但那样的话 S39 复检时就无法回查「这条候选当时为什么标了 unverified」，只能靠事件。要么 S30 补一列，要么确认这是有意的「只存在于事件里的事实」。"
+    },
+    {
+      "field": "segment_no 的类型",
+      "demanded_by": "plans/S30-video-production.md §6.4 行 957（示例 `\"segment_no\": 1`）+ §4 DDL 行 704（`segment_no integer NOT NULL`）",
+      "s30_status": "示例与 DDL 都是整数，本 schema 按整数收。列在这里是因为它参与业务幂等键 `(tenant, shot_lineage_id, segment_no, input_fingerprint)`（§7.1 行 996）——若某个实现把它当字符串处理，`\"1\"` 与 `1` 会算出不同的幂等键，同一条视频可能被生成两次。这不是 S30 的文档缺口，而是实现期必须小心的一点。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PVR-1",
+      "summary": "edit_plan_ref 在事件示例里只有 {…}，形状只能从 DDL 推",
+      "s30_event": "§6.4 行 964：`\"edit_plan_ref\": {…},` —— 无内容",
+      "s30_ddl": "§4 行 677–694 的 video_edit_plan 表给出 13 列",
+      "why_it_matters": "本文件按「主键 + revision + 能描述裁切意图的最小集」收（id / revision / trim / first_frame_handling / last_frame_handling），这是**推断**而不是照抄。推断的依据是：S30 发事件时 S42 尚未执行，所以 executed_by/executed_at 必为 null；truncates_* 已提升到顶层 flags；speed 是可选（DDL `jsonb` 可空，默认 null）。但若 S30 的本意是「只发一个 ID，消费方自己回查」，那本字段就应该只有 id。需要 S30 把示例补全。"
+    },
+    {
+      "id": "PVR-2",
+      "summary": "裁切结果在 duration_mapping 与 edit_plan.trim 里各存一份，两份的值关系没有约束",
+      "s30_duration_mapping": "§4 行 662–664：trim_head_ms / trim_tail_ms / resulting_duration_ms，**有** CHECK `resulting = tier - trim_head - trim_tail`",
+      "s30_edit_plan": "§4 行 682：`trim jsonb NOT NULL -- {head_ms, tail_ms, resulting_duration_ms}`，**无** 任何 CHECK（jsonb 内容不受约束）",
+      "why_it_matters": "同一个事件里出现两个裁切描述，看起来描述同一件事，但一个受约束一个不受。若它们不一致（例如 edit_plan 是后来手工调整过的而 duration_mapping 是不可变的历史记录），消费方该信哪个？本 schema 两个都收，不判断。需要 S30 说明二者的职责分工——按 DDL 注释推测 duration_mapping 是「成本与档位的计算依据」（不可变、有 cost_basis），edit_plan 是「给 S42 的裁切指令」（可多版本），但这只是推测。"
+    },
+    {
+      "id": "PVR-3",
+      "summary": "first_frame_handling 有闭集 CHECK，last_frame_handling 没有",
+      "s30_ddl": "§4 行 683–684 `first_frame_handling ... CHECK (first_frame_handling IN ('keep','trim_to_next_iframe'))`；行 685 `last_frame_handling text NOT NULL DEFAULT 'keep'` —— 无 CHECK",
+      "why_it_matters": "这两个字段显然是一对（首帧与尾帧的处理方式），一个有闭集一个没有。可能是 DDL 的疏漏，也可能是尾帧的处理方式确实更开放。本 schema 严格照 DDL 收：前者 enum 两值，后者只要非空。若 S30 确认尾帧也应该是同样的两值，DDL 与 schema 都要补。"
+    },
+    {
+      "id": "PVR-4",
+      "summary": "checkpoint 的字段名在 S29 与 S30 两个事件里不同",
+      "s29": "plans/S29-image-production.md §4.4 行 380：`checkpoint: {from_candidate_id, to_candidate_id, checkpoint_seq}`",
+      "s30": "plans/S30-video-production.md §6.4 行 965：`checkpoint: {from, to, checkpoint_seq}`",
+      "why_it_matters": "同名的概念、同一个 `checkpoint_seq`，但 from/to 的键不同。这两个事件由同一批消费者读（S41 时间线、S47 实时投影、S09 影响闭包），S41 尤其要同时处理图像检查点与视频检查点。名字不一致意味着每个消费者写两套解析，而解析里最容易出错的就是「这个 from 指的是哪一个候选」。本文件按 S30 自己的示例收（`from`/`to`），不改名。"
+    },
+    {
+      "id": "PVR-5",
+      "summary": "keyframe_baseline.candidate_id 在事件里叫 candidate_id，在 DDL 里叫 keyframe_baseline_id",
+      "s30_event": "§6.4 行 966：`keyframe_baseline: { \"candidate_id\": \"kfc_…\", \"checkpoint_seq\": 12 }`",
+      "s30_ddl": "§4 行 709：`keyframe_baseline_id text REFERENCES video_production.keyframe_baseline_ref`",
+      "why_it_matters": "`candidate_id` 这个名字在 image 与 video 两侧都出现过（S29 的 keyframe_candidate、S30 的 clip_candidate），单看名字无法判断它是哪种候选。DDL 的 `keyframe_baseline_id` 更清楚。实现时若两侧各按自己的名字写，一次映射遗漏就会把视频的 candidate_id 填进关键帧基线，而两者都是字符串，类型检查发现不了。本文件按事件示例收 `candidate_id`，不改名。"
+    }
+  ]
+}

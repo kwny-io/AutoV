@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/redaction-policy.v2.json",
+  "title": "Redaction policy (v2): what counts as a secret, how it is neutralised, and what happens when one is found",
+  "description": "Shared decision table for every service that copies data outward from its own authority: S45 audit records, S46 outbound ingress/forwarding, S47 projection payloads and change logs, and any producer writing `details` / `params` / a projection payload. It answers exactly three questions and no more: (1) which fields are secrets, (2) what the neutralised form is and whether it stays correlatable, (3) what the consumer does when a scan hits. Everything else about audit and projection semantics stays in the owning service's plan.",
+
+  "design_version": "2.0",
+  "status": "proposal",
+  "generated_from": null,
+  "owner_note": "This file is hand-authored, not generated. It is not derived from contracts/service-catalog.v2.json and the catalog does not reference it yet.",
+  "supersedes": null,
+
+  "authority": {
+    "owns": [],
+    "note": "This file is a RULE TABLE, not a data authority. It holds no state, no per-tenant configuration and no record of what was redacted. Services read it at load time; a service that finds a secret does not call anyone.",
+    "must_not": [
+      "be treated as an authority for what a secret's real value is",
+      "be used to gate admission, payment or authorization",
+      "be written to at runtime (no dynamically learned patterns persisted back here)"
+    ]
+  },
+
+  "applies_to": [
+    {
+      "service": "S45",
+      "surface": "audit_record.details / outcome_detail / actor / on_behalf_of / policy_ref / evidence_refs, and the canonical form hashed into record_hash",
+      "rule_ref": "plans/S45-audit.md §2.2 (details 不载正文), §2.5 (执行点), §3.3 (redact 在哈希前), §10.6 (S46 侧), §11 C45-7",
+      "scan_name": "PAYLOAD_SECRET_SCAN"
+    },
+    {
+      "service": "S46",
+      "surface": "integration command `params` on the inbound path; every outbound payload S46 hands to an upstream; webhook delivery bodies; S45 audit intents S46 emits",
+      "rule_ref": "plans/S46-developer-integration.md §2.2 (ingress), §4.5 (event 不带正文), §5.2 (params 只存摘要), §8.3 (outbound + 审计意图), §10.5 (S45 侧)",
+      "scan_name": "INGRESS_SECRET_SCAN"
+    },
+    {
+      "service": "S47",
+      "surface": "projection_change_log.payload and SSE `data` (both are handed to a browser verbatim)",
+      "rule_ref": "plans/S47-realtime-projection.md §4.3 (SSE data 形状), §5.2 (执行点：写 change log 前), §10.7 (S45 侧)",
+      "scan_name": "PROJECTION_SECRET_SCAN"
+    },
+    {
+      "service": "any producer",
+      "surface": "any field that is copied out of its own service into an event, an audit intent, or another service's store",
+      "rule_ref": "contracts/event-topics.v2.json pii_payload（每 topic）, docs/04 §4 (事件标准), docs/14 §1 (身份、权限与凭证)",
+      "scan_name": "OUTBOUND_SECRET_SCAN"
+    }
+  ],
+
+  "secret_classes": {
+    "$comment": "Closed set. A scan classifies a match into exactly one of these; there is no `other`. Adding a class is a contracts change. `detect` is the minimum an implementation must do; regexes are given as reference patterns, not as the definition — implementers may use entropy or provider-specific detectors PROVIDED they do not become laxer than the pattern in `must_match`.",
+    "classes": {
+      "api_key": {
+        "id": "api_key",
+        "description": "Long-lived bearer-style key identifying a client, including our own `ak_`/`sk-`-shaped keys and customer BYOK keys",
+        "must_match": "(?i)(\\bak_(live|test)_[A-Za-z0-9]{16,}|\\bsk-[A-Za-z0-9_-]{16,}|(?<![A-Za-z0-9])[A-Za-z0-9]{32,64}(?![A-Za-z0-9]))",
+        "false_positive_risk": "high",
+        "false_positive_note": "The generic 32–64 char alphanumeric branch will hit content hashes, base64 ids and UUIDs without dashes. Implementations MUST exempt values already typed as content_hash / id / revision by the enclosing schema before applying the generic branch. Never apply the generic branch to a field whose schema says it is a hash.",
+        "why_secret": "Posession alone grants access; revocable but valid until revoked",
+        "rotation_expected": true
+      },
+      "bearer_token": {
+        "id": "bearer_token",
+        "description": "Short-lived access/refresh/id tokens: OAuth, JWT, session tokens, the platform's own short-lived workload tokens",
+        "must_match": "(?i)(\\bBearer\\s+[A-Za-z0-9._~+/=-]{16,}|\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,})",
+        "false_positive_risk": "low",
+        "why_secret": "Possession grants the holder the issuer's authority until expiry",
+        "rotation_expected": true
+      },
+      "signature_secret": {
+        "id": "signature_secret",
+        "description": "The key material or full HMAC value used to sign or verify a payload. Covers both the shared secret and the computed signature when the signature could be replayed or used to forge",
+        "must_match": "(?i)(\\bwhsec_[A-Za-z0-9+/=_-]{8,}|X-Drama-Signature\\s*[:=]\\s*t=\\d+\\s*,\\s*v1=[0-9a-f]{16,}|\\bv1=[0-9a-f]{32,})",
+        "false_positive_risk": "medium",
+        "why_secret": "A captured signature over a known payload lets the holder forge a matching payload; the secret itself lets them sign anything",
+        "rotation_expected": true
+      },
+      "provider_credential": {
+        "id": "provider_credential",
+        "description": "Supplier-side credentials: model provider keys, cloud storage keys, region-scoped supplier secrets, OAuth client secrets for a supplier account",
+        "must_match": "(?i)(\\b[A-Z0-9]{16,}\\b(?=.*(?:region|endpoint|supplier|provider))|(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])|\\bclient_secret\\b\\s*[:=]\\s*\\S{8,})",
+        "false_positive_risk": "high",
+        "false_positive_note": "The first branch is a lookahead anchored on naming, not on shape; it will over-match. Restrict it to string values under keys whose name contains region/endpoint/supplier/provider, and treat a hit as `needs_review` rather than an automatic hard secret where the class is uncertain.",
+        "why_secret": "Bypasses S26 and is billed to the platform; the single most costly leak (docs/14 §1 凭证, S46 §10.4)",
+        "rotation_expected": true,
+        "extra_rule": "A provider credential appearing anywhere outside S24's model registration and S26's execution store is a design error, not merely a redaction event (S46 §5.6)."
+      },
+      "private_key_material": {
+        "id": "private_key_material",
+        "description": "Any PEM private key block, raw key material, KMS plaintext, or a password field value",
+        "must_match": "(?is)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]+?-----END [A-Z ]*PRIVATE KEY-----|\\b(?:password|passwd|pwd)\\b\\s*[:=]\\s*\\S{4,})",
+        "false_positive_risk": "low",
+        "why_secret": "Irrecoverable disclosure; a leaked private key cannot be scoped down after the fact",
+        "rotation_expected": true
+      },
+      "connection_string": {
+        "id": "connection_string",
+        "description": "A DSN or URL with embedded credentials, or a URL with a signed query (S3 presign, CDN token)",
+        "must_match": "(?i)([a-z][a-z0-9+.-]*://[^/\\s:@]+:[^/\\s@]+@|(?<![A-Za-z])[?&](X-Amz-Signature|X-Goog-Signature|sig|token)=[A-Za-z0-9%._~+/=-]{16,})",
+        "false_positive_risk": "medium",
+        "why_secret": "The URL alone is a credential; sharing it in an audit detail or a UI payload grants time-boxed access to bytes",
+        "rotation_expected": false,
+        "extra_rule": "A signed media URL must never enter `details` or a projection payload — the owning plan already requires `data_ref` + a permissioned endpoint instead (docs/04 §4). Reaching this class means an upstream already broke its own rule."
+      }
+    },
+    "not_secrets": {
+      "$comment": "Explicitly NOT redacted, because redacting them would destroy the correlation the audit needs. Listed so an implementer does not 'harden' into uselessness.",
+      "entries": [
+        { "pattern": "content_hash / *_sha256 (64 lowercase hex)", "why_kept": "A digest is not reversible and is the whole point of traceability (E39). But see replacement_action.class_c_hashed: if the digest is of a secret, the digest itself may be a secret." },
+        { "pattern": "record_id / stream_key / run_id / job_id / artifact_id / target id", "why_kept": "Opaque identifiers; they carry no credential and are what makes a record correlatable" },
+        { "pattern": "kid_prefix (first 6–8 chars of a key id, per S46 §3.4)", "why_kept": "Deliberately designed to be non-secret and stable across rotation, so a rotate/revoke can be searched" },
+        { "pattern": "principal_id / delegation_id / trace_id / correlation_id / causation_id", "why_kept": "Required for correlation; a principal id is an identifier, not a credential" },
+        { "pattern": "timestamps, amounts, counters, state enums", "why_kept": "No secret content" },
+        { "pattern": "params_sha256, params_bytes (per S46 §5.2)", "why_kept": "S46 already stores only the digest of params; that is the intended form, not a leak" }
+      ]
+    }
+  },
+
+  "replacement_action": {
+    "$comment": "WHAT a neutralised value looks like, and whether it stays correlatable. One form per class outcome — not a menu. `class_a` and `class_b` are the ONLY two neutralised shapes; the difference is whether we can keep a correlation token safely.",
+
+    "class_a_correlatable": {
+      "applies_when": "The secret is high-entropy and a truncated salted digest cannot be brute-forced back, AND the same secret appearing twice must be linkable (key rotation forensics, 'which calls used the leaked key').",
+      "form": "REDACTED:hmac_<scope>:<first16hex>",
+      "definition": "hmac_<scope> = HMAC-SHA256(k_redact_scope, secret_plaintext), lowercase hex, first 16 chars. `k_redact_scope` is a per-tenant, per-class key held in KMS and rotated on the same schedule as the secret class. `scope` is the class id.",
+      "example": "REDACTED:hmac_api_key:9f2c1ab4d7e05c33",
+      "correlatable": true,
+      "correlation_strength": "Two records containing the same secret produce the same token, so a forensic query 'all audit records touched by the leaked key' still works after redaction — which is the entire reason this class exists.",
+      "must_not_be_reversible": "The digest is truncated to 16 hex (64 bits) AND keyed, so an attacker with the audit export but not the KMS key cannot confirm a guessed key. Never store the full digest.",
+      "applies_to_classes": ["api_key", "bearer_token", "provider_credential"],
+      "applies_to_fields": ["details", "outcome_detail", "actor", "on_behalf_of", "projection payload", "webhook body"]
+    },
+
+    "class_b_discarded": {
+      "applies_when": "The secret is low-entropy (so any digest is brute-forceable), or the value has no forensic use once neutralised, or keeping a token would itself be a disclosure (e.g. a signed URL token mapped to an object).",
+      "form": "REDACTED:<class>",
+      "example": "REDACTED:private_key_material",
+      "correlatable": false,
+      "correlation_strength": "None. The record proves a secret of this class was present at this position, and nothing more. Callers that need correlation for these classes must use class_a instead or record a dedicated correlation field, not the secret.",
+      "applies_to_classes": ["signature_secret", "private_key_material", "connection_string"],
+      "rationale": "A password field or a signed URL token has too little entropy to survive any hashing, and a PEM block's digest would still let someone confirm they hold the same key.",
+      "note": "For signature_secret specifically: the HMAC *value* is already derived from a secret whose own disclosure is the problem. Storing hmac_<v1> of it adds nothing a forensic query needs, because the payload hash already gives correlation."
+    },
+
+    "structural_rule": {
+      "comment": "Replacement happens at the LEAF, inside the string, preserving the enclosing JSON shape.",
+      "rules": [
+        "Only the matched substring is replaced. The rest of the string survives: `'Authorization: Bearer eyJ...'` → `'Authorization: REDACTED:hmac_bearer_token:…'`.",
+        "Object keys are replaced too, not dropped — a key named `api_key` keeps its position with a neutralised value, so the reader can see a field existed.",
+        "Array length is preserved; no elements are removed, because audit record shape must stay stable across a chain.",
+        "The enclosing record's required fields are never removed to satisfy redaction. If a required field's value were entirely secret, that is a caller bug and is handled by §fallback, not by silently dropping the field."
+      ]
+    },
+
+    "marker_uniqueness": {
+      "comment": "Why `REDACTED:` and not `***` or `[redacted]`: the prefix must be unmistakable to a human, greppable, and must not collide with legitimate content.",
+      "reserved_prefix": "REDACTED:",
+      "rule": "A value that legitimately begins with `REDACTED:` must be escaped by prefixing a backslash, so `REDACTED:` in a stored record always means 'we redacted here' and never 'the caller typed this'."
+    }
+  },
+
+  "fallback": {
+    "$comment": "THE one answer. Not 'depends'. Read `decision` first; the rest explains why the answer is this and not the obvious alternative.",
+
+    "decision": "redact_and_store",
+
+    "applies_uniformly_to": ["S45", "S46", "S47", "any producer"],
+
+    "meaning": "A scan hit NEVER causes the row, event or payload to be rejected, dropped or moved to a DLQ on redaction grounds. The consumer redacts in place and stores. The redaction itself is reported, once, through the service's own audit/observability path.",
+
+    "why_not_reject": {
+      "rule": "Rejecting on a secret hit would let any producer suppress its own audit row by putting a key-shaped string in `details`.",
+      "elaboration": "S45's mandate is to record that an action happened (E39). If a scan failure blocks the write, then a service with a bug — or an actor with intent — controls whether its action is recorded. That inverts the purpose of an audit log: the leak becomes the escape hatch. The same reasoning applies to S47 (a rejection means a UI event silently vanishes and the projection gaps, which §3.3 of that plan says must never be silently dropped) and to S46 (a 4xx on a valid command would be a denial-of-service on the customer's own API).",
+      "counter_argument_acknowledged": "The intuition to reject comes from a good place: 'a secret in an audit record is a leak, so refuse it.' But the leak has already happened by the time S45 sees the bytes — they came over the wire from a service that already had them. Rejecting does not un-leak; it only deletes the evidence that it happened."
+    },
+
+    "why_not_allow": {
+      "rule": "Storing the secret unmodified is never permitted, even for a `strict_audit` tenant or in an emergency.",
+      "elaboration": "An audit log with a long retention and an export path is the worst place to keep a credential: it is copied to cold storage, exported, and read by forensic tooling, multiplying the exposure. There is no configuration flag that turns this off."
+    },
+
+    "per_surface": {
+      "S45": {
+        "on_hit": "Redact the leaf in the canonical form BEFORE computing record_hash, then append the record normally.",
+        "ordering_is_mandatory": "Redaction MUST happen before hashing. If a record were hashed with the plaintext and stored redacted, the stored record could not be re-hashed and every chain verification (E39) would fail. Equivalently: the stored form IS the canonical form.",
+        "if_redaction_happens_after_hash": "Forbidden. There is no supported path to redact an already-sealed record; doing so would break the chain for every later record in that stream. A record that leaked before this policy was applied is handled by retention and destruction (§12 in the S45 plan), not by editing.",
+        "report": "Increment `audit_secret_redactions_total{class}`, write one S45 audit record of its own with action `audit.payload.redacted`, and emit a warning to the producer's owner. The redaction record must not itself contain the secret (obviously) and must reference the affected record_id.",
+        "outcome_unchanged": "The redaction does NOT change the record's `outcome`. The originating action still succeeded or was denied; only the payload was neutralised."
+      },
+      "S46": {
+        "on_hit_inbound": "Redact the leaf inside `params` before it is hashed into `params_sha256` and before it is forwarded upstream.",
+        "ordering_is_mandatory": "Same rule as S45 but for a different reason: `params_sha256` is what S46 compares on idempotent retry (§2.2 validation, §5.2 storage, §6.1 hash formula). Hashing before redaction and storing after would make a retry with the same client-supplied hash fail the comparison, turning a legitimate retry into `REQUEST_HASH_MISMATCH`.",
+        "forwarding": "The upstream receives the REDACTED form. S46 must not 'pass the real value through to the upstream and only redact the copy': S46 is not an authority for the credential and has no basis to decide the upstream needs it. If a command genuinely requires a credential, that credential belongs in S24/S26's BYOK path, not in S46 params.",
+        "report": "Count `s46_redactions_total{class}` and write the `integration.command.accept` audit with the redacted form. Do not fail the command.",
+        "warning_to_caller": "The 202 response carries no indication of redaction. Telling the caller 'we found a secret in your params' is itself a hint that they sent one; the caller's own scan should have caught it. The information goes to the tenant's security contact, not the request response."
+      },
+      "S47": {
+        "on_hit": "Redact the leaf in the projection payload and in the change-log row before it is persisted and before it can reach SSE.",
+        "ordering_is_mandatory": "The scan runs on the inbound event payload, once, before the projection update. A payload that reached the change log unredacted can be replayed to a browser for up to the retention window (S47 §5.2), so there is no 'fix it later'.",
+        "never_block_the_projection": "A redaction hit must not drop the event. Dropping would create the projection gap that §3.3 explicitly says must never be silently introduced; the correct behaviour is redact + apply + increment `s47_redactions_total{class}`.",
+        "downstream_of_authority": "S47 must also not redact by asking an authority — it holds no credential and has no permission to fetch one. Redaction is purely local, which is why the class table above is closed and mechanical."
+      },
+      "any_producer": {
+        "on_hit": "The producing service redacts before writing its outbox row / audit intent. This is the cheapest place to catch it and the only place where the producer still has the context to report a real defect.",
+        "why_upstream_is_better": "By the time S45 or S47 sees a payload, the producer has already copied it into at least one durable store (its own outbox). Catching it at the producer is the only place that prevents the byte from being written down at all."
+      }
+    },
+
+    "what_is_not_redacted": {
+      "rule": "Only the matched leaf is neutralised. The consumer must not drop the enclosing object, blank the whole `details`, or replace a message with 'contains secret'.",
+      "why": "An audit record saying 'something was redacted and we will not tell you what action it was' is worse than useless for E39 — it fails the 'who did what to what' test. The action, actor, target and outcome are never redacted; only the secret-shaped leaf inside them."
+    },
+
+    "strict_and_unredacted_modes": {
+      "rule": "There is no mode in which a caller may opt out of redaction.",
+      "elaboration": "Not for `strict_audit` tenants, not for internal services, not behind a feature flag, not for local development against production-shaped data. If a test needs to assert on a known secret, it uses a value that is not a real credential and is exempted by the test-only allowlist in §scan_execution.test_allowlist.",
+      "default_off_note": "The feature switches in this platform all default off. This policy is the one thing that defaults ON, because it is a storage precondition rather than a capability. A service that cannot run the scan must fail its startup readiness check, not skip the scan."
+    }
+  },
+
+  "scan_execution": {
+    "$comment": "Where and when the scan runs. Kept minimal — a scan that is expensive gets turned off.",
+
+    "timing": "synchronous, in the write path, before hashing or persisting",
+    "cost_budget": "O(bytes in the scanned subtree). The scanner must not resolve `data_ref`; referenced content is out of scope by construction (docs/04 §4: bodies belong behind a permissioned endpoint, not in events or audit details).",
+    "failure_mode": {
+      "scanner_crashes": "FAIL CLOSED to a coarse fallback: store the payload with every string truncated to its first 8 chars plus `REDACTED:scanner_unavailable`. Never store unredacted when the scanner is unavailable, and never reject — see §fallback.why_not_reject.",
+      "why_this_shape": "Truncation at 8 chars preserves enough shape for a human to recognise 'this was a short value' while making it very unlikely to retain a usable credential, and it cannot fail."
+    },
+    "idempotence": "Running the scan twice must produce the same stored bytes. Since the marker is stable and a neutralised value no longer matches any pattern, a second pass is a no-op.",
+    "test_allowlist": {
+      "purpose": "Let tests assert on redaction without a real credential.",
+      "mechanism": "Values matching `(?i)^TEST_?SECRET_` are never classified as secrets, and only in builds compiled with the test profile. In a production build the allowlist is empty and the code path is absent, not merely disabled.",
+      "why_not_env_var": "A runtime env-var allowlist is a production backdoor. Compile-time only."
+    }
+  },
+
+  "correlation_after_redaction": {
+    "$comment": "The question the parent asked explicitly: after redaction, can we still link back to the original?",
+    "answer": "Partly, and by design — not by accident. Which part is decided by class, in §replacement_action.",
+    "guarantees": [
+      {
+        "guarantee": "Same secret → same token, within one tenant and one secret class",
+        "holds": "for class_a only",
+        "enables": "'which other records did this leaked key touch' remains answerable from the audit export alone, without the plaintext (S45 §4.2 `/records/by-target` index, §5.6 export)."
+      },
+      {
+        "guarantee": "A record never loses its action / actor / target / outcome",
+        "holds": "always",
+        "enables": "E39's 'who did what to what, when, with what result' survives redaction in every case. This is why §fallback.what_is_not_redacted exists."
+      },
+      {
+        "guarantee": "The original plaintext can be recovered from the stored record",
+        "holds": "never",
+        "enables": "Nothing. Deliberately impossible — a reversible redaction is not a redaction, and an audit log that can recover a credential is a credential store."
+      },
+      {
+        "guarantee": "The redaction event itself is recorded",
+        "holds": "always",
+        "enables": "An investigator can tell 'this field was redacted' apart from 'this field was empty', which is the difference between 'the service sent nothing' and 'the service sent a secret'."
+      }
+    ],
+    "explicit_limit": "For class_b the link is one-way and loses the identity of the secret. If a forensic investigation needs 'were these two records touched by the same password', that cannot be answered from the audit log — and that limitation must be stated in the runbook, not discovered during an incident."
+  },
+
+  "interaction_with_other_contracts": {
+    "event-topics.v2.json": "Each topic declares `pii_payload: references_only_by_default`. That is the stronger rule and still governs shape. This policy governs the case where a producer breaks it anyway and a secret-shaped leaf lands in the payload: the consumer redacts rather than drops.",
+    "event-envelope.v2.schema.json": "No change. Redaction operates inside `data` leaves; the envelope's required fields are never secret.",
+    "admission-record.v2.schema.json": "No change. `dispatch.provider_idempotency` etc. carry no credentials by schema.",
+    "S45 chain": "Redaction modifies the canonical form before `record_hash`. A verifier re-reading the stored record re-hashes the stored (redacted) bytes, so `verify-audit-chain` needs no knowledge of this policy. This is the property that makes the policy safe to change its detector over time: detector changes affect future records only, never past ones."
+  },
+
+  "open_questions": [
+    {
+      "id": "R-1",
+      "question": "Who owns `k_redact_scope` (the per-tenant, per-class HMAC key used by class_a), and what is its rotation / destruction semantics?",
+      "impact": "Without it class_a cannot be implemented and the correlation guarantee is unachievable.",
+      "needs": "platform security + KMS owner. Not resolvable in a service plan."
+    },
+    {
+      "id": "R-2",
+      "question": "Does `provider_credential` detection need to be an error rather than a redaction for S46? S46 §5.6 says a supplier credential in S46's tables is a design error, but a well-meaning client can still put one in `params`.",
+      "impact": "If it is an error, S46 would 422 the command — which is exactly the reject-path this policy forbids. There is a real tension between 'the client did something wrong' and 'never let the client suppress its own audit trail'.",
+      "needs": "decision from the S46 owner + security. Provisional answer in this file: redact, do not reject, and raise a P2 alert on the tenant. The design error is in the client, not in the transport."
+    },
+    {
+      "id": "R-3",
+      "question": "Should the `REDACTED:` marker carry the detector version (e.g. `REDACTED:v2:hmac_api_key:…`)?",
+      "impact": "Lets an investigator tell which records were scanned by which detector generation. Costs a few bytes per redaction and makes the marker less pretty.",
+      "needs": "S45 owner. Provisional answer: no — detector generation is recorded once per record in `audit_record.schema_version`'s sibling field or in the redaction audit record, not repeated in every marker."
+    },
+    {
+      "id": "R-4",
+      "question": "Does `docs/14` intend the scan to be a platform-level sidecar (one implementation shared by all services) or per-service code?",
+      "impact": "A sidecar keeps the categories uniform but adds a hop and a dependency on the write path. Per-service code drifts.",
+      "needs": "`docs/14` / `platform/`. This is C45-7's original question and is not answerable from the plan level."
+    }
+  ],
+
+  "invariants": [
+    "A scan hit never rejects a record, event or payload.",
+    "A scan hit never stores the plaintext.",
+    "Redaction happens before hashing, never after.",
+    "Only the matched leaf is neutralised; action / actor / target / outcome survive.",
+    "The `REDACTED:` prefix in a stored value always means 'we redacted', never caller content.",
+    "Redaction is local and mechanical; no service calls another service to decide whether something is secret.",
+    "A guard that is not load-time enforced gets bypassed the first time someone is in a hurry — services must fail readiness if the scanner is absent."
+  ],
+
+  "conformance": {
+    "how_a_service_proves_it_complies": [
+      "A test that puts a known class_a secret in the payload and asserts the stored bytes contain `REDACTED:hmac_<scope>:` and not the secret.",
+      "A test that puts a known class_b secret in the payload and asserts the stored bytes contain `REDACTED:<class>` and not the secret.",
+      "A test that asserts the action / actor / target / outcome of the same record are unchanged by redaction.",
+      "For S45: a test that re-hashes the stored redacted record and gets the stored `record_hash`, proving redaction happened before hashing.",
+      "For S46: a test that retries with the same client-supplied `request_hash` after redaction and gets a replay, not `REQUEST_HASH_MISMATCH`.",
+      "For S47: a test that a redaction hit produces a change-log row and an SSE event (no gap), with the marker present.",
+      "A test that the scanner's crash path stores `REDACTED:scanner_unavailable` and not plaintext."
+    ],
+    "failure_is_not_a_warning": "Every one of the above is a hard test. A redaction regression is a security regression, not a cosmetic one."
+  }
+}

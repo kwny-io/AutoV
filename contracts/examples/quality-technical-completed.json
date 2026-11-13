@@ -1,0 +1,45 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "source": "S35",
+  "type": "quality.technical.completed",
+  "subject": "shot_3_2",
+  "time": "2026-10-30T11:00:00Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "qc_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "aggregate_sequence": 1,
+  "correlation_id": "run_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "causation_id": "cmd_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "report_id": "qc_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+    "report_generation": 1,
+    "qc_layer": "technical",
+    "artifact_sha256": "3f2a1b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708",
+    "manifest_ref": {
+      "id": "mf_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+      "revision": 12,
+      "content_hash": "0c7cf3eb01849dcdb1844b85d3f18b7cd652cbd912f9d6a91f604d576f5c9c98"
+    },
+    "shot_id": "shot_3_2",
+    "shot_lineage_id": "lin_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+    "node_epoch": 4,
+    "run_id": "run_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+    "execution_fence": 2,
+    "decision": "repair",
+    "decision_reason": "TECH.DURATION.MISMATCH blocker",
+    "defect_count": 1,
+    "blocker_count": 1,
+    "coverage_ratio": 1.0,
+    "attempt_slot_id": null
+  },
+  "data_ref": {
+    "service_id": "S35",
+    "id": "qc_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+    "revision": 1,
+    "content_hash": "5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b"
+  }
+}

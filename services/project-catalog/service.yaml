@@ -4,7 +4,7 @@
 service_id: S03
 slug: project-catalog
 name: 项目与剧集目录
-maturity: design_only
+maturity: implemented
 
 domain: creation
 owner_team: creation

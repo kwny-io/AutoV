@@ -4,7 +4,7 @@
 service_id: S27
 slug: provider-connectors
 name: 供应商连接器
-maturity: design_only
+maturity: implemented
 
 domain: execution
 owner_team: execution

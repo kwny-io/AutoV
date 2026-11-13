@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/storyboard.shot-revision-created.v2.schema.json",
+  "title": "storyboard.shot.revision.created payload v2",
+  "description": "event `storyboard.shot.revision.created` 的 data 部分。权威定义在 plans/S06-storyboard.md §4.3（行 571–584，事件体）、§5.4 `storyboard.shot`（行 664–690）、§5.5 `storyboard.shot_revision`（行 692–724）、§5 的 `storyboard.outbox`（行 789–801）、§3.2.2–3.2.4（行 279–313，lineage 铸造）、§11 C3（行 1156）。八条 `x-conflicts` 里最要紧的两条不是形状问题，而是**这条事件在它自己的 outbox 上发不出去、在它唯一的消费者那里建不出主键**：`aggregate_id = shot_id` 省掉了 `branch_id`，而 `shot` 的主键含 `branch_id`，于是两个分支的同一个 `shot_id` 用同一个 `aggregate_sequence` 撞 `UNIQUE`（SRC-2）；`payload` 里没有 `branch_id`，而 S09 的 `lineage_edge` 主键含它（SRC-3）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。**S06 §4.3 的示例没有这个键**——它是本仓库 34 份 payload schema 的统一约定（`post.master-rendered` 等全部带），不是 S06 规定的。本文件照约定收，并在 SRC-1 里记这一处「契约比方案多一个字段」。"
+    },
+    "shot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 575（示例 `\"shot_id\": \"sht_...\"`）+ §5.4 DDL 行 668（`shot_id text NOT NULL,          -- 'sht_01J...'`）+ §1.1 行 60–70（ID 前缀 `sbd_ / sht_ / shl_`）+ §4.3 行 573（`aggregate_id = sht_...`）。**它是本事件的信封聚合键，而 `shot` 的主键是 `(tenant_id, branch_id, shot_id)`（行 686）**——聚合键漏了 `branch_id` 这一维，见 SRC-2。字段本身的形态没有 schema：§1.1 只给前缀，没有长度或字符集约束。本文件收 `minLength: 1`。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§4.3 行 575（示例 `\"shot_lineage_id\": \"shl_...\"`）+ §5.3 DDL 行 656（`shot_lineage_id text NOT NULL,          -- 'shl_01J...'`）+ §3.2.4 行 305（「lineage 跨分支共享」）+ §11 C4 行 1158（「S06 铸造，规则见 §3.2」）。**这是本事件的语义核心**：`shot_id` 是分支内身份，`shot_lineage_id` 是跨分支身份（§1.1 行 70：「它们是同一个镜头的两个版本，不是两个镜头」），而 S23/S44 的「这一镜已经试了 N 次」按 lineage 聚合（§3.2.4 行 310）。**铸造权威在 S06 是 §11 C4 单方面确立的**——那一行自己写着「需写进 `service-catalog.v2.json` 的 S06 `data_owner`，否则下一份方案还会重新讨论」，而 S03 C03-5 / S09 C09-8 / S39 C4 三处仍在记录「未定义」。本文件收 `minLength: 1`：形态（ULID？）没有契约，只有前缀。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§4.3 行 576（示例 `\"revision\": 5`）+ §5.5 DDL 行 697（`revision integer NOT NULL`）+ §5.5 主键 `(tenant_id, branch_id, shot_id, revision)`（行 717）+ §4.3 行 573（`aggregate_sequence = 5`）。**`minimum: 1` 无 DDL 依据**——`revision integer NOT NULL` 没有 CHECK，数据库允许 0 与负数。本文件收 1，因为 envelope 的 `aggregate_sequence` 是 `minimum: 1` 且两者是同一个数。**它与 `aggregate_sequence` 是同一个值，在事件里出现两次**（payload 一次、信封一次），与 S25 的 `revision`（MRT-3）同一个冗余模式。见 SRC-2。"
+    },
+    "changed_fields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "来源：§4.3 行 577（示例 `\"changed_fields\": [\"camera.angle\", \"duration.target_seconds\"]`）+ §4.3 行 582（「`changed_fields` 是 E03 的直接产物：S09 拿它在字段依赖图上找受影响子图，不需要 diff 两份完整 ShotSpec」）+ §9.3 T06-20（行 1034，「`changed_fields` 只含 `camera.angle` | 事件里 `changed_fields` 精确匹配」）。**这是本事件的唯一载荷**，也是三处互不相容的约定所在：(1) **点号形态 vs 斜杠形态**——§4.3 与 T06-20 写 `camera.angle`，而 S09 的 `lineage_edge.field_path` 有 `CHECK (field_path ~ '^(/[^/]*)+$')`（S09 §5 行的 `edge_field_path_shape`），它的示例是 `/camera/angle`、`/beats/2/action`；(2) **数组元素能不能寻址**——`beats` 是数组、`dialogue` 是数组、`constraints.locked_fields` 是数组，而 T06-20 只给了标量路径的用例，`beats` 的某个元素改了到底记不记、怎么记没有一处写；(3) **增删与重排没有表示**——`beats` 从 3 条变 4 条、两句对白换序，`changed_fields` 里该出现什么，没有写。本文件收 `minLength: 1` **不加 pattern**：加斜杠就与 §4.3 的示例和 T06-20 冲突，加点号就与 S09 的 CHECK 冲突，两侧都是权威（AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」）。见 SRC-4、SRC-5、SRC-6。"
+    },
+    "previous_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "来源：§4.3 行 578（示例 `\"previous_revision\": 4`）+ §5.5 DDL 行 715（`parent_revision integer,`——**可空**，且**名字不同**）+ §5.5 主键含 `revision`（行 717）。**示例是 `previous_revision`，DDL 列叫 `parent_revision`**——本文件用示例的名字（事件是 §4.3 定义的），并把这一处差异记进 SRC-7。语义上两者不等价：`previous_revision` 读作「上一版，即 `revision - 1`」，而 `parent_revision` 允许跳跃（§5.5 没有 CHECK 约束 `parent_revision = revision - 1`），一次从 rev 2 重新规划到 rev 6 的 revision 的父版本是 2 而不是 5。**可空**照 DDL：`shot_revision` 的首版没有父版本。本文件收 `[\"integer\",\"null\"]`，并在 SRC-7 里说明「示例给的是 4 而非 null，所以示例展示的不是首版」。"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§4.3 行 579（示例 `\"content_hash\": \"sha256:...\"`）+ §5.5 DDL 行 710（`content_hash char(64) NOT NULL`）+ §4.1 行 540–546（`content_hash` 的组成：`sha256( JCS(ShotSpec 去掉 s06_meta) || \"\\n\" || sha256(concat(sorted(script_line_refs.map(text_hash)))) )`）。**这是本仓库里少数几个算法写全了的哈希**：S06 §4.1 行 540 给了完整的构造式，包括把对白文本哈希拼进去的理由（「为了让『文本被改过但 ShotSpec 看起来没变』这种情况改变 content_hash」）。**但括号配对与编码没有定义**：`JCS(...)` 与第二个 `sha256` 之间用 `\"\\n\"` 拼接，而 `sha256(concat(sorted(...)))` 里的 `concat` 是十六进制串还是原始字节、`sorted` 按什么排序、空数组时 `concat` 得到什么，全没写。本文件收 64 位裸 hex（照 DDL 的 `char(64)`），**拒掉 `sha256:` 前缀**——而 §4.3 的示例正是带前缀的 `\"sha256:...\"`，见 SRC-4。"
+    },
+    "source_storyboard_ref": {
+      "type": "object",
+      "description": "来源：§4.3 行 580（示例 `\"source_storyboard_ref\": {\"storyboard_id\": \"sbd_...\", \"revision\": 8}`）+ §1.1 行 70（`shot_id` 与 `shot_lineage_id` 分开的理由）+ §4.3 行 572（「单镜重写不发 `storyboard.revision.created`（整集分镜没变）」）。**两个字段，没有 `content_hash`**——这一点与 `storyboard.revision.created` 的 `breakdown_ref` 不同（后者是 `{\"breakdown_id\", \"revision\", \"content_hash\"}`，§4.2 行 526）。所以消费方拿到本事件后**无法核对**它引用的那一版分镜自己是否也读到同一版；`shot_revision.storyboard_id` 与 `storyboard_revision` 外键（§5.5 行 722）在库里是强约束，在事件里只剩两个裸字符串。本文件照示例收两键、`additionalProperties: false`，不补 `content_hash`（补了就是猜）。见 SRC-8。",
+      "properties": {
+        "storyboard_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§4.3 行 580 + §5.1 DDL 行 558（`storyboard_id text NOT NULL`）。形态无契约，见 SRC-4 的同类问题。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：§4.3 行 580 + §5.2 DDL 行 559（`revision integer NOT NULL`）+ §5.2 主键 `(tenant_id, storyboard_id, revision)`（行 580 附近）。同 `revision`：`minimum: 1` 是语义推断，DDL 无 CHECK。"
+        }
+      },
+      "required": [
+        "storyboard_id",
+        "revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "shot_id",
+    "shot_lineage_id",
+    "revision",
+    "changed_fields",
+    "previous_revision",
+    "content_hash",
+    "source_storyboard_ref"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`changed_fields` 的元素形态（点号路径 / JSON Pointer / 数组下标表示）",
+      "demanded_by": "plans/S06-storyboard.md §4.3 行 577（示例 `camera.angle`）、§9.3 T06-20（行 1034，「`changed_fields` 只含 `camera.angle`」）、plans/S09-lineage-impact.md 的 `lineage_edge.field_path` 约束 `CHECK (field_path ~ '^(/[^/]*)+$')` 与示例 `/camera/angle`、`/beats/2/action`",
+      "s06_status": "S06 的示例与验收用例一律用点号（`camera.angle`），S09 的列一律用斜杠（`/camera/angle`），而 S09 正是本事件唯一的消费者（§7 行 788 的消费表：「写 `SHOT_DERIVED_FROM_SCENE` / `SHOT_FIELD_DEPENDS`」，幂等键 `origin_event_id`）。若消费方把事件里的字符串原样写进 `field_path`，S09 的 `edge_field_path_shape` 会拒；若转换，转换规则在全仓库没有一处写。`/beats/2/action` 这个示例还暗示数组用**序号**寻址——于是同一个语义变更在两次事件里会因为数组重排而得到不同路径。要补需要 owner 定：路径语法（RFC 6901 JSON Pointer？点号？）、数组寻址（序号 vs 稳定 id）、以及 `beats`/`dialogue` 的变更是否需要拆到元素级。"
+    },
+    {
+      "field": "`previous_revision` 与 `shot_revision.parent_revision` 的关系（是否允许跳跃），以及事件为什么改了列名",
+      "demanded_by": "plans/S06-storyboard.md §4.3 行 578（`\"previous_revision\": 4`）与 §5.5 DDL 行 715（`parent_revision integer,` 可空、无 CHECK）",
+      "s06_status": "两个名字、两种语义可能：`previous_revision` 字面是 `revision - 1`，`parent_revision` 允许父版本不是紧邻的一版（§5.5 没有约束 `parent_revision = revision - 1`，而 §3.2.2 的重规划与 §3.3.2 的 `shot_id_continuity` 策略都会让新 revision 基于一个更早的版本）。若事件发的是 `revision - 1` 而库里存的是真正的父版本，两处会不一致；若事件发的就是父版本，那名字是错的。本文件收可空以容纳首版，但**示例给的 4 对应 rev 5，说明示例不是首版**——所以「首版怎么发」只能靠 DDL 的可空性推。要补需要 owner 定：字段名统一成 `parent_revision`、语义是否允许跳跃、以及首版时发 `null` 还是省略。"
+    },
+    {
+      "field": "`content_hash` 里 `JCS(...)`、`concat`、`sorted` 的精确语义",
+      "demanded_by": "plans/S06-storyboard.md §4.1 行 540–546（`sha256( JCS(ShotSpec 去掉 s06_meta) || \"\\n\" || sha256(concat(sorted(script_line_refs.map(text_hash)))) )`）",
+      "s06_status": "算法结构是本仓库写得最完整的一个，但仍有三处不可实现：`JCS` 是 RFC 8785 吗（没有引用）；`concat(sorted(...))` 拼的是十六进制字符串还是原始字节（若十六进制，64 字符 × N，若字节，32 × N）；`sorted` 排的是什么（`text_hash` 的值？`line_id` 的序？）——`script_line_refs` 是数组且顺序在 JSON 里本就存在，排序等于故意抹掉它，但抹掉之后同一组行换序不改变哈希，这与「对白换序应当改变内容」的直觉相反。空数组时 `concat` 的结果（空串）会让所有无对白镜头的哈希尾部相同，这是设计意图还是巧合也没有说。要补需要 owner 定：JCS 引用、拼接的编码、排序键、空集约定。"
+    },
+    {
+      "field": "`shot_id` / `shot_lineage_id` / `storyboard_id` 的词法与铸造权威",
+      "demanded_by": "plans/S06-storyboard.md §1.1 行 60–70（ID 前缀 `sbd_ / sht_ / shl_`）、§5.3 与 §5.4 的 `text NOT NULL`、§11 C4 行 1158（`shot_lineage_id` 的铸造权威在 S06，但需写进 `service-catalog.v2.json`）、plans/S03-project-catalog.md C03-5、plans/S09-lineage-impact.md C09-8、plans/S39-repair-planning.md C4（三处仍记为「未定义」）",
+      "s06_status": "四个服务对同一个 `shot_lineage_id` 的权威说法不一致：S06 §11 C4 单方面确立「S06 铸造」，而 S03/S09/S39 的缺口表里仍记着未定义。`contracts/` 下没有任何一份 schema 定义这三个 id 的形态（只有前缀约定写在散文里）。跨服务比对时这表现为静默失败而非报错（与 S25 的 MRT-6、S10 的 ABS-7 同一类问题）。要补需要 owner 把 C4 的裁决落进 `service-catalog.v2.json` 的 `data_owner`，并给出一份共享的 id 词法约定。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "SRC-1",
+      "summary": "§4.3 的示例没有 `data_ref`，而 envelope 要求它必填；同一节还自相矛盾地说这个事件类型「不存在」，而它举的名字就是目录里的那一个",
+      "event": "plans/S06-storyboard.md §4.3 行 571–584：示例只有 `type` / `aggregate_id` / `aggregate_sequence` / `data` 四个顶层键",
+      "envelope": "contracts/event-envelope.v2.schema.json 的 `required` 是 16 个键，含 `data_ref`、`id`、`specversion`、`source`、`subject`、`time`、`tenant_id`、`home_cell`、`correlation_id`、`causation_id`、`traceparent`；`data_ref` 的 `oneOf` 只接受四键对象或 `null`，不接受「缺失」",
+      "self_contradiction": "同一节的行 584 写「**这条事件在 event-topics.v2.json 中不存在**（只有 `storyboard.shot.revision.created`）」——**括号里就是本事件的名字本身**，而 `contracts/event-topics.v2.json` 里确实登记着 `storyboard.shot.revision.created`（producer `S06`，topic `drama.storyboard.v2`）",
+      "c_gap": "§11 C3 行 1156：「`event-topics.v2.json` 里是 `storyboard.shot.revision.created`，但没有任何 payload schema；且 `subject` 应是 `shot_id` 还是 `episode_id` 未定义」，建议「新增 `contracts/events/storyboard-shot-revision-created.v2.schema.json`」",
+      "why_it_matters": "三件事叠在一起。(1) **示例过不了本仓库的校验器**：缺 12 个信封键，其中 `data_ref` 不只是格式问题——§4.3 的示例连 `id` / `tenant_id` / `traceparent` 都没有，所以它不是一份可投递的事件，只是一段 `data` 的示意；而它被排版得像一份完整事件（有 `specversion` 与 `schema_version` 的字样在行 571 的同类示例里，本节的却省了）。(2) **§4.3 的自我否定是错的**：写在行 584 的那句「不存在」如果被实现方读到，会让人以为这个 topic 未登记而另起一个类型名，从而在目录之外造出第二个类型——而目录里 `storyboard.shot.revision.created` 从 producer 到 topic 都齐。而按同一份方案 §4.2 行 543–561 的定义，`storyboard.revision.created` 是一条内容完备、带 `data_ref`、`data` 有 12 个键的正式事件——**它在本仓库的 `event-topics.v2.json` 里根本不存在**，`drama.storyboard.v2` 上只登记了本事件这一个类型。也就是说 §4.3 那句「不存在」如果被当真，被质疑的那个类型其实是对的，而真正缺席的是它上一节的兄弟事件；两者方向正好相反。(3) **C3 给出的路径 `contracts/events/...` 在本仓库不存在**，本仓库的 payload schema 一律平铺在 `contracts/` 下（44 份 `.schema.json`）。本文件的路径按仓库现状取 `contracts/storyboard.shot-revision-created.v2.schema.json`；C3 的路径差异记在这里，不自行改 C3。**`subject` 的取值本文件不裁定**——C3 说未定义，`storyboard.revision.created` 的示例取 `subject: \"ep_...\"` 而 `aggregate_id: \"sbd_...\"`（两个不同的值），所以「subject 是不是 episode_id」在本服务内只有一处先例，且它与 `aggregate_id` 不同源；`data` 里也没有 `episode_id` 可填。**这一条不选边。** 同一类偏差在 S06 的两份示例里还有四处，都是「方案的做法与全仓库的既成约定不一致」：`home_cell` 写 `cell-a1`（连字符），而其余 36 份带这个键的示例一律 `cell_a1`（下划线），§4.2 行 551 与 §4.3 同；`source` 写 `s06.storyboard`（§4.2 行 549），而 `data_ref.service_id` 的 pattern 是 `^S[0-9]{2}$`，全仓库示例也一律写裸服务号，本示例取 `S06`；`time` / `occurred_at` 写毫秒加 `Z`（`…:00.000Z`），其余示例写整秒（`…:00Z`），两者都合 `date-time`，故不构成校验失败；`data_ref.content_hash` 写 `sha256:…`（§4.2 行 560），而 envelope 的 `data_ref.content_hash` pattern 同样是 `^[0-9a-f]{64}$`（`contracts/event-envelope.v2.schema.json`）——**这一处是与 SRC-4 同一根因的第二个落点，且它连信封都过不了，不只是写库时过不了。**本示例在这四处一律取全仓库的约定值。"
+    },
+    {
+      "id": "SRC-2",
+      "summary": "`aggregate_id = shot_id` 省掉了 `branch_id`，而 `shot` 的主键含它——两个分支的同一个 `shot_id` 用同一个 `aggregate_sequence` 撞 outbox 的 `UNIQUE`，撞了就整笔事务回滚",
+      "event": "plans/S06-storyboard.md §4.3 行 573：`\"aggregate_id\": \"sht_...\", \"aggregate_sequence\": 5`",
+      "ddl": "§5.4 行 686：`PRIMARY KEY (tenant_id, branch_id, shot_id)`——**`shot_id` 在库里不是全局唯一，`(branch_id, shot_id)` 才是**",
+      "lineage_rule": "§3.2.2 行 281–285（`mint_or_inherit_lineage`）：「情形 1：分支继承 → `return parent_shots[proposal.inherits_shot_id].shot_lineage_id`」；§3.2.3 行 298：「分支分叉 | 父分支的 `shot_id` | 继承父的 lineage」；§9.1 T06-09（行 1009）：「分支分叉继承 | 新分支的 `shot_id` 沿用父的 lineage」",
+      "outbox": "§5 行 789–801：`aggregate_id text NOT NULL`、`aggregate_sequence bigint NOT NULL`、`UNIQUE (aggregate_id, aggregate_sequence, event_type)`——**没有 `branch_id` 列，唯一键里也没有它**",
+      "partition": "contracts/event-topics.v2.json 的 `partition_key` 是 `tenant_id:aggregate_id`——同样不含 `branch_id`",
+      "why_it_matters": "这是本文件里唯一一个会**让写入直接失败**的问题，而不是不一致。(1) 分支分叉时 `shot_id` 被沿用（§3.2.3 与 T06-09 都这么说），于是分支 A 与分支 B 各有一行 `storyboard.shot`，`shot_id` 相同、`branch_id` 不同——这是主键允许的。(2) `shot_revision` 的主键是 `(tenant_id, branch_id, shot_id, revision)`，分叉时按 U7（行 1179）「**复制**（分支可独立演进）」，所以分支 B 的那一镜从 rev 5 的拷贝开始，之后改一次就是 rev 6——**与分支 A 的 rev 6 同号**。(3) 事件按「重写就发」产生，于是 A 与 B 各发一条 `aggregate_id = sht_xxx`、`aggregate_sequence = 6`、`event_type = storyboard.shot.revision.created` 的行，**撞 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`**。(4) outbox 行与业务写在同一个事务里（本仓库 S24/S42 的同构写法，S06 的时间线没有例外说明），所以 23505 **不是「少发一条事件」，而是整笔单镜重写回滚**——分支 B 的第二个分支一改镜就改不动。`partition_key` 也印证了同一件事：两条事件落在同一个分区、同一个 aggregate 上，下游按 `(aggregate_id, aggregate_sequence)` 去重时还会把其中一条当成重复丢掉。**根因是聚合键选错了维度**：`shot` 的身份是 `(branch_id, shot_id)`（DDL 唯一的权威），而事件只用了后半截。修法有两条互斥的方向——把 `aggregate_id` 改成 `branch_id:shot_id`（与 `partition_key` 的 `tenant_id:aggregate_id` 拼起来正好是 `tenant:branch:shot`），或者在 outbox 唯一键里补 `branch_id`——本文件**不选边**，因为两者都会改变已登记 topic 的 `partition_key` 语义。本文件对 payload 不做任何补救：`branch_id` 缺失是 SRC-3 的另一半。"
+    },
+    {
+      "id": "SRC-3",
+      "summary": "payload 里没有 `branch_id`，而 S09 的 `lineage_edge` 主键含它——唯一的消费者建不出主键",
+      "consumer": "plans/S09-lineage-impact.md 的消费表：「`storyboard.shot.revision.created` | S06 | 写 `SHOT_DERIVED_FROM_SCENE` / `SHOT_FIELD_DEPENDS` | `origin_event_id`」",
+      "edge_ddl": "plans/S09-lineage-impact.md `CREATE TABLE lineage_edge`：`tenant_id text NOT NULL,` / `branch_id text NOT NULL,` / `edge_id text NOT NULL,` … `PRIMARY KEY (tenant_id, edge_id)`，且三个索引全部以 `(tenant_id, branch_id, …)` 开头",
+      "edge_self_loop": "plans/S09-lineage-impact.md 行 210：「**`SHOT_FIELD_DEPENDS` 是唯一允许同服务内自环的 kind**，由 `edge_not_self` 之外的语义保证：`source_revision <> target_revision` 或 `field_path` 不同即可」",
+      "why_it_matters": "S09 收到本事件要写两类边，两类都需要 `branch_id`：`edge_id` 可以用 `origin_event_id` 派生（事件有 `id`），但 `branch_id` 是 `NOT NULL` 且所有索引的第一个维度，而 payload 的 8 个字段里**没有任何一处携带它**——`shot_id` 不带分支（SRC-2 已证明同一个 `shot_id` 存在于多个分支）、`shot_lineage_id` 恰恰是**跨**分支共享的那个 id（§3.2.4 行 305），`source_storyboard_ref` 只有 `storyboard_id` 与 `revision`。所以 S09 要么回查 S06 的 `GET /shots/{id}/lineage`（§4.3 行 566 说那是「第二条路径」，意味着回查是可选的），要么从 envelope 的 `partition_key` 反推（而它也不含 `branch_id`，SRC-2）。**同一个 `shot_id` 的两个分支会产生两组语义相同的边**，而 S09 无法区分它们属于哪个分支——它的 `valid_from bigint`（本 branch 的投影水位）也随之无法确定。这与 `SHOT_FIELD_DEPENDS` 的自环判定还叠加了一层：自环允许「`source_revision <> target_revision` 或 `field_path` 不同」，而本事件给了 `revision` 与 `previous_revision`，所以自环的可构造性依赖于 `previous_revision` 非 null——**首版事件的 `previous_revision` 是 null**（DDL 可空），于是首版的边连自环判定都构造不出来。要定的是：`branch_id` 该进 payload 还是靠 envelope 表达（`subject`？`partition_key`？），以及首版事件该不该发。"
+    },
+    {
+      "id": "SRC-4",
+      "summary": "`content_hash` 在示例里带 `sha256:` 前缀，而 DDL 是 `char(64)`、S09 的 CHECK 是裸 hex——照示例抄的实现会被两处各拒一次",
+      "event": "plans/S06-storyboard.md §4.3 行 579：`\"content_hash\": \"sha256:...\"`",
+      "ddl": "§5.5 行 710：`content_hash char(64) NOT NULL`——64 字符，装不下 64 + 7",
+      "consumer_check": "plans/S09-lineage-impact.md `lineage_edge` 的 `CONSTRAINT edge_hash_shape CHECK (source_hash ~ '^[0-9a-f]{64}$' AND target_hash ~ '^[0-9a-f]{64}$')`",
+      "sibling": "本仓库 contracts/ 的 44 份 schema 里有 37 份用 `^[0-9a-f]{64}$`（PDL-5 / PRD-4 已记录同一分歧）；§4.2 的 `breakdown_ref` 与 `data_ref` 也都写 `sha256:...`",
+      "why_it_matters": "这不是风格差异，是**长度越界**：`char(64)` 插入 71 个字符会被 Postgres 拒绝（`value too long for type character(64)`），S09 的正则也会拒。所以「照 §4.3 的示例写」在写库那一刻就失败。本文件收裸 hex，与 DDL 和全仓库 37 份用裸 hex 的 schema 一致。**但 `sha256:` 前缀在 S06 内部是自洽的另一种约定**——§4.1 行 540 的构造式写的就是 `sha256(...)`，而 `sha256:` 前缀正是把一个算法名显式写出来的做法；真正缺的是「谁在什么时候剥掉它」。要定的是全仓库统一用哪种（裸 hex 已在 42 份 schema 里事实上统一），以及 §4.2/§4.3 的示例要不要跟着改。"
+    },
+    {
+      "id": "SRC-5",
+      "summary": "`beats` / `dialogue` / `locked_fields` 是数组，`changed_fields` 无法寻址它们的元素——而 E03 的字段依赖图恰恰要细到这个粒度",
+      "arrays": "contracts/domain-v1/shot-spec.v1.schema.json 的 `beats`（`items` 含 `time_range` 与 `action`，`minItems: 1`）、`dialogue`（`items` 含 `line_id` / `character_id` / `text` / `locale` / `emotion` / `voice`）、`constraints.locked_fields`（`items` 为字符串）",
+      "consumer": "plans/S09-lineage-impact.md 行 74 的边定义：「`SHOT_FIELD_DEPENDS` | S06 shot 字段 | S06 shot 字段 | `/camera/angle` → `/beats/2/action` | S06 自报（DSL 派生）」；行 549：「从 `SHOT_FIELD_DEPENDS` 找同 shot 内受影响字段（例如 `/duration/target_seconds` → `/beats/*/duration`、`/end_pause`）」",
+      "example": "plans/S06-storyboard.md §4.3 行 577 的 `changed_fields` 只给两个标量路径：`[\"camera.angle\", \"duration.target_seconds\"]`",
+      "why_it_matters": "S09 的边定义自己就用了 `beats / 2` 这种带序号的下标（`/beats/2/action`），说明它**预期**字段粒度能到数组元素；而 S06 的事件示例只有标量路径，§9.3 的 T06-20 验收项也只校验标量匹配（「`changed_fields` 只含 `camera.angle`」）。于是「改了 `beats[2].action` 时 `changed_fields` 里应该是什么」这个 E03 最核心的场景**没有任何一处定义**——而 E03 是 §12 行 1190 明写的「必须在接真实模型前全绿」的两组之一。另一个方向的问题同样没解：`dialogue` 的元素有稳定的 `line_id`（schema 里有），可以用 id 寻址；`beats` 的元素**没有任何 id**（schema 的 `items` 只有 `time_range` 与 `action`，`additionalProperties: false`），所以它只能靠序号——而序号在插入一条 beat 后会整体平移，导致「改了 beat 2」与「在位置 2 插了一条」产生同一串路径。要定的是：`beats` 要不要 in-beat id（那要动 `shot-spec.v2`，与 §11 C2 的 v2 计划合并）、数组变更怎么表达（下标 / 通配 / 全量替换）。"
+    },
+    {
+      "id": "SRC-6",
+      "summary": "`changed_fields` 只能表达「这个字段的值变了」，表达不了增、删、重排——而这三类正是它唯一消费者的输入",
+      "field": "plans/S06-storyboard.md §4.3 行 577：`\"changed_fields\": [\"camera.angle\", \"duration.target_seconds\"]`",
+      "consumer_use": "plans/S06-storyboard.md §4.3 行 582：「S09 拿它在字段依赖图上找受影响子图，不需要 diff 两份完整 ShotSpec」；plans/S09-lineage-impact.md 行 567（S09 侧）：「E03 的『字段差异 → 最小依赖闭包』从这里起步」",
+      "ddl_signals": "§5.5 行 697 `revision`、行 715 `parent_revision`、行 704 `shot_order integer NOT NULL`、行 705 `display_shot integer NOT NULL`——**顺序与显示位置是 revision 自己的列**，说明「重排」在这个模型里是内容变更的一种",
+      "why_it_matters": "三类变更在 `changed_fields` 里无处安放：(1) **增**——`beats` 从 3 条变 4 条、`dialogue` 补了一句，`changed_fields` 记 `[\"beats\"]` 还是 `[\"beats/3\"]`？记前者就把整个数组当成一个字段，S09 的依赖子图会退化成「整个 beats 都受影响」；记后者在旧版本里没有对应元素，图的另一侧为空。(2) **删**——同理反向，而且删掉的路径在一份「现在有哪些字段」的图上根本不存在。(3) **重排**——`shot_order` / `display_shot` 的变化（§5.5 行 704–705）在两个 `shot_revision` 之间是「值变了」，但属性的语义是「这一镜在整集里的位置换了」，S09 的 `SHOT_FIELD_DEPENDS` 自环判定（「`source_revision <> target_revision` 或 `field_path` 不同」）会把它当成一次普通的字段变更，而它对下游（EDL、按位置聚合的边）的影响是全局的。本文件不引入 `change_kind`（那是 S24 的做法，S06 没定义）——加了就是从散文推断一个契约里没有的维度。要定的是：`changed_fields` 是否需要第三态（加/删/改），还是补一个并行的增删列表。"
+    },
+    {
+      "id": "SRC-7",
+      "summary": "`previous_revision`（示例）与 `parent_revision`（DDL 列名）是同一个东西的两个名字，且语义可能不同——一个读作 revision−1，一个允许跳跃",
+      "event": "plans/S06-storyboard.md §4.3 行 578：`\"previous_revision\": 4`——与同节的 `\"revision\": 5` 相邻，读作 `revision - 1`",
+      "ddl": "§5.5 行 715：`parent_revision  integer,`——可空、**无 CHECK 约束**它与 `revision` 的关系",
+      "replan_paths": "§3.2.2 行 281–285（情形 2「同分支重规划」沿用 lineage）、§3.3.2 的 `shot_id_continuity` 策略、§11 C6 与 §12 U3（`shot_id_continuity` 默认 `inherit_by_beat_anchor`）",
+      "why_it_matters": "两个名字选了不同的语义，而事件与库各用一侧就没有一处能对齐。(1) **若语义是「上一版」**：那么从 rev 2 重新规划出 rev 6 时，`previous_revision` 只能填 5（它按名字只是 rev−1），而库里 `parent_revision` 填的是 2——S09 的回溯（它按 `origin_event_id` 幂等写边，且需要知道这次变更基于哪个版本）会拿到一个错误的起点。(2) **若语义是「父版本」**：那名字应当与 DDL 一致，否则每个读事件的人都要自己猜。(3) **首版的表示**：DDL 可空说明首版 `parent_revision IS NULL`，而事件侧没有任何一处说首版发 `null` 还是省略字段；本文件按 DDL 收 `[\"integer\",\"null\"]` 且必填，于是首版必须显式发 `null`——这是从可空列推出来的，不是原文写的。而 §4.3 的示例给的是 4（不是 null），所以示例展示的不是首版，首版的形状在整个 S06 里没有先例。要定的是：字段名统一、语义是否是紧邻上一版、首版怎么表示。"
+    },
+    {
+      "id": "SRC-8",
+      "summary": "`source_storyboard_ref` 没有 `content_hash`，而同类引用（`breakdown_ref`）有——消费方因此无法核对它读到的是同一版分镜",
+      "event": "plans/S06-storyboard.md §4.3 行 580：`\"source_storyboard_ref\": {\"storyboard_id\": \"sbd_...\", \"revision\": 8}`——**两个键**",
+      "sibling_ref": "同文件 §4.2 行 526：`\"breakdown_ref\": {\"breakdown_id\": \"bkd_...\", \"revision\": 4, \"content_hash\": \"sha256:...\"}`——**三个键**；§4.2 行 572 的 `data_ref` 也是四键（含 `content_hash`）",
+      "why_it_matters": "同一份方案里，两种「指向另一个版本的引用」用了不同的形状：`breakdown_ref` 带 `content_hash`，`source_storyboard_ref` 不带。后果是可复算性：`shot_revision` 与 `storyboard_revision` 在外键上是强关联（§5.5 行 722 的复合外键），但在事件里只剩 `(storyboard_id, revision)` 两个裸字符串，而 `storyboard_revision` 的 `revision` 在同一 `storyboard_id` 下唯一（§5.2 主键），所以**在正常情况下**够用——真正的问题在异常路径：§7 行 938（回滚）说「回滚不撤销已 `SEALED` 的 revision」，§5.2 的 `UNIQUE (tenant_id, storyboard_id, content_hash)` 又允许同一 revision 被 `SUPERSEDED`。于是同一 `(storyboard_id, 8)` 在不同时间可能指向不同内容（`state` 变了但行在），而事件里没有能判这件事的东西。S09 按 `origin_event_id` 幂等写边时，重放一条旧事件会重新计算依赖——**它算的是当前的分镜，而不是当时那一版**。本文件照示例收两键、不补 `content_hash`（补了就是猜，而 S06 的 §4.2 已经示范了带哈希的写法，说明这是遗漏而非刻意）。"
+    }
+  ]
+}

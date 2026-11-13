@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/change.plan-applied.v2.schema.json",
+  "title": "change.plan.applied payload v2",
+  "description": "event `change.plan.applied` 的 data 部分。权威定义在 plans/S07-change-management.md §5.5（行 856–890，16 个字段的示例）、§2.1（行 111–158，`change_plan` DDL）、§3.1（行 384–394，状态机）、§4.3（行 587–609，S08 commit 的失败分支）、§4.4（行 611–636，apply 之后）、§5.6（行 906–914，S07 消费的事件）、§9（行 1117–1128，C07-1..C07-10）。**这份 schema 与前面几份的毛病方向相反**：它的标量字段几乎每一个都有真 DDL `CHECK` 撑着（`plan_hash`、`currency`、`execution_fence`、`estimated_cost_upper_micro`、`applied_at` 全部有约束），所以取值域清楚得很；坏掉的是**外面**——S07 §5.5 列了四个消费方，其中三个根本不认这事件，而唯一的那个 S07 明确写了「不消费」（CPG-1、CPG-2）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§5.5 的示例未画这一项，按 contracts 既有 payload 约定补。"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.5 行 870（示例 `change_01H...`）+ §2.1 DDL 行 114（`plan_id text NOT NULL`，主键 `(tenant_id, plan_id)`）。**它同时是 envelope 的 `aggregate_id`**（§5.5 行 858「`aggregate_id = plan_id`」），所以事件自报了一遍分区键——冗余但无害，消费方不必回头读 envelope。"
+    },
+    "plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§5.5 行 871（示例 `\"…\"`）+ §2.1 DDL 行 144（`CONSTRAINT cp_hash_shape CHECK (plan_hash ~ '^[0-9a-f]{64}$')`）+ §1.3 行 84（「**`plan_hash`** = `sha256(JCS(plan 去掉 plan_hash 与 created_at))`」）。**格式有出处，算法有出处，被哈希的对象没有**：这个 hash 覆盖的是**整份 plan**（含 `patches`、`instruction`、`impact`、`derived_adjustments`、`expires_at`……），而事件只带 `plan_hash` 和 plan 的一小部分字段。消费方拿到事件**无法复算这个 hash**，只能把它当成一个不透明的确认印章——这与 S09 的 LNI-2（`analysis_hash` 覆盖 7 键而事件只发 5 键）是同一个形态，只是缺得更多。见 CPG-4。"
+    },
+    "base_manifest_ref": {
+      "type": "object",
+      "description": "来源：§5.5 行 872（示例 `{\"id\":\"manifest_ep3\",\"revision\":12,\"content_hash\":\"…\"}`）+ §2.1 DDL 行 121（`base_manifest_ref jsonb NOT NULL,  -- {id, revision, content_hash}`）+ 行 122（`base_revision integer NOT NULL,  -- = base_manifest_ref.revision`）。**三键**，与 S08 的 `manifest_ref` 同形（也是三键）——这一点与 S10 的 `binding_set_ref`（四键带 `service_id`）不同，仓库里两种约定并存，本文件照 S07 的示例走三键。**`revision` 的上界是 `base_revision`，DDL 有 `cp_base_revision_positive CHECK (base_revision >= 1)`**，所以 `minimum: 1` 有据。见 CPG-8：`rebased: true` 时这个字段指的是「rebase 前的基础」还是「rebase 落到的位置」，事件里看不出来。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "new_manifest_ref": {
+      "type": "object",
+      "description": "来源：§5.5 行 873（示例 `{\"id\":\"manifest_ep3\",\"revision\":13,\"content_hash\":\"…\"}`）+ §4.4 行 615–629（S08 `:commit` 的响应 `{manifest, previous_revision, rebased, changed_node_epochs, outbox_event_id}`）。**`id` 与 `base_manifest_ref.id` 相同是常态**（同一集的 manifest 从 rev 12 前进到 rev 13，§5.5 的示例就是如此），但**跨集修改时不同**：§4.5（行 654–701）的 E08 改的是前集，一个 plan 可能推进多集的 manifest，而 `new_manifest_ref` 只能装一个。这是单值字段承载多值语义——事件没有 `new_manifest_refs` 数组，`affected_episode_ids` 可以不止一个（行 881 是 `[\"ep3\"]`，但它是数组）。见 CPG-3。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5.5 行 874（示例 `2`）+ §2.1 DDL 行 124（`execution_fence bigint NOT NULL,  -- 生成计划时读到的值，只读`）+ 行 146（`CONSTRAINT cp_fence_positive CHECK (execution_fence >= 1)`）。**注意 DDL 注释说的是「生成计划时读到的值」**——那是 `PLANNING` 时刻的 fence，而本事件在 `APPLYING → APPLIED` 之后发出（§3.1 行 391）。这中间隔着一整条 Saga（§4.2 行 569–585 的七步，可能 5–6 次跨服务调用）。§5.7 行 929 有 `409 STALE_EXECUTION_FENCE`（「期间被 fence」），所以 apply 前是复查过的——但**事件发的是计划时的值还是 apply 时的值，字段只有一个而含义有两个**。若期间发生过一次 fence 切换又切回来（同值复现不可能，fence 单调增），两者必不相等；若相等则无事。本文件无法区分，因为 DDL 只存一列。它**不是** `node_epoch`（§0.3 行 39–49 明确两套 epoch 的分工），也不该与 `changed_node_epochs` 的 `to` 混用。"
+    },
+    "changed_node_epochs": {
+      "type": "array",
+      "description": "来源：§5.5 行 875–877（示例一条 `{\"node_id\":\"shot_3_2.video\",\"from\":4,\"to\":5}`）+ §4.4 行 620–627（S08 响应里六条）+ §4.4 行 893（「**`changed_node_epochs` 来自 S08 的 `:commit` 响应，不是 S09 的清单**」）。**形状照抄 S08 的 `snapshot.manifest.committed`**，所以 S08 的 SMC-5 在这里原样成立：`from == to` 没有被禁止，而一条 epoch 未变的条目对消费方是无意义的噪声——本文件不额外加约束，以免与 S08 的契约产生第二种解释。`items` 用 `additionalProperties: false`，因为三键形状在两处方案里都写死了。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "node_id",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "regenerate_node_ids": {
+      "type": "array",
+      "description": "来源：§5.5 行 878（示例 `[…]`）+ `contracts/enterprise-change-plan.v2.schema.json` 的 `impact.regenerate_node_ids`（`array` of 非空 string）。**与 plan 的 `impact.regenerate_node_ids` 同名同形**，但事件里只搬了 `impact` 六键中的四个（另两个 `superseded_claim_refs`、`lineage_watermark` 没搬），且 plan 顶层的 `derived_adjustments` 完全没搬。所以消费方**拿不到完整的 `impact`**，也拼不出 `plan_hash` 覆盖的那份对象。见 CPG-3、CPG-4。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "recheck_node_ids": {
+      "type": "array",
+      "description": "来源：§5.5 行 879 + `enterprise-change-plan.v2` 的 `impact.recheck_node_ids`。同 `regenerate_node_ids`，非空字符串数组。**`regenerate` 与 `recheck` 不互斥**（两个数组各自独立，一个节点可以同时在两边，含义是「重生成了，但还得复检」），所以本文件不加互斥约束——S09 的 LNI 同款问题（那边是 regenerate/recheck 也允许重叠），两处一致即是有意的。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reuse_artifact_refs": {
+      "type": "array",
+      "description": "来源：§5.5 行 880 + `enterprise-change-plan.v2` 的 `impact.reuse_artifact_refs`（四键 ref：`{service_id, id, revision, content_hash}`）。**这里用四键**（含 `service_id`），而同一事件的 `base_manifest_ref`/`new_manifest_ref` 用三键——同一个 payload 里两种 ref 约定并存。这不是笔误：S07 的 plan schema 就是这么写的，本文件照抄以保持与 plan 对象可对照。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^S[0-9]{2}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "service_id",
+          "id",
+          "revision",
+          "content_hash"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "affected_episode_ids": {
+      "type": "array",
+      "description": "来源：§5.5 行 881（示例 `[\"ep3\"]`）+ `enterprise-change-plan.v2` 的 `impact.affected_episode_ids`。**它是数组而 `new_manifest_ref` 是单值**：跨集修改（§4.5 的 E08）可以影响多集，此时一集一个 `new_manifest_ref`，事件装不下。§5.5 的示例是单集（`ep3`、rev 12→13），把这个情形掩掉了。另外 `ep3` 的写法与 S10 一致、与 S09 的 `ep003` 不一致——那是 ABS-7 记过的同一处词法漂移。见 CPG-3。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "memory_checkpoint_before": {
+      "type": "object",
+      "description": "来源：§5.5 行 882（示例 `{\"commit_sequence\":27,\"content_hash\":\"…\"}`）+ §2.1 DDL 行 125（`memory_checkpoint jsonb NOT NULL,  -- {branch_id, commit_sequence, content_hash}`）+ 行 160（`context_snapshot` 里含 `memory_checkpoint`）。**两键，而 DDL 与 `execution-context.v2` 都是三键。**`execution-context.v2.schema.json` 的 `memory_checkpoint` 是 `{branch_id, commit_sequence, content_hash}` 且 `additionalProperties: false`，`branch_id` 还是 `required`；S07 的 DDL 注释也写着 `{branch_id, ...}`。事件把 `branch_id` 丢了——而本事件里**没有任何别处带 `branch_id`**（`base_manifest_ref` 三键、`changed_node_epochs` 无分支），所以消费方无法判断这个 checkpoint 属于哪个分支。见 CPG-6。",
+      "properties": {
+        "commit_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "commit_sequence",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "memory_checkpoint_after": {
+      "type": "object",
+      "description": "来源：§5.5 行 883（示例 `{\"commit_sequence\":29,\"content_hash\":\"…\"}`）。**这个字段没有出处**：`change_plan` 只有一列 `memory_checkpoint`（行 125，且 DDL 注释是不带 before/after 的单一对象），所以 `_before` 有来源、`_after` 没有。而 §4.4 行 615–630 的 S08 `:commit` 响应里**根本没有 memory checkpoint**，S07 的 `depends_on` 是 `[S08, S09, S18, S02]`（service-catalog 行 149–154）——**S16 不在依赖里**。也就是说 apply 之后 canon 推进到了哪个 `commit_sequence`，S07 既没有同步拿到、也没有事件订阅（§5.6 行 912 它订阅 `memory.canon.committed`，但那是异步的、可能晚于本事件发出）。示例里的 27→29 跳了 2，说明 apply 自身写了两次 canon，而这层因果链在任何契约里都不存在。见 CPG-5。",
+      "properties": {
+        "commit_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "commit_sequence",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "estimated_cost_upper_micro": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5.5 行 884（示例 `900000`）+ §2.1 DDL 行 132（`estimated_cost_upper_micro bigint NOT NULL`）+ 行 147（`CONSTRAINT cp_money_nonneg CHECK (estimated_cost_upper_micro >= 0)`）。**这是估价的上界，不是实际花费**。S07 §5.5 行 900 说 S44 拿它做「修改成本与效果分析」——但实际花费在 S23 的账本里（`finance.ledger.entry-posted`，S44 §6.3 行 656 已订阅）。所以这个字段对 S44 最多是个「承诺 vs 实际」的对照基线，且**没有币种换算**：`currency` 是单一值（行 885 `USD`），跨币种租户的估价无法与账本直接相减。它不是缺陷，但把「上界」当「成本」用会得出系统性地偏高的分析。"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "来源：§5.5 行 885（示例 `USD`）+ §2.1 DDL 行 133（`currency text NOT NULL`）+ 行 148（`CONSTRAINT cp_currency_shape CHECK (currency ~ '^[A-Z]{3}$')`）。**真 CHECK**，所以这里收成 pattern 而非自由字符串——这是本仓库少见的「闭集有据可依」的字段。"
+    },
+    "saga_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.5 行 886（示例 `saga_...`）+ §2.1 DDL 行 134（`saga_id text,  -- 唯一生效 Saga`，**可为 NULL**）+ §2.4（行 242 起，`change_saga`）。**DDL 允许 NULL 而事件收成必填**：`APPLIED` 状态按定义一定走过 Saga（§3.1 行 390 `PLANNED → APPLYING` 的动作是「建 `change_saga`」），所以 `APPLIED` 时它不该为空。但 DDL 没写这个联动约束（不像 `cp_applied_has_ts` 那样），所以「`saga_id` 在 `APPLIED` 时非空」是**从状态机推断的**，不是建表语句保证的。这与 S09 的 LNI-5（`status` 不在事件里、只能从状态机推断）是同一类：schema 收紧了 DDL 没保证的东西，代价是万一有实现留了 NULL，它的 `APPLIED` 事件会被拒。"
+    },
+    "applied_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5.5 行 887（示例 `2026-11-01T09:41:00Z`）+ §2.1 DDL 行 138（`applied_at timestamptz`）+ 行 150（`CONSTRAINT cp_applied_has_ts CHECK ((state = 'APPLIED') = (applied_at IS NOT NULL))`）。**这一条有真双向约束**：`state = 'APPLIED'` 当且仅当 `applied_at` 非空，所以本事件（必然在 `APPLIED` 之后发）里它一定是非空的——收成 required 完全有据，这是全仓库少见的「必填不是推断出来的」字段。注意 `format: date-time` 在本仓库**不被强制**（没有装 `FormatChecker`，见 README），所以这行是声明而非校验；与 envelope 的 `time` 不同源：`time` 是 relay 投递时刻，`applied_at` 是事务提交时刻。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "plan_id",
+    "plan_hash",
+    "base_manifest_ref",
+    "new_manifest_ref",
+    "execution_fence",
+    "changed_node_epochs",
+    "regenerate_node_ids",
+    "recheck_node_ids",
+    "reuse_artifact_refs",
+    "affected_episode_ids",
+    "memory_checkpoint_before",
+    "memory_checkpoint_after",
+    "estimated_cost_upper_micro",
+    "currency",
+    "saga_id",
+    "applied_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`audit.record.intent` topic 是否进目录（S07 要审计就必须走它）",
+      "demanded_by": "plans/S07-change-management.md §5.5 行 901（把 S45 列为消费者）、plans/S45-audit.md §3.1 行 184–189（调用方在自己的 outbox 里写 `event_type='audit.record.intent'`，S45 消费它）、S45 §3.1 行 193（`Kafka: drama.audit.ingress.v2  ← 提案 topic，C45-4`）",
+      "cpg_status": "`contracts/event-topics.v2.json` 的 55 个 topic 里没有 `audit.record.intent`，`drama.audit.ingress.v2` 也没有；S45 自己标了「提案 topic，C45-4」。于是 S07 §5.5 说的「S45 审计」这条链路**今天完全不存在**：S07 不发 intent，S45 不收业务 topic。要补需要 owner 定：是把这个 topic 登记进 `event-topics.v2.json`（那 S07 的 apply 事务里要多写一条 outbox 行，`audit.record.intent` 还得有自己的 payload schema），还是维持「S45 只在被调用时记录」。本 schema 不替它选——按 AGENTS.md「契约与文档冲突 → 停下，报告冲突」。"
+    },
+    {
+      "field": "`new_manifest_ref` 在跨集修改与 rebase 下的语义",
+      "demanded_by": "plans/S07-change-management.md §5.5 行 873（单值示例）、§4.4 行 619–620（S08 响应有 `rebased` 与 `previous_revision`，二者都不在事件里）、§4.5（行 654–701，E08 跨集改稿）、§5.5 行 881（`affected_episode_ids` 是数组）",
+      "cpg_status": "三件事同时没有答案：(1) 跨集修改推进多个 manifest 时，`new_manifest_ref` 装哪一个（或是否该改成数组）；(2) §4.4 行 619 的 `rebased: true` 表示「审核/提交落在了别人已推进的 head 上」，此时 `base_manifest_ref` 是「rebase 前的基础」还是「rebased_from」，事件无法区分——`rebased` 布尔根本不在 payload 里；(3) `previous_revision` 也不在，而它是 S08 唯一直接给出「上一版是几」的字段。消费方只能用 `base_manifest_ref.revision` 猜，而 rebase 情形下它就是错的。要补需要 owner 定这三个字段进不进 payload。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "CPG-1",
+      "summary": "S07 说 S21 不消费这个事件，S21 §5.6 把它列为消费项并给了 inbox 键",
+      "s07_side": "plans/S07-change-management.md §5.5 行 895：「**`S21 消费这个事件吗？** 不。S21 消费 S08 的 `snapshot.manifest.committed`。」行 904：「**S21 从 `snapshot.manifest.committed` 拿 `changed_node_epochs` 就够了**。S07 的事件是补充（带 change plan 的语义），不是调度依据。」",
+      "s21_side": "plans/S21-orchestration.md §5.6 行 889：`| change.plan.applied | S07 | 若为 change_subgraph，准备子图执行 | s21.changes inbox |`——**列为五条消费之一**，有处理动作、有幂等键",
+      "why_it_matters": "两边都写得很具体，不是含糊其辞，所以这是**真矛盾**而非解读差异。如果 S21 真按 §5.6 订阅：它会在两个 topic 上同时收到同一次修改的两条事实——`drama.change-management.v2` 的 `change.plan.applied` 与 `drama.asset-catalog.v2` 之外的 `snapshot.manifest.committed`——而跨 topic 没有顺序保证。§4.4 那套「部分取消 + 子图」逻辑按 `changed_node_epochs` 判定，两边都带这个字段（本事件行 875 与 S08 的 SMC 事件），于是**同一个 epoch 变化会被处理两次**：一次被 `s21.manifest` inbox 去重，另一次被 `s21.changes` inbox 去重——两个 inbox 各去各的，去不掉跨 topic 的重复。结果是可能起两个子图，或者一个子图起了两次。反过来若 S21 不订阅（S07 的说法），S21 §5.6 那条处理逻辑是死代码，而 S07 的说法本身就要求 S21 相信「S08 事件是充分的」——但 S08 事件里没有 `saga_id`、没有 `plan_id`，S21 无法把这次 epoch 变化归因到某个 change plan。**两边各自都自洽，合起来不行。** 要定的是 S21 到底订阅不订阅；若订阅，需要一条跨 topic 的因果去重规则（例如以 `causation_id` 或 `plan_id` 为键）。"
+    },
+    {
+      "id": "CPG-2",
+      "summary": "四个声明的消费方里，三个的订阅表没有它，第四个 S07 自己声明的用途与自己 §5.6 的机制重复",
+      "claimed_consumers": "plans/S07-change-management.md §5.5 行 897–902 的表：「S47 | 修改历史面板」「S44 | 修改成本与效果分析」「S45 | 审计」「S07 自己（其他实例）| 若同集的另一个 plan 正在生成，把它 supersede」",
+      "s47": "plans/S47-realtime-projection.md §2.1 行 75–86 的表列 10 个 topic（orchestration ×2、generation、model-registry、connector、artifact、review、delivery、developer-integration、budget-ledger），**没有 `change.plan.applied`，也没有 `drama.change-management.v2`**",
+      "s44": "plans/S44-evaluation-analytics.md §6.3 行 656 的消费清单 9 条（`finance.ledger.entry-posted`、`generation.job.state-changed`、四条 QC、`post.subtitle.ready`、`review.decision.recorded`、`snapshot.manifest.committed`、`delivery.package.published`），**没有它**",
+      "s45": "plans/S45-audit.md §3.1 行 184–193：S45 **只消费 `audit.record.intent`**，而那是由调用方写进**自己** outbox 的（行 81「调用方把审计意图写进**自己的** outbox」），不是订阅业务 topic。全 55 个 topic 里没有 `audit.record.intent`（C45-4 自称为提案）",
+      "s07_self": "plans/S07-change-management.md §3.1 行 394 说 `PLANNED → SUPERSEDED` 的触发是「同 base、同集、同意图的新 plan 生成」——**本地判定**；§5.6 行 910 又用 `snapshot.manifest.committed` 处理「base 落后」。所以通过 Kafka 自订阅本事件来 supersede 与这两处都重叠",
+      "why_it_matters": "这不是「消费方漏登记」，而是**四个用途里有三个在这份方案之外根本不存在**。S47 的面板拿不到这个事件，所以「修改历史」只能靠查询；S44 的成本分析没有它（它用 S23 的账本 + S08 的 manifest 事件），于是 §5.5 那句「修改成本与效果分析」在 S44 侧没有落点；S45 更是**架构上不能订阅**——它的整个设计是「不反向依赖业务服务、只记录调用方写进自己 outbox 的意图」（行 160「**S45 不反向依赖这些服务**」），若它改订 S07 的领域事件，就变成了「S45 主动去拉业务事实」，与它自己 §1、§3.1 的全部论证冲突。**唯一真有落点的是 S07 自己那条，而它又与自己 §3.1/§5.6 的两条机制重复。** 于是这条事件按今天四份方案的事实是**零有效消费者**——但它的形态与 S09 的 LNI-1 不同：那边是两份方案都点名它、只是都是错的；这边是 S07 单方面宣布了四个消费方，而三方从未同意。要定的是每一个：S47/S44 补订阅（那要它们自己改），还是 S07 那条「给谁」的说明改写成「给查询方，不保证实时」。"
+    },
+    {
+      "id": "CPG-3",
+      "summary": "事件只搬了 plan 的 `impact` 六键中的四个，`derived_adjustments` 与 `patches` 全没搬，于是「修改历史面板」显示不出改了什么",
+      "event_fields": "plans/S07-change-management.md §5.5 行 878–881：`regenerate_node_ids`、`recheck_node_ids`、`reuse_artifact_refs`、`affected_episode_ids`",
+      "plan_impact": "`contracts/enterprise-change-plan.v2.schema.json` 的 `impact` 有 6 个 required 属性：上述四个 **+ `superseded_claim_refs` + `lineage_watermark`**，且 `additionalProperties: false`",
+      "plan_top_level": "同 schema 的顶层有 `patches`（`change_plan_patch` 的契约形态：`{target_service_id, target_id, target_revision, target_hash, path, before_value, after_value, derived_from, derivation_rule}`，§2.2 行 166–192）与 `derived_adjustments`（`array` of 非空 string）",
+      "why_it_matters": "S47 被指派的任务是「修改历史面板」（行 899）。要显示「这一集改了什么」，面板需要的是 **`patches`**（`/camera/angle` 从 `low` 改成 `high`）——那正是 §2.2 建表与 `cpp_path_shape` 约束存在的理由。而事件里只有 `regenerate_node_ids`（哪些节点要重生成），那是「后果」，不是「改动」。从后果反推改动是不可能的：一个 `regenerate_node_ids` 里出现 `shot_3_2.video`，可能是因为改了镜头角度，也可能因为改了时长、改了参考图、或者因为下游派生。同样地 `derived_adjustments`（「这条不是你要求的，是推导出来的」——§2.2 行 206 的 UX 要求，UI 必须区分）也不在事件里，于是面板**无法告诉用户哪条改动是系统推导的**，而那被 §2.2 明确写成需求。`superseded_claim_refs` 与 `lineage_watermark` 的缺席让消费方无法知道这次修改压掉了哪些记忆断言（S16 的 claim），而 S16 与 S07 之间没有别的事件传递这个信息。**要么事件补 `patches`（体积会大，`data_ref` 是 `null`，行 889），要么把「修改历史面板」的用途改写成「只显示影响范围」**——后者与「历史」二字不符。"
+    },
+    {
+      "id": "CPG-4",
+      "summary": "`plan_hash` 哈希整份 plan，事件只带它的碎片，消费方无法复算也无法用它做任何比对",
+      "definition": "plans/S07-change-management.md §1.3 行 84：「**`plan_hash`** = `sha256(JCS(plan 去掉 plan_hash 与 created_at))`」",
+      "coverage": "被哈希的 `plan` 是 `enterprise-change-plan.v2` 的 16 个顶层属性：`schema_version`、`plan_id`、`plan_hash`（排除）、`context`（整个 `execution-context.v2`，18 个属性）、`base_manifest_ref`、`instruction`、`prepared_revision_refs`、`patches`、`derived_adjustments`、`impact`（6 键）、`memory_migration_required`、`required_policy_decisions`、`blocking_issues`、`estimated_cost_upper_micro`、`currency`、`expires_at`",
+      "shipped": "事件带 16 个 data 字段，其中与 plan 同名的只有 `plan_id`、`plan_hash`、`base_manifest_ref`、`estimated_cost_upper_micro`、`currency` 与 `impact` 的 4/6 键；**`instruction`、`context`、`patches`、`derived_adjustments`、`prepared_revision_refs`、`required_policy_decisions`、`blocking_issues`、`expires_at`、`superseded_claim_refs`、`lineage_watermark` 全部不在**",
+      "why_it_matters": "`plan_hash` 的作用域在 §1.3 行 84 说得很清楚：「确认**你确认的就是这份**」——它是 `apply` 的三道闸之一，只在「客户端提交的 plan_hash」与「服务端存的 plan_hash」之间比。事件把它发出去的用途就只剩「标识」，而 S07 自己在 §5.5 行 900 也没说 S44/S47 拿它做什么。后果有二：(1) 任何想独立验证「这条事件确实对应那份计划」的消费方**做不到**——它既没有 plan 本体，也没有能重算的字段集，而 `plan_hash` 是 `sha256(JCS(...))`（一个不可逆摘要），只能比对不能展开；(2) 如果哪天要给 S45 做审计（CPG-2），**审计记录里有 `plan_hash` 而没有 plan**，事后无法证明「当时被批准的是哪份补丁」——这正是 E39「审计可追溯」要防的。这与 S09 的 LNI-2 同形（`analysis_hash` = `sha256(JCS(result))`，而 `result` 的 7 键事件只发 5 键），但那边缺 2 键、这边缺 10 个顶层属性。**要么事件带一份 `data_ref` 指向 plan 快照，要么承认 `plan_hash` 在这个事件里只是不透明标识。**"
+    },
+    {
+      "id": "CPG-5",
+      "summary": "`memory_checkpoint_after` 没有来源：`change_plan` 只有一列 checkpoint，S08 的响应没有它，S16 也不在 `depends_on` 里",
+      "event": "plans/S07-change-management.md §5.5 行 882–883：`memory_checkpoint_before:{commit_sequence:27,...}` 与 `memory_checkpoint_after:{commit_sequence:29,...}`",
+      "ddl": "§2.1 行 125：`memory_checkpoint jsonb NOT NULL,        -- {branch_id, commit_sequence, content_hash}`——**单列，无 before/after 之分**；行 160 的 `context_snapshot` 也只存这一份",
+      "apply_response": "§4.4 行 615–630 的 S08 `:commit` 响应：`{manifest, previous_revision, rebased, changed_node_epochs, outbox_event_id}`——**没有任何 checkpoint**",
+      "dependencies": "contracts/service-catalog.v2.json 的 S07 记录：`\"depends_on\": [\"S08\",\"S09\",\"S18\",\"S02\"]`——**S16 不在其中**",
+      "why_it_matters": "`_before` 的来源清楚：就是 `change_plan.memory_checkpoint`（计划生成时读的）。`_after` 呢？§4.4 那张「S07 拿这个响应做什么」的清单只有三条（写 saga step、发事件、不当成自己的状态），没有一条去问 S16。§5.6 行 912 显示 S07 订阅 `memory.canon.committed`，但那是**异步**的：既不能保证在本事件发出之前到达（`_after` 就会填成空或过期值），也不能保证一次 apply 只产生**一条** canon 提交——而示例里 27→29 **跳了 2**，正说明一次 apply 可以连推两次 canon。于是要么 S07 在 apply 事务里同步写两次 S16 的 canon（但 S07 不能写别的服务的库，AGENTS.md 第一条禁令），要么它得从某处读到「这次 apply 推了哪些 commit_sequence」。这个「某处」不存在。**若实现者照示例填 27/29，他一定是猜的或从旁路读的**——而 §2.2 行 194 明令「不让 `change_management` 成为第二个剧本库」，同理它也不该成为第二个 canon 读模型。要定的是：`_after` 由谁、在什么时刻、通过什么接口提供；还是这个字段该从事件里删掉。"
+    },
+    {
+      "id": "CPG-6",
+      "summary": "`memory_checkpoint_before/after` 只有两键，而 DDL 与 `execution-context.v2` 都定义成三键——同名对象在契约里有两个形状",
+      "event_shape": "plans/S07-change-management.md §5.5 行 882–883：`{\"commit_sequence\":27,\"content_hash\":\"…\"}`——**两个键，无 `branch_id`**",
+      "ddl_shape": "§2.1 行 125：`memory_checkpoint jsonb NOT NULL,        -- {branch_id, commit_sequence, content_hash}`——**三个键**",
+      "contract_shape": "contracts/execution-context.v2.schema.json 的 `memory_checkpoint`：`properties: {branch_id, commit_sequence, content_hash}`、`required` 三者全含、`additionalProperties: false`；而 S07 的 plan 通过 `context: {\"$ref\": \"execution-context.v2.schema.json\"}` 嵌入它（`enterprise-change-plan.v2` 的 `context` 就是该 `$ref`）",
+      "why_it_matters": "同一个名字在同一个服务的两份产出里形状不同：**plan 里的 `context.memory_checkpoint` 是三键（schema 强制），事件里的 `memory_checkpoint_before` 是两键**。后果是（1）消费方不能把 `_before` 直接与 plan 的 `context.memory_checkpoint` 比对（除非它自己知道 `branch_id` 该填什么）；（2）`branch_id` 在本事件里**没有任何其他字段携带**——`base_manifest_ref`/`new_manifest_ref` 是三键 ref、`changed_node_epochs` 无分支、`affected_episode_ids` 无分支——而 S08 的 manifest 与 fence 都是**分支作用域**的（§0.3 行 39–49），S07 的 DDL 也有 `branch_id text NOT NULL`（行 116）。于是「这次修改发生在哪个分支」只能从 `plan_hash` 之外的地方查，事件本身答不出来。这与 S08 的 SMC-6（payload 无 `branch_id` 而 fence 是分支作用域）是**同一处缺口的第二次出现**，两次出现都在「事件里丢了 DDL 里有的 `branch_id`」。要定的是：`branch_id` 进不进 payload（那 `memory_checkpoint_*` 就自然补齐为三键），还是两个 checkpoint 改成与 `execution-context.v2` 同形（那 `additionalProperties: false` 就会强制三键）。"
+    },
+    {
+      "id": "CPG-7",
+      "summary": "`saga_id` 在 DDL 可空、在事件必填，「`APPLIED` 时非空」是从状态机推断的而非建表保证",
+      "ddl": "plans/S07-change-management.md §2.1 行 134：`saga_id text,  -- 唯一生效 Saga`——**无 NOT NULL、无联动 CHECK**；对照同表的行 150 `cp_applied_has_ts CHECK ((state = 'APPLIED') = (applied_at IS NOT NULL))`，那是一条真联动约束",
+      "state_machine": "§3.1 行 390：`PLANNED → APPLYING`「建 `change_saga`」；行 391：`APPLYING → APPLIED`「S08 `:commit` 返回 200」——所以走到 `APPLIED` 必然先建过 Saga",
+      "why_it_matters": "本 schema 把 `saga_id` 收成 required，理由是「`APPLIED` 必有 Saga」——但这个理由是**读状态机读出来的**，不是 DDL 保证的。这里没有 `cp_applied_has_saga` 这样的约束，所以一个有 bug 的实现可以在 `saga_id` 为 NULL 时把 plan 置 `APPLIED` 并发事件，而那条事件会被本契约拒。**拒掉一条真实发生过的业务事实，比收下一个字段不规范的事件更糟**：S47 的面板会缺一条修改记录，且没有任何机制回报这个丢失。这与 S09 的 LNI-5（`status` 不在事件里，靠状态机推断「只有 COMPUTED 才发」）是同一类：**用状态机代替约束，然后把推断写进契约**。若要收 required，先给 DDL 补一条联动 CHECK（像 `cp_applied_has_ts` 那样），让「必填」有据；否则按 DDL 收成可空，把「应为非空」写进 schema 的 `description` 而不进 `required`。"
+    },
+    {
+      "id": "CPG-8",
+      "summary": "`rebased` 与 `previous_revision` 都不在 payload，消费方无法区分「线性推进」与「落在别人 head 上的 rebase」",
+      "apply_response": "plans/S07-change-management.md §4.4 行 615–620：S08 返回 `{manifest, previous_revision:12, rebased:false, changed_node_epochs, outbox_event_id}`",
+      "rebase_semantics": "plans/S08-revision-snapshot.md §3.3 行 524–526：「允许一次 rebase：把 accepted pointer 写在新 head 上，`acceptance_commit.result='ACCEPTED'` 并记 `rebased_from_revision`；返回 200 + `rebased: true`」；行 535：「**旧 epoch 的结果永远不能推进当前接受指针**」",
+      "event": "本事件有 `base_manifest_ref`（rev 12）与 `new_manifest_ref`（rev 13），**没有 `rebased`、没有 `previous_revision`、没有 `rebased_from_revision`**",
+      "why_it_matters": "`rebased: true` 的含义是「你提交时以为的 head 已经被别人推过，我把你的改动叠到了新的 head 上」。此时 `new_manifest_ref.revision` 比 `base_manifest_ref.revision + 1` 更大，而两个 ref 之间**夹着别人的改动**——那些改动不来自这个 change plan。本事件只画了 `base → new` 两个点，消费方看到 rev 12→13 会合理地读成「这一次修改产生了一版」；若是 rebase，实际是「一次修改 + 若干并发改动」合成了一版。对 S44 这直接影响「一次修改的成本/效果」的归因（把别人的改动算进了这次）；对任何做 revision 差分的消费方，会看到一批它无法解释的变更。`previous_revision` 尤其可惜：它是 S08 唯一直接回答「上一版是几」的字段，而不在 payload 里时，消费方只能假设它就是 `new.revision - 1`——rebase 时这个假设是错的。要定的是这两个布尔/整数进不进 payload（它们都很小，代价低）。"
+    }
+  ]
+}

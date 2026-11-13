@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/delivery.publish-failed.v2.schema.json",
+  "title": "delivery.publish.failed payload v2",
+  "description": "event `delivery.publish.failed` 的 data 部分。**§6.3 行 655 只给了事件名**，全文没有任何字段定义；本 schema 的键取自 §5 的 `delivery.distribution_attempt`（行 478–496，13 列）与 `delivery.package`（行 377–404），以及 §4.4 失败矩阵（行 337–352）与 §3.3 非法转移表（行 241–249）里逐条写死的失败码，不是从散文推出来的形状。**这条事件与另外三条 S43 事件有一个结构差别**：它是**尝试级**事实（同一包可以失败多次），而 §6.3 行 659–660 把四条事件的 `aggregate_id` 一律钉成 `package_id`。两者可以共存（一个包下多条失败事件、序号递增），但代价是「这个包最后一次失败是什么」只能靠事件顺序推，而 `aggregate_sequence` 表达的是「本包第几条事件」而非「第几次尝试」——`attempt_no` 是另一套计数（DDL 行 486 与行 495 的 `UNIQUE (tenant_id, package_id, channel_id, attempt_no)`）。见 x-conflicts PDF-1。**这条事件只覆盖终态失败**：§4.3 第 6 步（行 327）明写 `FAILED → 按可重试性决定 IN_FLIGHT 或 PUBLISH_FAILED`，可重试的失败回到 `IN_FLIGHT` 不发事件；`UNKNOWN → 进对账，不重传`（行 326）也不发。所以**发出本事件 = 这个包在这条渠道上已经放弃了**，除非它后来又成功（见 x-conflicts PDF-2）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补。"
+    },
+    "package_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 379（主键，行 403）与 §6.3 行 659–660（四条事件的 `aggregate_id` 都是它）。**这是包，不是尝试**：同一个 `package_id` 可以有多条 `publish.failed`（§4.5 行 356「重发同一包 = 新的 `DistributionAttempt`，`package` 不变」）。按 `package_id` 去重会丢掉重发事实；重投递去重只能靠 envelope `id`。"
+    },
+    "package_type": {
+      "type": "string",
+      "enum": [
+        "missing_material",
+        "preview",
+        "formal"
+      ],
+      "description": "来源：§5 DDL 行 384–385（三值 CHECK）。**它决定这份失败有多严重**：`formal` 包的失败是交付事故（§0「可验证的交付物」、E37），而 `preview` 包的失败通常只是内部预览没发出去。运维告警分级若不看这个字段，会把预览失败与正式交付失败混成一个队列。**`missing_material` 类包能走到外发**这件事本身可疑（§1.1 的缺失素材包是「缺东西」的产物），但 §2.3 行 151 说它只要求 G2 覆盖已存在的项，即它**可以**被封包与外发——所以这个取值在本事件里合法。"
+    },
+    "episode_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：§5 行 382（可空）。可 null 的理由与 `delivery.package-published.v2` 同一条（那里是 x-conflicts PDL-4，系列级包），不重复登记。**告警要按集聚合失败率时必须处理 null**：一个系列级包的失败没有 `episode_id` 可以归集，而 `delivery_publish_unknown_total`（§8 行 731）之类的指标是按什么维度切的，文档没写。"
+    },
+    "channel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 482（`distribution_attempt.channel_id text NOT NULL`）与 §6.1 行 619（publish 请求体）。**必须带上，因为失败几乎总是渠道特定**：§4.4 行 341 的 401/403 是渠道凭据问题，行 345 的文件超限取决于渠道的 `max_file_bytes`（`delivery.channel` 行 524），行 346 的拒收是渠道的内容政策。同一个包换一个渠道可能成功——这正是 `UNIQUE (tenant_id, package_id, channel_id, attempt_no)`（行 495）把渠道放进唯一键的原因。不带 `channel_id` 的失败事件无法判断「要不要换渠道重试」。"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 480（主键，行 494）。**一次外发尝试的 ID**，与 `delivery.package-published.v2` 的同名字段同一含义。`GET /delivery-packages/{id}/attempts`（§6.2 行 649）能查到它对应的行，那是本事件唯一可回查的详细来源（`failure_detail` 的形状未定义，见下一条）。"
+    },
+    "attempt_no": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5 行 486（`attempt_no integer NOT NULL`）与行 495 的唯一键。**这是重试计数器，不是事件序号**：§4.4 行 342「429 限流 | 可重试 | 指数退避，最多 8 次」——所以第 9 次尝试若仍是 429，它就变成终态失败，`attempt_no` 很可能等于 9。消费方要算「这个包重试了几次」必须用这个字段，用 `aggregate_sequence` 会得到完全不同的数（后者数的是事件条数，而可重试的失败与 `UNKNOWN` 都不发事件）。`minimum: 1` 对应 DDL 的语义（第一次尝试是 1），但**DDL 没有 CHECK 约束它**——这是个保守取法，若 S43 从 0 开始编号，收窄会拒掉合法数据。DDL 未给初值，本 schema 按「第几次」的自然读法取 1 起。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "FAILED",
+        "FAILED_UNRESOLVED"
+      ],
+      "description": "来源：§5 行 483–485 的六态 CHECK 里**两个终态**，与 §4.4 行 352（`UNKNOWN` 超 TTL 24h → `FAILED_UNRESOLVED`）。**只收两值，这是本事件里唯一由事件名本身推出的闭集**：另外四态（`PENDING` / `IN_FLIGHT` / `SUCCEEDED` / `UNKNOWN`）都不可能伴着一个「failed」事件——`SUCCEEDED` 有 `published`，`UNKNOWN` 是「进对账，不重传」的中间态，`PENDING`/`IN_FLIGHT` 尚未结束。**但 `FAILED_UNRESOLVED` 是否发本事件，文档没写**：§4.4 行 352 只说「转 `FAILED_UNRESOLVED` 并告警，不自动重发。人工决定」——「告警」是 S43 内部动作，与发事件不是一回事。若它不发，那么「可能已送达、需要人工确认」这个最重要的状态在事件流里**完全不存在**（与 x-conflicts PDL-1 是同一处的两面），而 §12 未决问题 4 要给 S47 的「待人工确认的外发」队列就没有输入。本 schema 保留两值让两种实现都能通过校验，**语义要 owner 定**（见 x-needs-owner 第 2 条）。"
+    },
+    "failure_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 489（`failure_code text`，**裸 text，无 CHECK**）与三张散落的码表——§4.4 失败矩阵（行 341–348：`CHANNEL_FORMAT_UNSUPPORTED`、`PUBLISH_REJECTED`、`SIGNATURE_INVALID`）、§2.3 门表（行 138–147：`MASTER_NOT_ACCEPTED` / `STALE_FENCE` / `ARTIFACT_MISSING` / `ARTIFACT_HASH_MISMATCH` / `INCOMPLETE_TIMELINE` / `NOT_DELIVERABLE` / `QC_BLOCKING_ISSUE` / `LOUDNESS_GATE_FAILED` / `SUBTITLE_STALE` / `SUBTITLE_MISSING` / `RIGHTS_REVOKED` / `POLICY_DENIED` / `MANIFEST_INCOMPLETE`，行 149 另加 `DEPENDENCY_UNAVAILABLE`）、§3.3 非法转移（行 245–249：`PACKAGE_BLOCKED` / `PACKAGE_NOT_SEALED` / `SIGNATURE_REQUIRED` / `MASTER_SUPERSEDED`）。**不收成 `enum`**：DDL 是裸 `text`，且这三张表属于**两个不同的命名空间**——门码是 §4.3 第 3 步（行 316–321）外发前实时复查产生的，渠道码是第 5 步（行 323）外发产生的，409 那四个是**同步响应码**（外发请求被事后拒绝），它们是否都会变成事件没有任何一行说明。把三者并成一个 `enum` 会凭空发明一张 S43 没写过的联合表；不收窄则消费方必须按字符串前缀或白名单自行分类。见 x-conflicts PDF-1 与 x-needs-owner 第 1 条。"
+    },
+    "failure_detail": {
+      "type": "object",
+      "description": "来源：§5 行 490（`failure_detail jsonb`）。**形状全文未定义**：DDL 只说 `jsonb`，三张码表都只给码不给附随字段。文档里唯一接近「附随内容」的两处是 §3.3 行 248（S02 `deny`/`abstain`/`require_human` → 403 并「透传 `reasons[]`」）与 §4.4 行 346（渠道拒收 → 「附渠道给出的事由 ref」）——两者一个是数组、一个是 ref，形状不同。本 schema 因此只收 `object`、不约束内部键，这是**刻意的不收窄**（与 `delivery.package-created.v2` 的 `gaps` / `gate_results` 同一处理）。**但它与那两个字段不同**：那里是「数据还没定形状」，这里是「数据本身可能不该出去」——`failure_detail` 可能含渠道返回的原始报文（§5 `receipt.raw_ref` 行 511 的注释「原始回执的引用（可能有个推之外的内容）」暗示渠道报文由引用而非内联承载），而本事件流到 S46 的客户 webhook 时会把渠道侧报文原样送出去。见 x-needs-owner 第 3 条。"
+    },
+    "bytes_sent": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 487（`bytes_sent bigint NOT NULL DEFAULT 0`）。**这是「传了多远」的证据，决定能不能续传**：§4.4 行 344「连接中断在中途 | **UNKNOWN** | 先对账；支持断点续传的渠道查已上传字节」，而 `delivery.channel.supports_resume`（行 525）是渠道属性、不在事件里。一个 `bytes_sent = 0` 的失败与一个 `bytes_sent` 接近 `total_bytes` 的失败在运维上是两件事：后者可能在渠道侧留下半个对象，需要清理。**注意本事件不带 `total_bytes`**（那在 `sealed` 事件里）——要算比例必须回查两个事件或查包。"
+    },
+    "remote_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§5 行 488（`remote_ref text, -- 渠道侧 id（对账用）`）。**可 null**：§4.4 行 341 的 401/403 在认证阶段就失败，渠道根本没分配任何 id；行 347 的 DNS 不可达同理。**有值才是对账的钥匙**：§4.4 行 349「对账后确认渠道已收 | 成功 | 补登 `SUCCEEDED` + receipt」——这条路径下 `remote_ref` 是找到渠道侧对象的那把钥匙，而它出现在一个「failed」事件里意味着**这个失败可能后来变成成功**（见 x-conflicts PDF-2）。消费方若把 `publish.failed` 当作「确定没送达」，在 `remote_ref` 非空时会误判。"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 493（`finished_at timestamptz`）。**这里要求非空**：能判成终态失败的尝试一定已经结束，未结束的尝试在 `IN_FLIGHT`。**与 envelope `time` 不同**：后者是事件落 outbox 的时刻，积压重投时会与结束时刻错开。**与 `reconcile_after`（DDL 行 491）也不同**：那个是 `UNKNOWN` 时的**将来**对账时间，本事件不带上限时刻——`FAILED_UNRESOLVED` 的对账截止时刻（§4.4 行 352 的 TTL 24h）因此只存在于 DDL 里，事件不带，消费方无法判断「这个 `FAILED_UNRESOLVED` 什么时候开始算人工队列」。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_id",
+    "package_type",
+    "channel_id",
+    "attempt_id",
+    "attempt_no",
+    "state",
+    "failure_code",
+    "bytes_sent",
+    "finished_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`failure_code` 的取值域跨越三个命名空间，没有联合表",
+      "demanded_by": "plans/S43-delivery.md §5 行 489（`failure_code text`，无 CHECK）、§2.3 行 138–149（门码 14 个）、§3.3 行 245–249（同步 409 码 4 个）、§4.4 行 341–348（渠道码 3 个）",
+      "s43_status": "**没有任何一行把这三组码合成一张表**。它们的产生位置也不同：门码在外发请求的第 3 步（§4.3 行 316–321 的实时复查）产生，渠道码在第 5 步（行 323）产生，409 码是**请求被拒**的同步响应（§3.3 表头即「非法转移」），按定义它们不让请求进入外发流程——那它们会不会也发 ``publish.failed`` 事件，文档没有说。本 schema 取 `string` 不收窄。要收窄需要 S43 owner 先给出：三组码是否统一成一个错误码枚举、409 类的失败是否发事件、以及 `failure_detail` 里那种「ref」与「reasons[]」是否各自有码。"
+    },
+    {
+      "field": "`FAILED_UNRESOLVED` 是否发本事件，以及它之后谁来推进",
+      "demanded_by": "plans/S43-delivery.md §4.4 行 352、§12 未决问题 4、§5 行 494（attempt 六态 CHECK 含 `FAILED_UNRESOLVED`）",
+      "s43_status": "行 352 原话：「超过 TTL（如 24h）仍无法确认 → 转 `FAILED_UNRESOLVED` 并告警，**不自动重发**。人工决定」。这句话说了三个动作（转状态、告警、不重发），**没有说发不发事件**；而 §12 未决问题 4 明说要为 S47 加一个「待人工确认的外发」队列——队列的输入只能是事件或轮询。`GET /delivery-packages?state=`（§6.2 行 647）可以按**包* 状态**列出，但 `FAILED_UNRESOLVED` 是**尝试**级状态（DDL 行 483–485 是 `distribution_attempt.state`），而包的 CHECK（行 394–395）里没有对应值——所以一个「尝试已无法确认、包还停在 SEALED」的包，用包级查询**查不出来**。若不发事件，这条路径只能靠 S43 内部告警，S47 永远看不到。owner 需要明确：`FAILED_UNRESOLVED` 发不发 `publish.failed`（本 schema 的 `state` 两值枚举允许它发），以及人工确认结果如何产生一个新的尝试。"
+    },
+    {
+      "field": "`failure_detail` 会不会把渠道原始报文带进客户 webhook",
+      "demanded_by": "plans/S43-delivery.md §5 行 490（`failure_detail jsonb`）、行 511（`receipt.raw_ref jsonb, -- 原始回执的引用（可能有个推之外的内容）`）、plans/S46-developer-integration.md 行 262（webhook 签名覆盖原始 body）",
+      "s43_status": "`failure_detail` 的形状未定义，而 `receipt.raw_ref` 的存在（「原始回执的引用」）说明渠道报文通常以**引用**承载而非内联——但 `raw_ref` 是 `receipt` 表的列，`failure_detail` 是另一列，两者关系没写。若 `failure_detail` 里内联了渠道返回的原始报错正文，它会在本事件经 S46 投递给客户时**原样出网**（行 262 的签名覆盖 raw body，说明 payload 就是发出去的东西）。这与 §6.3 行 678「事件不含…渠道凭据」不冲突（报错正文不是凭据），但与 S43 的其余「只发引用」取向不一致。要 owner 定：`failure_detail` 是白名单化的结构（例如只放 `{reasons:[…], channel_reason_ref:{…}}`），还是任意 jsonb——前者可以让本 schema 收窄，后者则应在方案里明说「不加过滤地外发」。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PDF-1",
+      "summary": "四条事件共用一个 aggregate_id，但只有这条的序号语义与业务计数错位",
+      "s43_aggregate": "§6.3 行 659–662：「四条发布事件的 `aggregate_id` 都是 `package_id`…`aggregate_sequence` 是本包的事件序号（`created`=1，此后每发布一条事件 +1）——包本身没有 `revision` 列，序号只服务于事件顺序，**不代表包的版本**」",
+      "s43_attempt": "§5 行 486 `attempt_no integer NOT NULL` 与行 495 `UNIQUE (tenant_id, package_id, channel_id, attempt_no)`；§4.4 行 342「429 限流 | 可重试 | 指数退避，**最多 8 次**」；§4.5 行 356「重发同一包 = 新的 `DistributionAttempt`，`package` 不变」",
+      "s43_events": "§6.3 行 655 的四条事件里，只有 `published` 与 `publish.failed` 与尝试有关；**可重试失败与 `UNKNOWN` 都不发事件**（§4.3 行 326–327）",
+      "why_it_matters": "一个包被重试 8 次后终态失败，事件流里 `aggregate_sequence` 只推进 1（一条 `publish.failed`），而 `attempt_no` 是 8 或 9。两个数都叫「第几个」，差一个数量级。这本身不是错（文档明说序号不代表版本），但**消费方极易用错**：S47 的交付进度若按事件条数画「重试次数」，会显示 1；运维若按 `aggregate_sequence` 判断「这条失败是不是最新的」，当同一包在不同渠道各失败一次时（`channel_id` 不同、`attempt_no` 各自从 1 起算）会混淆。更实质的问题是：`UNKNOWN` 与可重试失败**完全不进事件流**，所以「这个包发了几次、每次什么结果」在事件侧不可重建——只有 `GET /delivery-packages/{id}/attempts`（行 649）能答，那是轮询。要定的是：尝试级状态是否发事件（与 PDL-1 同一条），以及若发，是否引入独立的聚合键（例如 `package_id:channel_id`）而不是继续挤在 `package_id` 上。"
+    },
+    {
+      "id": "PDF-2",
+      "summary": "「失败」事件发出之后，同一个尝试仍可能被对账补登成成功，且没有任何事件纠正",
+      "s43_matrix": "§4.4 行 349：「对账后确认渠道已收 | **成功** | 补登 `SUCCEEDED` + receipt」；行 350：「对账后确认渠道未收 | 恢复 | 重新 `PENDING`」",
+      "s43_states": "§5 行 483–485 的 `distribution_attempt.state` 六值含 `SUCCEEDED` 与 `FAILED`；§3.2 的图（行 225–231）把 `UNKNOWN` 画成从 `IN_FLIGHT` 分出的独立分支，图上**没有从 `FAILED` 或 `FAILED_UNRESOLVED` 回到 `SUCCEEDED` 的边**",
+      "s43_events": "§6.3 行 655 的四条事件里，`published` 是唯一表达成功的；它带 `attempt_id`，所以「哪个尝试成功了」是可表达的。但行 349 的补登路径是**事后**发生的（可能几天后），此时包早已处于某个终态",
+      "why_it_matters": "有两条互不兼容的读法都成立：(a) `FAILED` 是终态，行 349 的补登只适用于 `UNKNOWN`（因为行 350 明说「对账后确认渠道未收 → 重新 `PENDING`」，即对账是 `UNKNOWN` 的后续，而 `FAILED` 是**另一种**终态）；(b) 行 349 的「对账」泛指任何渠道事后回执（`manual_handoff` 的回执可能几天后才到，§3.2 行 237），那么一个已经发过 `publish.failed` 的尝试后来可能变成 `SUCCEEDED`。文档没有任何一行排除 (b)——而 `delivery.receipt` 表（行 502–513）只以 `attempt_id` 关联，**不区分该尝试当时是什么状态**。若 (b) 成立，本事件就是**可撤销**的：下一条 `published` 事件会带着同一个 `attempt_id` 到来，消费方必须能把「我先前宣布的失败」撤回。这在客户 webhook 上是硬问题——S46 行 268 只保证串行，**不保证客户有撤回语义**。要定的是：`FAILED` 是否可被对账改判；若可，是否需要一条显式的「failure retracted」信号。"
+    },
+    {
+      "id": "PDF-3",
+      "summary": "外发被前置门拒掉时一个字节都没发，但它与「发出去了但渠道拒收」共用同一条事件",
+      "s43_precheck": "§4.3 行 315–321：外发第 3 步「**实时**重新评估」五项（S08 accepted pointer、S28 artifact、S15 授权、S02 `external_publish` 门、渠道格式），「任一失败 → 拒绝，附具体门与原因」——此时**第 4 步的 `DistributionAttempt(PENDING)` 还没创建**（行 322 是下一步）",
+      "s43_invalid": "§3.3 行 245–249 的非法转移表给出 409：`PACKAGE_BLOCKED` / `PACKAGE_NOT_SEALED` / `SIGNATURE_REQUIRED` / `MASTER_SUPERSEDED`，以及行 248 的 403（S02 `deny`/`abstain`/`require_human`，透传 `reasons[]`）",
+      "s43_event": "§6.3 行 655 只有一条失败事件 `delivery.publish.failed`，本 schema 的三个必填键 `attempt_id` / `attempt_no` / `bytes_sent` **在任何尝试都不存在时无从填充**",
+      "why_it_matters": "本 schema 把 `attempt_id`、`attempt_no`、`bytes_sent` 定为必填，这在「尝试已创建、传输失败」的路径上成立（§4.4 整张矩阵）。但**门拒路径根本没有尝试**：S02 判 `abstain`、S08 的 accepted pointer 已变、G2 的 artifact 已失效——这些在第 3 步就被挡下，`DistributionAttempt` 尚未诞生。如果这类失败也要发 `publish.failed`（它们是「外发失败」中最需要下游知道的一类，尤其 `MASTER_SUPERSEDED` 意味着包永久过期，见 x-conflicts PDS-3），那么本 schema 的三个必填键就会拒掉合法事件；如果它们不发事件，那么**「包还在但永远发不出去」这个事实永远不进事件流**，只能靠同步 4xx 通知到调用方——而调用方可能是一个已关闭的编辑器标签。两种读法都不能靠本批次裁：要么给本 schema 加一条 if/then 允许「无尝试」的失败（放宽），要么在 §6.3 增一条独立事件（新增）。文档目前既没写门拒发不发事件，也没写 `MASTER_SUPERSEDED` 之后包怎么被清理。"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCGB1M2N3P4Q5R6S7T8U9V0",
+  "source": "S44",
+  "type": "analytics.metric.snapshot.created",
+  "subject": "metric/first_pass_shot_rate",
+  "time": "2026-11-06T16:05:30Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "ms_01JCGB2N3P4Q5R6S7T8U9V0W1",
+  "aggregate_sequence": 1,
+  "correlation_id": "coh_01JCG9Z0A1B2C3D4E5F6G7H8J9",
+  "causation_id": "cmd_01JCGB3P4Q5R6S7T8U9V0W1X2",
+  "traceparent": "00-4e5f6071829304a5b6c7d8e9f0a1b2c3-4d5e6f708192a3b4-01",
+  "data": {
+    "schema_version": "2.0",
+    "snapshot_id": "ms_01JCGB2N3P4Q5R6S7T8U9V0W1",
+    "metric_key": "first_pass_shot_rate",
+    "metric_version": 7,
+    "cohort_id": "coh_01JCG9Z0A1B2C3D4E5F6G7H8J9",
+    "value": 0.81,
+    "unit": "ratio",
+    "n": 1240,
+    "distribution": {
+      "p50": 0.82,
+      "p90": 0.95,
+      "p95": 0.97,
+      "p99": 0.99,
+      "max": 1.0
+    },
+    "ci95": {
+      "low": 0.786,
+      "high": 0.832
+    },
+    "excluded": {
+      "failed_runs": 4,
+      "failed_items": 37,
+      "abandoned": 2
+    },
+    "mixed_versions": false,
+    "stale_sources": {
+      "S26": false,
+      "S35": false
+    },
+    "source_watermarks": {
+      "S26": 1735689600123,
+      "S23": 1735689540881,
+      "S35": 1735689599022
+    },
+    "allocation_policy_version": "v3",
+    "low_confidence": false,
+    "computed_at": "2026-11-06T16:05:30Z"
+  },
+  "data_ref": null
+}

@@ -678,8 +678,7 @@ CREATE TABLE repair_planning.action (
   PRIMARY KEY (plan_id, action_id)
 );
 
-CREATE TABLE repair_planning.attempt_ledger (...);        -- §5.6
-CREATE TABLE repair_planning.attempt_reservation (...);   -- §5.6
+-- attempt_ledger / attempt_reservation 的完整 DDL 见 §5.6（此处不重复定义）
 
 CREATE TABLE repair_planning.recheck_job (
   recheck_id      uuid PRIMARY KEY,
@@ -693,11 +692,56 @@ CREATE TABLE repair_planning.recheck_job (
   created_at      timestamptz NOT NULL
 );
 
-CREATE TABLE repair_planning.outbox (...);
-CREATE TABLE repair_planning.inbox (...);
+-- 与 S08 §1.6 同构
+CREATE TABLE repair_planning.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE repair_planning.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL  /* repair_plan_id */, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON repair_planning.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE repair_planning.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
 
 报告本体不落 S39：`snapshot` 只存引用 + 摘要。**S39 不是报告的第二个家。**
+
+### 7.1 幂等
+
+`POST /repair-plans` 用 `tenant_id + command_id + request_hash`。S39 是**纯计算**服务
+（读 QC 报告 + registry + policy，产出计划），所以幂等的价值不是省钱而是**计划稳定**：
+同一份缺陷在同一份 registry 版本和同一份 policy 下必须产出同一个 `repair_plan_id`，
+否则 S21 会因为重试拿到两张不同的计划，去重逻辑就失效了。
+
+因此除了命令幂等，还要求计划本身是**确定性**的：
+
+```text
+plan_fingerprint = sha256(
+    artifact_sha256
+  + sorted(defect (check_id, window_start, window_end, severity))
+  + registry_version
+  + policy_snapshot_id + policy_version
+  + routing_algorithm_version
+)
+```
+
+`plan_fingerprint` 相同 → 返回已有计划（幂等）；不同 → 新计划。`routing_algorithm_version`
+进指纹是必须的：算法改了，同一缺陷可能得到不同计划，那是合理的**新**计划，不是冲突。
+
+`repair.plan.created` 与计划落库同事务，`aggregate_id = repair_plan_id`。
 
 ---
 
@@ -708,6 +752,7 @@ CREATE TABLE repair_planning.inbox (...);
 ```json
 {
   "command_id": "cmd_…",
+  "request_hash": "sha256(canonical(body 去掉 command_id 与 request_hash))",
   "execution_context": { "...": "execution-context v2" },
   "qc_snapshot": {
     "artifact_sha256": "…",
@@ -871,8 +916,8 @@ CREATE TABLE repair_planning.inbox (...);
 | C2 | `automation-policy.v2.schema.json` 的 `repair_limits` 只有 shot 级两项 | 补 `max_business_attempts_per_episode`、`max_business_attempts_per_run`、`max_recheck_rounds`；缺省时用 §5.4 默认值并记 `policy_partial` |
 | C3 | 无 `contracts/quality/repair-plan.v2.schema.json` | 新增；S21 需要机器可读的计划契约 |
 | C4 | `shot_lineage_id` 在任何契约里都没有定义 | **必须新增**——它是跨 Run 累计的锚点。建议由 S06/S08 在 shot 创建时生成并在 manifest 里固定；`contracts` 需给出生成规则与不可变性约束 |
-| C5 | **无 `contracts/quality/check-registry.v2.json`** —— 它是 S39 修复路由的输入，不是可选项 | 必须新增，字段见 [S35 §2.2.2](S35-technical-qc.md)：`layer` / `defect_type` / `default_action` / `window_scope` / `escalation_rule` / `severity_default` / `severity_max` / `allowed_actions` / `recheck_scope` / `never_auto_repair` / `no_auto_reason`。**加载期强制族校验**（S35 §12 C6），越族拒绝加载 |
-| C5b | `action_family[type]` 没有机器可读定义，只有 S35 §2.2.1 的表格 | 加进 `check-registry.v2.json` 的顶层或单独 `quality/action-families.v2.json`。S39 读它，不硬编码——否则闭集改动要改代码 |
+| C5 | **无 `contracts/quality/check-registry.v2.json`** —— 它是 S39 修复路由的输入，不是可选项 | 必须新增，字段见 [S35 §2.2.2](S35-technical-qc.md)：`layer` / `defect_type` / `default_action` / `window_scope` / `escalation_rule` / `severity_default` / `severity_max` / `allowed_actions` / `recheck_scope` / `never_auto_repair` / `no_auto_reason`。**加载期强制族校验**（S35 §12 C6），越族拒绝加载。**部分已落（2026-11-05）**：`check-registry.v2.schema.json` + `validate_registry.py` 在 `contracts/quality/` 下；**数据文件 `check-registry.v2.json` 仍未落** —— 四份 QC 方案的表缺 `window_scope` / `escalation_rule` / `recheck_scope` 等字段，需各服务补登记项，不能由 S39 推断。在那之前 S39 的 check 级路由仍靠人工 |
+| C5b | `action_family[type]` 没有机器可读定义，只有 S35 §2.2.1 的表格 | 加进 `check-registry.v2.json` 的顶层或单独 `quality/action-families.v2.json`。S39 读它，不硬编码——否则闭集改动要改代码。**已落**：`contracts/quality/action-families.v2.json`（2026-11-05，commit `991ccee`），14 值闭集 → `chain` / `fallback` / `forbidden[]` |
 | C6 | S21 无"剩余修复额度"查询接口 | §5.7 Level 4 需要；在补齐前 S39 只能预检 S23 预算，run 级上限靠 S21 在执行时兜底 |
 | C7 | `service.yaml` 的 `depends_on` 只有 S35/S36/S37/S09/S02，但本文实际依赖 S26（`generation.job.state-changed` 计数）、S23（预算预检）、S24/S25（能力查询）、S40（人审交接）、S17（`ContinuityReport`） | 补 catalog 的 `depends_on`。当前缺口意味着契约图里看不出这些依赖，部署顺序与故障域分析会漏 |
 | C8 | S17 的 `ContinuityReport` 没有 schema 定义，S39 也未订阅其事件 | 见 semantic-qc C1；S39 需要它能被 ingest，否则跨集冲突永远到不了修复决策 |

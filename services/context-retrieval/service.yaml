@@ -4,7 +4,7 @@
 service_id: S18
 slug: context-retrieval
 name: 上下文检索与组装
-maturity: design_only
+maturity: implemented
 
 domain: memory
 owner_team: memory

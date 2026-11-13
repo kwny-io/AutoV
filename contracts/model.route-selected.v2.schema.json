@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/model.route-selected.v2.schema.json",
+  "title": "model.route.selected payload v2",
+  "description": "event `model.route.selected` 的 data 部分。权威定义在 plans/S25-model-routing.md §7.1（行 489–576，事件体与三条 payload 约束）、§7 的 `route_decision` / `route_candidate` / `degradation_option` DDL（行 403–468）、§12（行 675–682，S26 的四条校验）、§11（行 650–672，T25-01..T25-27）。**这条事件的形状是清楚的，问题全在它与自己引用的权威的关系上**：`data_ref` 只有三个键、缺 envelope 要求的 `content_hash`（MRT-1）；`content_hash` 声称「与 `route_decision.content_hash` 一致，供下游核对」，而同一个对象在事件里出现两个互不相等的成本值（MRT-2）；`revision` 既是 payload 字段又是 `aggregate_sequence`，而 §7 说 `route_decision` 一次决策一条记录、`aggregate_seq` 永远不会大于 1，于是 outbox 的 `UNIQUE` 只能发一条事件，`revision` 这一列的 `DEFAULT 1` 之外没有第二条路（MRT-3）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§7.1 行 512 已包含此项。"
+    },
+    "route_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 529（示例 `route_01J...`）+ §7 DDL 行 404（`route_id text PRIMARY KEY`）+ §7.1 行 504（「`aggregate_id = route_id`」）。**它同时是 envelope 的 `aggregate_id`**，所以这又是一处「信封字段在 payload 里再出现一次」——与 S24 的 `capability_bundle_revision` 同一种冗余。冗余本身安全（两处不一致时可观测），但本仓库没有任何一条规则说以谁为准。**它与 `data_ref.id` 也是同一个值**（行 570–574 的 `data_ref` 用 `\"id\": \"route_01J...\"`），于是同一条事件里这个 id 出现三次。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§7.1 行 530（示例 `1`）+ §7 DDL 行 404–405（`route_id text PRIMARY KEY,\n  revision integer NOT NULL DEFAULT 1`）+ §7.1 行 504（「`aggregate_seq = route_decision.revision`」）。**`minimum: 1` 有 DDL 依据吗？没有**：`revision integer NOT NULL DEFAULT 1` 没有 CHECK，所以数据库允许 0 与负数。本文件收 `minimum: 1` 是因为 envelope 的 `aggregate_sequence` 是 `minimum: 1`（§7.1 行 527 的示例是 1），而两者是同一个数——若数据库里真的出现 rev 1 以外的值，事件会因为 envelope 拒收而卡在 outbox。**这一列实际只可能是 1**：`route_decision` 的主键是 `route_id`（不是 `(route_id, revision)`），`route_candidate` 的外键也只指 `route_id`，全文没有一处 UPDATE 它的 `revision`——所以 §7.1 行 506 那句「`(aggregate_id, aggregate_seq)` 实际上就是 `route_id` 的唯一约束」是对的。见 MRT-3。"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§7.1 行 531（示例 `\"content_hash\": \"…\"` + 注释「与 `route_decision.content_hash` 一致，供下游核对」）+ §7 DDL 行 424（`content_hash char(64) NOT NULL`）+ §8 行 599（「`content_hash` 由输出规范化后求 sha256，可被 S26 引用校验」）+ §12 行 677（「`route_decision_ref` 的 `content_hash` 与 S25 存的 `route_decision.content_hash` 一致」）。**算法全文没写**：§8 只说「输出规范化后求 sha256」——「输出」是整个 `RouteDecision`（含候选集与拒绝原因）还是 §7.1 的 payload？两种解释会得到不同的哈希，而 S26 要拿它做比对（§12 第 1 条）。(1) 若哈希的是**整条决策**，那下游要复算它就得把 `route_candidate` 的几十行按某个未定义的规范化重算，而 §7 的 `route_candidate` 有 22 列、含 `jsonb` 与 `numeric`，规范化方式（键序、数值表示、`null` 是否省略）全无规定；(2) 若哈希的是**本 payload**，那它等于一个自引用——`content_hash` 在 payload 里，哈希对象包含它自己。本文件收 64 位裸 hex（照 PDL-5 / PRD-4 的约定），**但那是格式约束，不是算法约束**：两个不同算法都能产出合法 hex。见 MRT-1 与 `x-needs-owner`。"
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 532（示例 `prj_...`）+ §7 DDL 行 407（`project_id text NOT NULL`）。**这是本事件里唯一的业务坐标之一**，也是它与 S10 的 ABS-7 同一类问题的实例：`project_id` / `series_id` / `episode_id` / `branch_id` 四个坐标的词法在全仓库没有任何一处定义过（`contracts/` 下没有对应的 schema）。示例用 `ser_` / `ep_` 前缀，而 S10 §5.3 行 610 与 S08 的示例用 `ep3`、S09 §5.4 行 771 用 `ep003`。本文件收 `minLength: 1` 不约束形态——约束了就要猜一个还没定的规则，`contracts/README.md` 明说「不从散文推断这些值」。跨服务 join 的风险与 ABS-7 完全相同，见 MRT-6。"
+    },
+    "series_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 533（示例 `ser_...`）+ §7 DDL 行 408。语义词法问题同 `project_id`（MRT-6）。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 534（示例 `ep_...`）+ §7 DDL 行 409。**`ep_...` 与 S10 的 `ep3`、S09 的 `ep003`、S08 的 `manifest_ep3` 是第四种写法**——本仓库 49 份示例里 `episode_id` 至少出现过这四种形态。语义词法问题见 MRT-6。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 535（示例 `br_...`）+ §7 DDL 行 410。**§7.1 的示例用 `br_...`，而 S10 §5.3 行 610 用 `canon`、S16 §1.2 行 61 的默认分支名也是 `canon`**——`branch_id` 既是「分支的 id」又是「分支的名字」在一个方案集里混用。语义词法问题见 MRT-6。"
+    },
+    "node_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 536（示例 `shot_07`）+ §7 DDL 行 411（`node_id text NOT NULL`）。`shot_07` 与 `attempt_id: att_...`、`node_epoch: 3` 一起构成「这一次尝试针对哪个逻辑节点的哪一代」的坐标。**`node_id` 的词法同样没有契约**（S06 storyboard 拥有 shot 的 id），但它的重要性低于四个业务坐标：它只在本服务的 `IX ix_route_lookup (tenant_id, attempt_id, created_at DESC)`（行 427）里当索引值。"
+    },
+    "node_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§7.1 行 537（示例 `3`）+ §7 DDL 行 412（`node_epoch integer NOT NULL`，**无 CHECK**）+ AGENTS.md「`node_epoch` | 单个 `logical_node` | 局部重生成」。**`minimum: 1` 是照 AGENTS.md 的语义推的，不是照 DDL**：DDL 没有 CHECK，所以数据库允许 0 与负数。本文件收 `minimum: 1` 因为 epoch 是从 1 开始的代数（S08 的 `node_epoch` 同理）——但这条推断没有一处原文写着。**它与 `execution_fence` 绝不能混用**（AGENTS.md「两者不能混用」）：`node_epoch` 的域是单个 `logical_node`，`execution_fence` 的域是 run/branch。本事件把两个都发，消费方可以据此判断「这次决策属于哪一代节点、哪一次 run」。**但没有任何字段说明「这一对 (node_epoch, execution_fence) 与当前的 (node_epoch, execution_fence) 是否已经过期」**——一次 `feasible=true` 的决策在节点重生成后就作废了，而事件里没有能判这件事的东西。见 MRT-4。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§7.1 行 538（示例 `11`）+ §7 DDL 行 413（`execution_fence integer NOT NULL`，**无 CHECK**）+ AGENTS.md「`execution_fence` | run / branch | 取消、故障切换」。同 `node_epoch`：`minimum: 1` 是语义推断而非 DDL。见 MRT-4。"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 539（示例 `att_...`）+ §7 DDL 行 414。**`attempt_id` 是 S26 的 id 空间还是 S25 的？** §7 DDL 只写 `text NOT NULL`，而 §7.1 的示例里 `attempt_id: att_...` 与 `command_id: cmd-s21-0001` 一起出现；`route_decision` 的 `UNIQUE (tenant_id, command_id)`（行 425）说明「一个 command 一条决策」，而 `attempt_id` 不在任何唯一约束里——所以同一次尝试可以有多次路由（例如报价过期后重路由），而事件不区分哪个 `route_id` 是「第一次」。S26 §12 用它校验 `rank`，见 MRT-5。"
+    },
+    "command_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 540（示例 `cmd-s21-0001`）+ §7 DDL 行 423（`command_id text NOT NULL`）+ 行 425（`UNIQUE (tenant_id, command_id)`）。**它与 envelope 的 `causation_id` 是同一个值**（行 525 的 `\"causation_id\": \"cmd-s21-0001\"`），于是同一条事件里这个 id 出现两次。`UNIQUE (tenant_id, command_id)` 是本事件的幂等根基：同 `command_id` 同 `request_hash` 回放时「**不写 outbox**」（§8 行 597），所以本事件对每个 `(tenant, command)` 至多一条——除非 `request_hash` 变了（那是 409，不是新决策）。"
+    },
+    "feasible": {
+      "type": "boolean",
+      "description": "来源：§7.1 行 542（示例 `true`）+ §7 DDL 行 419（`feasible boolean NOT NULL`）+ §11 T25-26（行 670：「`feasible=false` 的决策 | 仍写出 `model.route.selected`，`data.selected=null`、`infeasible_reason` 有值」）+ §7.1 行 564（「**`feasible=false` 也发事件。**一次『无可行模型』的决策同样是 S21 需要知道的结论——否则 S21 会一直等一个不会到来的成功」）。**这是本事件设计上最好的一个决定**：失败也发事件，且用 `selected: null` 而不是「不发」。对照 S15 的 VAC-1（撤销事件因为 `aggregate_sequence` 的重定义而被拒），这里没有那个问题。**但 `feasible` 与 `selected` 的一致性没有任何 schema 层约束**：JSON Schema 能表达 `if/then`，本文件没有用它——因为 §7.1 只说「`feasible=false` 时为 null」，没说「`feasible=true` 时必非 null」（一个 `feasible=true` 却没有任何候选的决策在语义上不可能，但计划没写死）。见 MRT-7。"
+    },
+    "selected": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§7.1 行 543–552（示例的五个字段）+ §7.1 行 562–563 约束 2（「`selected` 只放 S26 派单必需的字段。S26 仍必须回查 `route_decision`（校验 `content_hash`、`quote_valid_to`、`rank`），事件不是授权书」）。**`rank=1` 的身份由 §7.1 行 543 的注释给出（「rank=1；feasible=false 时为 null」），而 `rank` 本身不是 `selected` 的字段**——消费方无法从事件里判断这个候选真是 `rank=1`，只能相信发布方。`route_candidate` 的 `rank` 是 `integer`、`NULL = rejected`（DDL 行 430），所以「rank=1」是「在 eligible 里排第一」，而 §11 T25-05（行 657）说便宜的候选可以 `rank` 靠后——排序是软评分的结果，不是硬过滤后的第一个。**`selected` 里的 `expected_cost_micro` 与 `quote_upper_bound_micro` 在 §7.1 的示例里是 1180000 与 1080000**，即期望成本**大于**报价上界——见 MRT-2。",
+      "properties": {
+        "candidate_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§7.1 行 545（示例 `seedance/volcengine/seedance-1-0-pro@250528#cn-beijing#pool_…`）+ §7 DDL 行 431（`candidate_key text NOT NULL`）+ S24 §3.2 行 503（同一个六元组的 `@` + `#` 形态）。**它是唯一一个把 S24 的六元组完整带出来的字段**——这也是 S24 的 MCG-2 里说「S25 拼不出 `candidate_key`」的另一面：一旦 S25 拼出来了（靠回查 S24），它就把结果放进本事件，于是本事件**已经带着 S24 的 `region` 与 `account_pool_id`**（藏在 `candidate_key` 里）。所以 MCG-2 的可修复路径之一是「S25 回查一次，把 `candidate_key` 发出来」，而本字段正是那个形态——**但它只覆盖 `rank=1` 的那一个候选**，其余 14 个（`rejected_count: 12` + 2）没有 `candidate_key`。"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§7.1 行 546（示例 `9f2c…e1`）+ §7 DDL 行 432（`snapshot_id text NOT NULL`）+ S24 §2.2 行 104（`= sha256(规范化后的整个 claim 集)`）。**本文件收 64 位裸 hex，而 §7.1 的示例是 `9f2c…e1`**——与 S24 的 MCG-7 同一个问题：方案的示例写法过不了它自己引用的 DDL。"
+        },
+        "combination_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§7.1 行 547（示例 `6b3d…0f`）+ §7 DDL 行 433（`combination_key char(64)`，**可空**）+ S24 §2.4 行 230（`combination_key char(64) NOT NULL,   -- 见下方规范化规则`）。**本文件收成必填而非可空**：§7.1 的 `selected` 五个字段都在示例里出现，而 §7 的 `route_candidate.combination_key` 可空（因为非视频模态不需要组合探测）。所以一个 TTS 或 LLM 的路由决策在本契约下**没有 `combination_key` 可填**——这是本文件里唯一一处比 DDL 严的地方，取舍是「照 §7.1 的示例收必填、拒掉非视频模态」还是「照 DDL 收可空、允许 `null`」。本文件选了**必填**，因为 §7.1 行 562–563 的约束 2 说「`selected` 只放 S26 派单必需的字段」，而 S26 的 `POST /generation-jobs` 对视频必须校验组合（S24 §3.3 与 §4.4）；对非视频模态它不必要，但**事件不区分模态**，所以收可空会让视频路径也能漏填。**这是本文件唯一一处主动偏离 DDL 的取舍，记在 MRT-8 里。** 值域照 S24 的 `combination_key` 规范化（S24 §2.4 行 249–260）是 64 位 hex。"
+        },
+        "normalized_input": {
+          "type": "object",
+          "description": "来源：§7.1 行 548（示例 `{\"duration_seconds\": 5, \"aspect_ratio\": \"9:16\"}`）+ §7 DDL 行 444（`normalized_input jsonb NOT NULL`）+ §12 行 681（「提交给 S27 的输入规格必须等于 `normalized_input`（含吸附后的时长），不能是原始请求值」）。**这是本事件里语义最重要、形状最不定的字段**：§12 第 4 条把它变成 S26 的一条**硬校验**（S27 收到的规格必须逐字等于它），而它的内容**没有任何 schema**。(1) 示例只有两个键（`duration_seconds`、`aspect_ratio`），而 `generation-command.v2.schema.json` 的 `input` 有十几个字段（`references[]`、`resolution`、`mode`、`audio_strategy`、`text`、`voice_binding`…）——哪些进 `normalized_input`、哪些不进，全文没说。(2) S24 §3.3 的档位吸附（`duration_seconds=4` → `snap_to=5s`）会改写它，所以它不是请求的副本而是**改写后的**值——但「改写」的规则分散在 S24 §3.3 与 S25 里，没有一份「`normalized_input` 的完整字段表」。(3) `jsonb` 不保序，而「逐字等于」的校验若比对序列化后的 JSON，键序会不稳。本文件收 `type: object` 不约束内容——约束了就要猜字段集，而 `contracts/README.md` 明说「不从散文推断这些值」。见 MRT-9 与 `x-needs-owner`。"
+        },
+        "expected_cost_micro": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§7.1 行 549（示例 `1180000`）+ §7 DDL 行 441（`expected_cost_micro bigint`，**可空**）+ S24 §2.5 行 322–328（报价上界的公式）。**`expected_cost_micro` 是「期望成本」，`quote_upper_bound_micro` 是「上界」，按定义前者应 ≤ 后者**；而 §7.1 的示例写 1180000 > 1080000。这不是排版错误能解释的（两个数相差 10 万微单位，正好是 `margin_bps` 默认 1500 的 15% 量级），见 MRT-2。**`minimum: 0` 而不是 1**：零成本是合法的（缓存命中、`platform.capability_probe` 的免费探测、或 `quotable=false` 时的占位），而负数没有意义。DDL 可空（行 441），本文件收必填——同样是因为 §7.1 的示例里它总在，而 `selected` 只在 `feasible=true` 时非 null。"
+        },
+        "quote_upper_bound_micro": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§7.1 行 550（示例 `1080000`）+ §7 DDL 行 442（`quote_upper_bound_micro bigint`，**可空**）+ S24 §2.5 行 330（「`upper_bound_micro` 必须由快照自身的档位给出…不能由调用方传入上限」）。**这是 S26 用来约束预算的那个数**（S25 §3 硬过滤 #16 用「报价上界超出 `budget_scope` 的剩余可承诺额」判 `OVER_BUDGET`），也是 `docs/12`「无可验证上界的任务不能以 0 元估计准入」的载体。`quotable=false` 时 DDL 允许它为空（S24 §2.5 行 315），而 §7.1 的示例总有值——若 `selected` 里出现 `quotable=false` 的候选，本契约要求填一个数，那它只能是假的。这与 `expected_cost_micro` 的必填取舍是同一个：本文件照示例收必填，代价是拒掉一种合法情形。见 MRT-8。"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "来源：§7.1 行 551（示例 `USD`）+ §7 DDL 行 445（`currency char(3)`，**可空**）+ S24 §2.5 行 287（`currency char(3) NOT NULL`）。**本文件收 `^[A-Z]{3}$` 是推断，不是依据**：两个 DDL 都只写 `char(3)`，没有 ISO-4217 的 CHECK，也没有大小写约束。`char(3)` 在 Postgres 里是定长并补空格，所以 `'USD'` 与 `'usd'` 都合法、`'usd '`（补的行）也是。本仓库没有一处定义币种词表。见 `x-needs-owner`。"
+        }
+      },
+      "required": [
+        "candidate_key",
+        "snapshot_id",
+        "combination_key",
+        "normalized_input",
+        "expected_cost_micro",
+        "quote_upper_bound_micro",
+        "currency"
+      ],
+      "additionalProperties": false
+    },
+    "infeasible_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "来源：§7.1 行 553（示例 `null` + 注释「feasible=false 时填原因码，如 DIALOGUE_DURATION_UNKNOWN」）+ §11 T25-26（行 670）。**这是本事件里唯一描述「为什么」的字段，而它的词表完全没有出处**：`route_decision` 的 22 列里没有 `infeasible_reason`（§7 DDL 行 403–427），S25 §3 硬过滤表的 19 条各有一个原因码（`CROSS_TENANT_DENIED` … `LORA_INCOMPATIBLE`），§9 失败分支表又给了 `CAPABILITY_SOURCE_UNAVAILABLE` / `DEADLINE_ALREADY_PASSED` / `INFEASIBLE` / `BUDGET_SOURCE_UNAVAILABLE`，而 §7.1 的注释补了 `DIALOGUE_DURATION_UNKNOWN`——**三张表加起来 20 多个码，没有一份汇总，没有一处 `CHECK`，`route_candidate.rejection_code` 也是 `text` 无 CHECK（DDL 行 436）**。本文件收 `[\"string\",\"null\"]` 且 `minLength: 1` 而不枚举（`contracts/README.md` 的原则），但 `null` 与非 `null` 的**配对关系**（`feasible=false` ⇒ 非 null）没有被 schema 绑住。见 MRT-7 与 `x-needs-owner`。"
+    },
+    "eligible_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§7.1 行 555（示例 `3`）+ §7 DDL 行 430（`rank integer,  -- NULL = rejected`）。**没有对应的 DDL 列**：`route_decision` 的 22 列里没有计数列，它是从 `route_candidate` 按 `rank IS NOT NULL` 数出来的、只在事件里出现——与 S10 的 `entry_count`（ABS-4）同一个模式。**`eligible_count` 与 `selected` 的关系没写**：`feasible=true` 时 `eligible_count` 应 ≥ 1（否则没有候选可当 `rank=1`），而 §11 T25-26 只说了 `feasible=false` 时 `selected=null`。本文件收 `minimum: 0`（不推 `minimum: 1`，因为 `feasible=false` 时它就是 0），不把两者绑住。"
+    },
+    "rejected_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§7.1 行 556（示例 `12`）+ §7 DDL 行 430（`rank integer,  -- NULL = rejected`）。同 `eligible_count`：无 DDL 列，从 `route_candidate` 按 `rank IS NULL` 数出来。**`eligible_count + rejected_count` 应当等于候选总数，而候选总数不在事件里**——加上 §7.1 行 560 的约束 1（「不放 `rejected[]` 明细…完整决策在 `route_decision` / `route_candidate` 里」），消费方只能知道「有几个被拒」而不知道「都有谁」——这是刻意的（`pii_payload: references_only_by_default`），回查 `data_ref` 才是详情的路。"
+    },
+    "degradation_offered": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "pool",
+          "model_swap",
+          "spec_adjust",
+          "split_shot",
+          "layered",
+          "human_review"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "来源：§7.1 行 557（示例 `[\"pool\",\"spec_adjust\"]`）+ §7 DDL 行 458（`kind text NOT NULL,   -- pool|model_swap|spec_adjust|split_shot|layered|human_review`）+ **行 464（`CHECK (kind IN ('pool','model_swap','spec_adjust','split_shot','layered','human_review'))`）**。**这是本事件里唯一一个取值有真 CHECK 的数组元素**（与 S24 的 `lifecycle` 同理）：`degradation_option.kind` 的六值是 DDL 强制的，所以本文件可以安全地枚举它们——这不是从散文推断。**但数组本身不是 `degradation_option` 的行**：真正的行还有 `auto_executable`、`silent_degradation`、`blocked_reason`、`cost_delta_micro`、`quality_risk`（DDL 行 459–463），事件只发 `kind`。于是消费方知道「提供了哪些降级」，**不知道哪些能自动执行**——而 §6.2 行 361–366 的整个表格（L1..L4 × `identity_locked`/`voice_lock`/`full_dialogue`/`min_delivery_spec`）与 `CHECK (auto_executable = false OR silent_degradation = false)`（行 465）就是为这件事存在的。S21 要做「看到 `auto_executable=false` 必须走 S40」（§6.2 行 368）的判断，就得回查——而 §7.1 行 562 的约束 1 正是让人回查。**这是刻意的取舍，不是缺口**，但 `kind` 上的 enum 会让读者以为「`degradation_offered` 是降级选项的全部」——它不是，它只是六种类型里哪些出现过。本文件保留了 enum（有 DDL 依据），在描述里写清它不是选项的后半部分。"
+    },
+    "policy_snapshot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§7.1 行 558（示例 `pol_snap_...`）+ §7 DDL 行 417（`policy_snapshot_id text NOT NULL REFERENCES routing_policy_snapshot`）+ 行 390–401（`routing_policy_snapshot` 的主键与 `UNIQUE (tenant_id, policy_ref_id, policy_ref_rev, policy_ref_hash)`）。**它是 `routing_policy_snapshot.policy_snapshot_id`，即「这次评分用了哪一版策略」**——S25 §1.1 说 `RoutingPolicySnapshot` 是「由 S02 授权，S25 只存其生效快照」，所以这个 id 是 S25 自己的，而它的**内容**（`weights` / `thresholds` / `flags`）来自 S02 的 `policy_ref`。**`route_decision` 里只有这一个 id，没有 `policy_ref_id` / `policy_ref_rev` / `policy_ref_hash`**（那三个是 `routing_policy_snapshot` 的列）——于是消费方拿 `policy_snapshot_id` 回查得到四个键，再判策略是否已撤销。这是正确的单一权威做法（S25 不复制 S02 的策略），但它意味着**一次可复算性验收（T25-21「用 `route_decision.scoring` + `score_parts` 重算，`score` 一致」，行 668）需要三个来自不同服务的输入**：策略（S02）、能力（S24，`capability_bundle_revision`）、候选的历史 QC（S44 或 S35）。三份都可能变，而复算不冻结它们——见 MRT-5。"
+    },
+    "capability_bundle_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§7.1 行 559（示例 `812`）+ §7 DDL 行 418（`capability_bundle_revision bigint NOT NULL,   -- 建决策时的 S24 水位`）+ S24 §6.1 行 740（全局单调计数器）+ S25 §9 行 610（「S24 投影落后…仍可出决策，但 `route_decision.capability_bundle_revision` 记录真实水位，且响应带 `projection_lag=true`」）。**这是本事件与 S24 的唯一直接联系**：S24 的 `aggregate_sequence` 与这个是同一个计数器（S24 §3.5 行 596），所以消费方**可以把两个 topic 的水位对起来**——这是 `projection_lag` 能算出来的前提，也是 S24 的 MCG-1（全局水位掩盖单流落后）在 S25 侧的观测点。**`minimum: 1` 同样无 DDL 依据**（DDL 无 CHECK），来自 S24 §3.5 的 `aggregate_sequence: 42` 与 envelope 的 `minimum: 1`。**`projection_lag` 这个布尔量与它的关系全文没写**：§9 行 610 说「`bundle_revision` 比事件序列小」时 `projection_lag=true`——「事件序列」是什么（S25 收到的最大 `capability_bundle_revision`？Kafka 的 offset？）没有定义，所以这个布尔量的算法在契约层不可复算。见 MRT-4。"
+    },
+    "quote_valid_to": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§7.1 行 560（示例 `2026-10-30T03:27:00Z`）+ §7 DDL 行 421（`quote_valid_to timestamptz NOT NULL`）+ §12 行 678（「`now() <= route_decision.quote_valid_to`，否则 409 `ROUTE_QUOTE_EXPIRED`」）+ §11 T25-23（行 669）。**这是本事件里唯一一个能让整条决策作废的字段**，而它与 S24 的 `price_snapshot.valid_to` 是**两个不同的时间**：后者是价格行自己的保质期（S24 §2.5 行 298），前者是 S25 对这次报价承诺的有效期（示例是决策后 15 分钟）。S25 §1.2 说「不预留任何东西」，所以 `quote_valid_to` 到期只是「这条决策不能再用了」，不是「钱被退回了」——S26 必须在签发 grant 前复查，而 §7.1 行 563 的约束 2 已经说了「事件不是授权书」。**`format: date-time` 在本仓库是纯声明式的**（`tools/validate/validate_examples.py` 没有装 `FormatChecker`），所以这条约束今天不产生任何拒绝——与 S24 的 `effective_from` 同一个已知状态。"
+    },
+    "projection_lag": {
+      "type": "boolean",
+      "description": "来源：§7.1 行 561（示例 `false`）+ §9 行 610（「S24 投影落后（`bundle_revision` 比事件序列小）」）+ §3.2 行 500（`\"projection_watermark\": \"2026-10-30T03:11:00Z\"`）。**没有对应的 DDL 列**（`route_decision` 的 22 列里没有它），只在事件与响应里出现——与 `eligible_count` / `rejected_count` 同一个模式。**它是本事件里最不可复算的一个字段**：判定规则「`bundle_revision` 比事件序列小」需要「事件序列」的定义，而全文没有。S24 的 MCG-1 指出：由于 `capability_bundle_revision` 是**全局**计数器，一条晚到的低 rev 会被高的吃掉，此时 S25 的投影确实陈旧而按水位算 `projection_lag=false`——于是这个布尔量会**声称投影是最新的**。见 MRT-4。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "route_id",
+    "revision",
+    "content_hash",
+    "project_id",
+    "series_id",
+    "episode_id",
+    "branch_id",
+    "node_id",
+    "node_epoch",
+    "execution_fence",
+    "attempt_id",
+    "command_id",
+    "feasible",
+    "selected",
+    "infeasible_reason",
+    "eligible_count",
+    "rejected_count",
+    "degradation_offered",
+    "policy_snapshot_id",
+    "capability_bundle_revision",
+    "quote_valid_to",
+    "projection_lag"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`content_hash` 的哈希对象与规范化规则",
+      "demanded_by": "plans/S25-model-routing.md §7.1 行 531（注释「与 `route_decision.content_hash` 一致，供下游核对」）、§8 行 599（「`content_hash` 由输出规范化后求 sha256，可被 S26 引用校验」）、§12 行 677（S26 的校验第 1 条）、§12 行 680（「`candidate_key` 在 `route_decision.eligible` 内且 `rank` 匹配」）",
+      "s25_status": "「输出」指整条 `RouteDecision`（22 列 + 22 列的 `route_candidate` 若干行）还是 §7.1 的 payload，全文没有说。若指整条决策，S26 要复算就得把 `jsonb` 与 `numeric` 按某个未定义的规范化重算，而 `route_candidate` 有 `score numeric(6,4)`、`score_parts jsonb`、`normalized_input jsonb`、`expected_cost_breakdown jsonb` 四列类型敏感字段；若指 payload，那 `content_hash` 是 payload 的一个字段又参与哈希自己。要补需要 owner 定：哈希输入（决策头？头+候选？payload？）、规范化方式（JCS？自定义？）、以及 `route_candidate` 的行序是否参与（`rank` 排序？`candidate_key` 字典序？）。补上之前，§12 第 1 条「`content_hash` 一致」这条校验**只能校验「两种实现恰好选了同一个未成文约定」**。"
+    },
+    {
+      "field": "`infeasible_reason` 与 `route_candidate.rejection_code` 的码表",
+      "demanded_by": "plans/S25-model-routing.md §3（行 106–128，19 条硬过滤各一个码）、§9（行 607–616，7 条失败分支各一个码）、§7.1 行 553（注释里的 `DIALOGUE_DURATION_UNKNOWN`）、§7 DDL 行 436（`rejection_code text`，**无 CHECK**）",
+      "s25_status": "三处各给各的码，合起来 20 多个，没有一份汇总、没有一处 `CHECK`、没有 schema 枚举。`route_candidate.rejection_code` 是 `text` 无 CHECK，`route_decision` 根本没有 `infeasible_reason` 列（所以这个值只在事件里存在、不可回放）。码表在 S44 的经营分析（§10 行 640「`route_rejection_total{code}`」）与 S21 的编排判断里都是主键——`CAPABILITY_MISSING:preserve_identity` 这样的带参数码（§3 行 116）更是没法用 `CHECK` 表达。要补需要 owner 定：码表是否闭集、要不要带参数、放哪份 schema、以及 `route_decision` 是否补一列让它可回放。"
+    },
+    {
+      "field": "`currency` 的词表",
+      "demanded_by": "plans/S25-model-routing.md §7 DDL 行 445（`currency char(3)`）、plans/S24-model-registry.md §2.5 行 287（`currency char(3) NOT NULL`）",
+      "s25_status": "两处都只写 `char(3)`，没有 ISO-4217 的 CHECK，没有大小写约束。`char(3)` 在 Postgres 里定长补空格，所以 `'usd'` 与 `'USD '` 都合法而它们不等。S23 是钱权威（AGENTS.md），`docs/12` 的预算一律微单位，而币种只在这两个服务里各写一个 `char(3)`——没有一处说「全平台只允许一种币」或「币种由 S23 定义」。要补需要 owner 定：是否单币种（那这个字段可以去掉）、还是多币种（那需要一份共享词表 + 大小写规则 + 是否宿主要 ISO-4217）。"
+    },
+    {
+      "field": "`normalized_input` 的完整字段集与规范化规则",
+      "demanded_by": "plans/S25-model-routing.md §7.1 行 548（示例只有 `duration_seconds` 与 `aspect_ratio`）、§7 DDL 行 444（`normalized_input jsonb NOT NULL`）、§12 行 681（「提交给 S27 的输入规格必须等于 `normalized_input`（含吸附后的时长），不能是原始请求值」）、plans/S24-model-registry.md §3.3 行 573（档位吸附 `snap_to=5s`）",
+      "s25_status": "§12 第 4 条把它变成一条硬校验（逐字等于），而它的字段集没有任何 schema：`generation-command.v2.schema.json` 的 `input` 有十几个字段，哪些进这个对象、哪些不进、吸附后写回哪个键，全文没说。示例只有两个键，而视频路径至少还要 `resolution`、`mode`、`references[]`、`audio_strategy`——若这些不进 `normalized_input`，S27 收到的规格就没法「逐字等于」它。`jsonb` 不保序，所以「逐字等于」若比对序列化结果，键序会不稳。要补需要 owner 定：完整字段表、`references[]` 的元素形状与顺序、吸附规则写回哪几个键、以及比对是否用 JCS。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "MRT-1",
+      "summary": "`data_ref` 只有三个键，而 envelope 的 `data_ref` 要求四个——§7.1 的示例照抄会被本仓库自己的校验器拒",
+      "event": "plans/S25-model-routing.md §7.1 行 570–574：`\"data_ref\": {\"service_id\": \"S25\", \"id\": \"route_01J...\", \"revision\": 1}`——**三个键**",
+      "envelope": "contracts/event-envelope.v2.schema.json 的 `data_ref`：`required: [service_id, id, revision, content_hash]`、`additionalProperties: false`",
+      "sibling": "本仓库既有 16 份带非 null `data_ref` 的示例（实测），全部四键齐全，`content_hash` 是 64 位 hex；`contracts/README.md` 也把 `data_ref` 写成四键引用",
+      "why_it_matters": "这是**本仓库自己会拒的示例**，不是风格差异。§7.1 行 562 的约束 1 明说「完整决策在 `route_decision` / `route_candidate` 里，事件只带 `data_ref`；需要明细的一方回源查」——所以 `data_ref` 是这条事件唯一的回源指针，而它缺 `content_hash` 时，回源方拿到 `(S25, route_01J..., rev 1)` 之后**无法确认自己读到的决策就是当时那条**（决策一旦被 `UPDATE`，`revision` 仍可能是 1，因为 §7 DDL 行 405 的 `DEFAULT 1` 之外没有人写它）。`content_hash` 正是为此存在的（§7 DDL 行 424 与 §8 行 599：「可被 S26 引用校验」），而 payload 里**确实有** `content_hash`（行 531）——所以正确的修法是把同一个值也放进 `data_ref`，不是新建一个。§7.1 只是漏了。**本文件不能修示例**（示例属于方案，`docs/design-package/` 之外的地方我改不动 S25 的方案），所以本仓库的 `contracts/examples/model-route-selected.json` 用四键的 `data_ref`，与 §7.1 的意图一致；差异记在这里。"
+    },
+    {
+      "id": "MRT-2",
+      "summary": "`selected` 里期望成本 1180000 大于报价上界 1080000——上界按定义是最坏情况，期望不可能超过它",
+      "event": "plans/S25-model-routing.md §7.1 行 549–550：`\"expected_cost_micro\": 1180000,` 与 `\"quote_upper_bound_micro\": 1080000,`",
+      "upper_bound_definition": "plans/S24-model-registry.md §2.5 行 330：「`upper_bound_micro` 必须由快照自身的档位给出（时长取 `duration_tiers_s` 的最大值，像素取 `max_width×max_height`），不能由调用方传入上限」；行 322–328 的公式：`raw = Σ_units ( worst_case_units(unit) × unit_price_micro ) + min_charge_micro + failure_charge_reserve(...)`，`upper_bound_micro = ceil_to_currency_minor( raw × (1 + margin_bps/10000) )`——**`margin_bps` 默认 1500，即上界含 15% 余量**",
+      "consumer": "plans/S25-model-routing.md §3 硬过滤 #16（行 124）：「报价上界超出 `budget_scope` 的**剩余可承诺额** | S23 只读查询 | `OVER_BUDGET`」；§12 行 678：「`now() <= route_decision.quote_valid_to`」",
+      "why_it_matters": "「上界」这个词在这里是技术性的：S24 §2.5 的公式里 `worst_case_units` 取档位最大值，再乘 1.15，所以 `quote_upper_bound_micro` 是**比任何可能的期望成本都高**的一个数。§7.1 的示例让期望超过上界 10 万微单位（约 9%），这**不可能是笔误**——两个数差了整整一个 `margin_bps` 量级，看起来是把「上界」与「期望」的算法搞反了（或者 `expected_cost_micro` 填的是含了别的成本的数，例如 S26 的 lipsync 分支，§11 T25-09 行 661：「模型原生不出声 | `expected_cost_breakdown.lipsync > 0`，排序被拉低」——那是 `expected_cost_breakdown` 里的分量，而 `expected_cost_micro` 是总和）。后果是两条：(1) **预算判断的方向错了**——S25 §3 #16 用 `quote_upper_bound_micro` 与剩余可承诺额比，若这个值系统性地低于真实期望，`OVER_BUDGET` 会漏判，那个「便宜候选超预算、贵候选刚好够」的验收（T25-06，行 658）会在一种本不该通过的情形下通过；(2) **降级链的最坏情况估价也错**（§4.4 行 682：「估价按**最高档位**计算，不按请求档位」——那是 S24 的上界，与这里是同一个数）。本文件**不把这两个字段绑成 `expected <= upper_bound`**，因为 §7.1 的示例违反它而我不知道哪一侧是权威：若绑住，照 §7.1 的示例写的一切事件都会被拒；若不绑，这条不一致就静默通过。要定的是：是示例的 1180000 该改成 ≤ 1080000，还是 `quote_upper_bound_micro` 的公式漏了某个成本分量（例如 lipsync），还是 `expected_cost_micro` 的定义其实不是「期望」而是「已承诺额」。**本条不选边。**"
+    },
+    {
+      "id": "MRT-3",
+      "summary": "`revision` 是 payload 字段、`aggregate_sequence` 与 outbox 的唯一约束三者共用，而这一列永远只可能是 1——重路由没有第二条事件",
+      "event_field": "plans/S25-model-routing.md §7.1 行 530：`\"revision\": 1`；行 504：「`aggregate_id = route_id`，`aggregate_seq = route_decision.revision`」",
+      "ddl": "§7 行 404–405：`route_id text PRIMARY KEY,` / `revision integer NOT NULL DEFAULT 1`——**主键是 `route_id` 而不是 `(route_id, revision)`**；`route_candidate` 的外键是 `route_id text NOT NULL REFERENCES route_decision`（行 430）；`degradation_option` 同（行 456）",
+      "outbox": "§7 行 480–485：`aggregate_seq bigint NOT NULL,        -- route_decision.revision` 与 `UNIQUE (aggregate_id, aggregate_seq, event_type)`",
+      "idempotency": "§8 行 597：「回放时**不写 outbox**，因为第一次已经写过；重复写会被 `UNIQUE (aggregate_id, aggregate_seq)` 拒掉」",
+      "retry_path": "§9 行 615：「报价在决策过程中过期 | 重新取价；取不到则降级为 `PRICE_EXPIRED` 拒绝」；plans/S26-generation-jobs.md 行 939：「`quote_valid_to > now()`，否则 409 `ROUTE_QUOTE_EXPIRED`」",
+      "why_it_matters": "这一列的设计是自洽的（一次决策一条记录、`aggregate_seq` 恒为 1、`UNIQUE` 只在重投时生效），**但它假设了一条决策永不需要第二版**。而 `quote_valid_to` 会让决策作废：S26 §12 第 2 条要求 `now() <= quote_valid_to`，否则「409 `ROUTE_QUOTE_EXPIRED`，要求重新路由」（S25 §12 行 678）。重新路由会产生**新的 `route_id`**（`route_id` 是主键、由 S25 生成），所以消费方看到的是两条独立的流，而不是同一条流的 rev 2。这在语义上可以工作（两条决策就是两条决策），但有一个观测后果：**「这次尝试被重路由了几次」不可从事件流推出**——`attempt_id` 相同、`command_id` 相同、`route_id` 不同，而 §7 DDL 的 `ix_route_lookup (tenant_id, attempt_id, created_at DESC)`（行 427）正是为「按 attempt 找最近的决策」建的索引。于是 S21 或 S44 要判「这次尝试是不是在反复重路由」（成本失控的征兆）时，只能按 `attempt_id` 聚合多份 `data_ref` 回源，而 `UNIQUE (tenant_id, command_id)`（行 425）又让同一个 command 只有一份决策——两条约束方向相反：`command_id` 唯一但 `attempt_id` 可复用。要定的是：`revision` 这一列是为了什么存在的（若设计上永为 1，它就是死列；若设计上要支持 rev 2，那 `route_decision` 的主键该是 `(route_id, revision)`、`route_candidate` 的外键也要跟着改）。**本文件收 `minimum: 1` 而不锁死 `1`**，因为锁死会拒掉一种 DDL 明确允许的写法，而那份 DDL 是唯一权威。"
+    },
+    {
+      "id": "MRT-4",
+      "summary": "`projection_lag` 与「`node_epoch`/`execution_fence` 是否已过期」两件事都判不出来，而它们决定这条决策还能不能用",
+      "lag_rule": "plans/S25-model-routing.md §9 行 610：「S24 投影落后（`bundle_revision` 比事件序列小）| 仍可出决策，但 `route_decision.capability_bundle_revision` 记录真实水位，且响应带 `projection_lag=true`」",
+      "lag_field": "§7.1 行 561：`\"projection_lag\": false`——**没有对应的 DDL 列**（`route_decision` 的 22 列里没有它）",
+      "global_counter": "plans/S24-model-registry.md §6.1 行 740：「`capability_bundle_revision` 是全局单调计数器，由 `outbox` 的序列驱动」；§3.5 行 596：「`aggregate_sequence = capability_bundle_revision`」",
+      "s24_warning": "plans/S24-model-registry.md §3.5 行 622：「S25 只消费本事件维护投影；S26 在派单授权时**实时**回查（见 §5.3）。事件不能代替实时复查。」",
+      "fence_fields": "§7.1 行 537–538：`\"node_epoch\": 3,` 与 `\"execution_fence\": 11,`；AGENTS.md：「`execution_fence` | run / branch | 取消、故障切换」与「`node_epoch` | 单个 `logical_node` | 局部重生成」以及「两者不能混用。旧 epoch 的结果永远不能推进当前接受指针。」",
+      "why_it_matters": "两件相互独立的事。(1) **`projection_lag` 的算法不可复算**：「比事件序列小」里的「事件序列」没有定义——是 S25 已消费的最大 `capability_bundle_revision`？是 Kafka offset？而这个字段没有 DDL 列，只在事件与响应里存在，所以事后无法回放「当时 S25 认为自己的投影是不是落后」。更要紧的是 S24 的 MCG-1 已经指出：全局计数器让一条晚到的低 rev 被高的吃掉，此时 S25 的投影确实陈旧，而按水位算 `projection_lag=false`——于是这个布尔量在**它最该为 true 的时候**说 false。§9 行 610 的兜底是「S26 签发 grant 时必须实时复查」（与 S24 §3.5 行 622 一致），所以不会真正派错单，但**这条兜底成了唯一的安全网，而 `projection_lag` 这个显式信号不可信**。(2) **`node_epoch` / `execution_fence` 只是坐标，不是有效性**：事件发了「这次决策针对 epoch 3、fence 11」，而**没有发「当前的 epoch / fence 是多少」**——所以消费方拿到一条 `feasible=true` 的决策后，无法判断它是否已经被一次节点重生成或 run 取消作废。AGENTS.md 说「旧 epoch 的结果永远不能推进当前接受指针」，而这条事件既不带「新 epoch」也不带「epoch 是否仍然有效」的判据，于是 S21 要做这个判断必须回查 S08（或哪个服务持有 `node_epoch` 的当前值）。S25 §1.2 说「不预留任何东西」，所以它不该持有 epoch 的当前值——但那样 `node_epoch` 在事件里就只是给人看的。要定的是：`projection_lag` 的定义与是否补 DDL 列；以及 epoch/fence 的「当前值」由谁提供、这条事件是否需要带一个 `stale_after` 或类似字段。"
+    },
+    {
+      "id": "MRT-5",
+      "summary": "T25-21 声称决策「可复算」，而重算需要三份都会变的外部输入，事件只冻结了其中一个",
+      "acceptance": "plans/S25-model-routing.md §11 行 668（T25-21）：「决策可复算 | 用 `route_decision.scoring` + `score_parts` 重算，`score` 一致 | 专项验收」；§10 行 644–645：「审计：每个 `route_id` 存的拒绝原因、权重、候选集必须能复算。S44/`docs/15` 的经营分析依赖这份可复算性。」",
+      "three_inputs": "(1) 权重与阈值：`routing_policy_snapshot.weights` / `thresholds` / `flags`（§7 DDL 行 395–397），由 S02 的 `policy_ref` 授权，引用方式是 `policy_snapshot_id`；(2) 能力事实：`capability_bundle_revision`（行 418），来自 S24 的全局计数器；(3) 候选的历史 QC 与延迟：`route_candidate.sample_size`（行 440）、`watermark`（行 443）、`score_parts`（行 439）里的 `Q`/`U` 分量，来源见 §9 行 613（「历史 QC 数据缺失 | `Q` 分量用平滑先验，`U` 记高，`sample_size=0` 明示」）",
+      "event_has": "§7.1 行 529–562：`policy_snapshot_id` 与 `capability_bundle_revision` 有；**`score_parts`、`sample_size`、`watermark`、候选集全不在**（约束 1，行 560：「不放 `score_parts`、不放 `rejected[]` 明细」）",
+      "why_it_matters": "这不是矛盾，是**验收条件比事件契约严**。约束 1 是刻意的（体积、`pii_payload: references_only_by_default`），而 T25-21 的「可复算」要求重算时三份输入都还取得到当时的版本：策略用 `policy_snapshot_id` 冻结了（`routing_policy_snapshot` 是不可变快照，行 392 的主键就是 id），能力用 `capability_bundle_revision` 冻结了（S24 的 `bundle_{revision}` 缓存，S24 §6.3 行 758），**历史 QC 没有冻结**——`sample_size` 与 `watermark` 是决策当时的观测值，而 S44 的统计会继续增长，同一 `candidate_key` 的 `Q` 分量在重算时已经不同。于是 T25-21 的「`score` 一致」只在**决策后立刻重算**时成立；审计要的是「半年后还能复算」，而那条路缺一份冻结的 QC 快照。S25 §10 行 644 把这条要求写成硬约束（「必须能复算」），而事件与 DDL 都没有承载它的字段。要定的是：`route_candidate.score_parts` 是否已经冻结了当时的 `Q`/`U`/`sample_size`/`watermark`（若已冻结，那复算用的就是 `score_parts` 而非回查 S44，T25-21 成立）；若没有，需要一份 QC 快照引用。**本文件不补字段**——补了就是猜一份契约里没有的东西。"
+    },
+    {
+      "id": "MRT-6",
+      "summary": "四个业务坐标（`project_id`/`series_id`/`episode_id`/`branch_id`）的词法全仓库没有定义，而它们跨服务 join",
+      "event_fields": "plans/S25-model-routing.md §7.1 行 532–535：`\"project_id\": \"prj_...\"` / `\"series_id\": \"ser_...\"` / `\"episode_id\": \"ep_...\"` / `\"branch_id\": \"br_...\"`",
+      "ddl": "§7 DDL 行 407–410：四个 `text NOT NULL`，无 CHECK",
+      "other_services": "plans/S10-asset-catalog.md §5.3 行 610：`\"episode_id\": \"ep3\"` 与 `\"branch_id\": \"canon\"`；plans/S09-lineage-impact.md §5.4 行 771：`\"affected_episode_ids\": [\"ep003\"]`；plans/S08-revision-snapshot.md §6.1 行 649：`\"subject\": \"manifest/manifest_ep3\"`；plans/S16-canon-memory.md §1.2 行 61：默认分支名 `canon`",
+      "why_it_matters": "`episode_id` 至少有四种写法（`ep_...` / `ep3` / `ep003` / 藏在 `manifest_ep3` 里），`branch_id` 至少有三种角色混用（`br_...` 是 id，`canon` 是名字，而 S10 用它当 id）。在示例层面无害（都是非空字符串、都能过 schema），在集成层面是**静默失败**：S25 的 `route_decision` 按 `(tenant_id, attempt_id, created_at DESC)` 索引（行 427），而 S21 要按 `episode_id` 找某集的所有路由决策时，若它持有的是 S08 的 `ep3` 而 S25 写的是 `ep_...`，join 全部落空——**落空不报错**，它只表现为「这一集没有路由记录」。这与 S10 的 ABS-7 是同一个病，但覆盖面更大：ABS-7 只影响 `episode_id`，这里四个坐标全都没有词法。本文件收 `minLength: 1`、不约束形态——`contracts/README.md` 明说「不从散文推断这些值」，而约束了就要猜一个还没定的规则。要定的是：这四个 id 的形态（固定宽度前缀？外部 id 直传？）由哪个服务定（S03 拥有 project/episode，S16 拥有 canon/branch），以及是否要出一份共享的 id 词法契约。"
+    },
+    {
+      "id": "MRT-7",
+      "summary": "`feasible` / `selected` / `infeasible_reason` 三者的配对关系只在散文里，schema 没绑——而三个字段全是必填",
+      "fields": "plans/S25-model-routing.md §7.1 行 542–553：`\"feasible\": true,` / `\"selected\": { ... },  // rank=1；feasible=false 时为 null` / `\"infeasible_reason\": null,  // feasible=false 时填原因码，如 DIALOGUE_DURATION_UNKNOWN`",
+      "acceptance": "§11 行 670（T25-26）：「`feasible=false` 的决策 | 仍写出 `model.route.selected`，`data.selected=null`、`infeasible_reason` 有值」",
+      "why_it_matters": "散文说了三件事：`feasible=false` ⇒ `selected=null`；`feasible=false` ⇒ `infeasible_reason` 非 null；`selected` 是 `rank=1`。**没有说的**：`feasible=true` ⇒ `selected` 非 null（语义上显然，但没写）；`feasible=true` ⇒ `infeasible_reason` 为 null（同样显然，同样没写）；`eligible_count=0` 与 `feasible` 的关系（`feasible=true` 而没有任何候选，逻辑上不可能，但没有一条原文禁止）。JSON Schema 能表达这些（`if/then/else`），本文件**没有用**——因为 T25-26 只给出了 `feasible=false` 那一个方向，把其余三个方向写成 `if/then` 就是在推断规则。取舍的代价可以量化：一个 `feasible=true` + `selected=null` 的事件在本契约下**合法**，而消费方若按 `feasible` 分支处理会拿到一个空的 `selected` 并可能崩。本文件的做法是三个字段全必填（照 §7.1 的示例），让「漏填」被拒，而「填错」不可判。要定的是：四条配对关系里哪些该进契约（`if/then`）、哪些留给实现。"
+    },
+    {
+      "id": "MRT-8",
+      "summary": "`selected` 的四个字段在 DDL 里都可空，而事件把它们收成必填——非视频模态与 `quotable=false` 的决策因此无法表达",
+      "ddl_nulls": "plans/S25-model-routing.md §7 DDL：行 433 `combination_key char(64)`、行 441 `expected_cost_micro bigint`、行 442 `quote_upper_bound_micro bigint`、行 445 `currency char(3)`——**四列全部可空**",
+      "event_shapes": "§7.1 行 545–551：`candidate_key` / `snapshot_id` / `combination_key` / `normalized_input` / `expected_cost_micro` / `quote_upper_bound_micro` / `currency`——**七个字段在示例里都有值**",
+      "quotable": "plans/S24-model-registry.md §2.5 行 315：`quotable boolean NOT NULL,      -- 是否可算出可验证上界`；行 332：「`quotable=false` 的场景：供应商按『实际生成秒』计费但拒绝给出上限，或按 GPU 秒计费且时长取决于收敛。这类候选**不能被准入**」；S25 §3 硬过滤 #15（行 123）：「`NO_VERIFIABLE_UPPER_BOUND` / `PRICE_EXPIRED`」",
+      "non_video": "plans/S24-model-registry.md §2.3 行 141–146：16 个模式含 `tts`、`llm`、`vlm`、`music`、`lora_training`——这些模式不进 `capability_mode` 的组合探测（§2.4 行 265：「组合验证」只对需要多参考输入的模态有意义），所以 `route_candidate.combination_key` 对它们是 NULL",
+      "why_it_matters": "本文件把四个可空列收成必填，是为了不让视频路径漏填（S26 §12 第 3 条要校验 `candidate_key` 在 eligible 内、第 4 条要 `normalized_input` 逐字一致）——代价是**两类合法决策在本契约下无法表达**：(1) 非视频模态（`tts`/`llm`/`vlm`/`music`/`lora_training`）没有 `combination_key`，而 `feasible=true` 时 `selected` 必填；(2) `quotable=false` 的候选按 S24 §2.5 行 332「不能被准入」，所以它不会出现在 `selected` 里——这一条其实安全，因为 `selected` 是 `rank=1` 的 eligible 候选，而 eligible 已经过了硬过滤 #15。所以真正的问题只剩 (1)。**本文件不改成可空**，因为 §7.1 行 563 说「`selected` 只放 S26 派单必需的字段」，而把一个「视频必填、其余可空」的条件写进 schema 需要 `if` 按 `modality` 分支，而**事件里没有 `modality` 字段**——这一点是本条的关键：`route_decision` 的 22 列里也没有 `modality`，所以「这次决策是什么模态」在事件与表里都推不出（只能从 `candidate_key` 的 model_id 猜，或回查 S21 的 `GenerationCommand`）。要定的是：`modality` 是否该进 `route_decision` 与 payload（那 `combination_key` 的可空条件就能表达），还是 `selected` 收可空。"
+    },
+    {
+      "id": "MRT-9",
+      "summary": "`normalized_input` 是 S26 的硬校验对象（逐字等于），而它是唯一一个内容完全未定义的必填字段",
+      "field": "plans/S25-model-routing.md §7.1 行 548：`\"normalized_input\": { \"duration_seconds\": 5, \"aspect_ratio\": \"9:16\" },`——示例只有两个键",
+      "hard_check": "plans/S25-model-routing.md §12 行 681：「提交给 S27 的输入规格必须等于 `normalized_input`（含吸附后的时长），不能是原始请求值」——这是四条校验里的第 4 条",
+      "ddl": "§7 DDL 行 444：`normalized_input jsonb NOT NULL`",
+      "snap_rule": "plans/S24-model-registry.md §3.3 行 573：「请求 `duration_seconds=4`、档位是 `[5,10]` 且 `trims_to_nearest=true` 时：返回 `SUPPORTED` 并附 `snap_to=5s`，同时 S25 的估价必须按 **5 秒**计价（不是 4 秒）」；§11 T24-10（行 796）：「请求 4 秒、档位 5 秒、`trims_to_nearest=true` | 返回 `SUPPORTED` 且 `snap_to=5s`；报价按 5 秒算」",
+      "why_it_matters": "这是本事件里**唯一一个被下游当作逐字比对基准的字段**，而它的字段集没有任何契约。(1) 示例两个键（`duration_seconds`、`aspect_ratio`），而视频路径的 `GenerationCommand.input` 还有 `resolution`、`mode`、`references[]`、`audio_strategy`——§12 第 4 条要求 S27 收到的规格等于它，若这些不进 `normalized_input`，那 S27 的规格从哪来？(2) 吸附（`snap_to`）会改写 `duration_seconds`（4 → 5），而「吸附后的值写回哪个键」没写——若 `normalized_input.duration_seconds` 是吸附后的 5，那它与原始请求的 4 是两个不同的数，而「逐字等于」比的是哪一个？(3) `jsonb` 不保序，`references[]` 是数组（有序）、对象键无序——「逐字等于」若比对 JSON 文本，键序会漂移；若比对语义（例如 JCS），那要写进契约。(4) 该字段是必填且 `additionalProperties: false` 在外层，但 `normalized_input` 本身是 `type: object` **没有 `additionalProperties: false`**——本文件允许任意键，因为约束了就要猜字段集。要定的是：完整字段表、吸附写回规则、以及「等于」的比较方式（语义相等 / JCS 字节相等 / 逐键相等）。**这是本事件里最该优先解决的一条**：它决定 S26 与 S27 之间那条硬校验能不能实现。"
+    }
+  ]
+}

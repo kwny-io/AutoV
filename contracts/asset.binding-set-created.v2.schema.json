@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/asset.binding-set-created.v2.schema.json",
+  "title": "asset.binding-set.created payload v2",
+  "description": "event `asset.binding-set.created` 的 data 部分。权威定义在 plans/S10-asset-catalog.md §5.3（行 596–618，7 个字段的示例）、§2.3（行 158–202，`binding_set` 与 `binding_set_revision` DDL）、§2.4（行 210–250，`binding_entry` 与 `binding_expansion`）、§4.3（行 452–491，封存事务的九步）、§8.5（行 750–756，E30 权利复查）、§10（行 798–808，C10-1..C10-7）。**这条事件的 payload 形状本身是清楚的（7 个字段都有示例值），问题全在外部**：它引用的 `binding-set.v1` 契约不存在（ABS-1）、它的 `content_hash` 覆盖一个 schema 还没定义的对象（ABS-1）、它声称的两个消费方一个都不认它（ABS-2）、而且它自己的 `subject`/`aggregate_id` 与 DDL 的 `binding_set_id` 命名不一致（ABS-6）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§5.3 的示例未画这一项，按 contracts 既有 payload 约定补。"
+    },
+    "binding_set_ref": {
+      "type": "object",
+      "description": "来源：§5.3 行 609（示例 `{\"service_id\":\"S10\",\"id\":\"bs_01J...\",\"revision\":7,\"content_hash\":\"…\"}`）+ §2.3 DDL 行 181–197（`binding_set_revision` 主键 `(tenant_id, binding_set_id, revision)`、`revision integer NOT NULL CHECK (revision >= 1)`、`content_hash char(64) NOT NULL -- sha256(JCS(payload))`、`CONSTRAINT bsr_hash_len CHECK (content_hash ~ '^[0-9a-f]{64}$')`）。**四键，自引用**：`service_id` 恒为 `S10`（S10 自己的产出），`id` 是 `binding_set_id`，`revision` 与 envelope 的 `aggregate_sequence` 是同一个数（§5.3 行 598「`aggregate_sequence = revision`」、§4.3 行 487「`INSERT outbox (asset.binding-set.created, seq = revision)`」）。**`content_hash` 的哈希对象在仓库里不存在**：DDL 行 187 说 `payload` 是「完整 binding-set.v1（含展开结果）」，而 §11.1 行 816 把 `contracts/assets/binding-set.v1.schema.json` 列为自己必须先写的东西——它今天既不在 `contracts/` 下、也不在 `contracts/assets/` 下。于是 `content_hash` 是**对一个未定义对象的哈希**，而它要进 `episode-manifest.v2` 的 `binding_set_ref`（S10 §1 行 15）成为整集溯源的锚点。见 ABS-1。",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "series_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.3 行 610（示例 `\"series_demo\"`）+ §2.3 DDL 行 163（`series_id text NOT NULL`）+ 行 171（`UNIQUE (tenant_id, series_id, episode_id, branch_id)`）。**四元组的第一个**：一个 `(series, episode, branch)` 只有一个 BindingSet（行 178），所以这三个 id 加上 `branch_id` 才是完整坐标。**它们与 `binding_set_ref.id` 不是冗余**：`binding_set_id` 是稳定 id，而 `(series, episode, branch)` 是业务坐标；DDL 行 178 说「分支派生时新分支建新 BindingSet，父分支的那份不动」，所以同一个 `(series, episode)` 在不同分支上各有一个 `binding_set_id`。事件把它们都发了，消费方可以不回查就按坐标索引——这是本事件的少数优点之一（对照 S08 的 `snapshot.manifest.committed`，那边 `branch_id` 根本不在 payload 里，SMC-6）。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.3 行 610（示例 `\"ep3\"`）+ §2.3 DDL 行 164。**注意示例里是 `ep3`，而 S08 与 S09 的示例用的是 `ep003`**（S09 §5.4 行 771 的 `affected_episode_ids: [\"ep003\"]`、S08 的 `manifest_ep3`）——同一份方案集里 `episode_id` 的写法不统一。本文件只收非空字符串、不约束形态，因为全文没有一处定义过 `episode_id` 的词法（S03 该定而没说）。这不是本事件的缺陷，但两个服务用不同形态的 id 会让跨服务的 join 在真实数据上失败——见 ABS-7。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.3 行 610（示例 `\"canon\"`）+ §2.3 DDL 行 165 + 行 178（「与 S08 manifest 的分支语义对齐」）。**这是本事件里与 S08 对齐的关键字段**：S08 的 `snapshot.manifest.committed` 没有它（SMC-6），而 S10 有——于是「一个 binding revision 属于哪个分支」可以只从本事件读出，反过来不行。默认分支名 `canon` 与 S16 §1.2 行 61 一致（S09 §4.3 行 600 那份示例写 `main` 是错的，见 MSC-2）。"
+    },
+    "entry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5.3 行 611（示例 `6`）+ §2.3 DDL 行 188（`entry_count integer NOT NULL`——**无 CHECK**）。**它数的是哪一层没说**：`binding_entry` 是 overlay（草稿层，DDL 行 211–228，主键含 `revision_floor`），`binding_expansion` 是展开结果（DDL 行 232–247，主键含 `revision`）。示例的 6 与 `owner_service_counts` 的 `{S11:2,S12:1,S13:1,S14:1,S15:1}` 之和（= 6）相等，而 `owner_service_counts` 按名字显然是**展开后**的分布——所以 `entry_count` 大概率也是展开后的行数。但一个 scope 上一条 entry 可以展开成多个 shot（`binding_expansion.resolved_from` 有 `shot|scene|episode|series` 四级，行 245），此时两个数会不相等。**本文件不把 `entry_count` 与 `owner_service_counts` 之和绑起来**（JSON Schema 表达不了，且它们是否该相等取决于上面那个未决问题）。见 ABS-4。"
+    },
+    "owner_service_counts": {
+      "type": "object",
+      "description": "来源：§5.3 行 612（示例 `{\"S11\":2,\"S12\":1,\"S13\":1,\"S14\":1,\"S15\":1}`）。**键是服务 id，值是该 owner 下的条目数**；建表语句里**没有这一列**（`binding_set_revision` 的 12 列里没有它），所以它是**从 `binding_expansion` 聚合出来的**、只在事件里出现。**键集受 S10 §1.3 的类型注册表约束**：`asset_type_registry`（DDL 行 106，代码发布、不可租户自造）把 `asset_type` 映射到 `owner_service`，S11–S15 是五类资产的 owner。本文件把键收成 `^S[0-9]{2}$`（与 `binding_set_ref.service_id` 同形），但**不把值集限制在 S11–S15**：注册表是代码发布的，会扩展（例如 S28 的制品、S48 的适配产物），而声明一个可能过期的闭集会与「不可租户自造」的扩展性冲突。**值的下界是 1 不是 0**：一个计数为 0 的 owner 不该出现（那与缺席同义），所以 `minimum: 1`。"
+      ,
+      "propertyNames": {
+        "pattern": "^S[0-9]{2}$"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "rights_revision_set_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§5.3 行 613（示例 `\"…\"` + 行尾注释「权利指针集合的 hash，便于 S02 快速比对」）+ §2.3 DDL 行 190（`rights_pointer_set jsonb NOT NULL -- 去重后的 [{rights_owner,rights_id,rights_revision,rights_hash}]`）+ §8.5 行 756（E30-A3「`rights_revision_set_hash` 与 S02 记录的 hash 不一致 | S02 判 `RIGHTS_REVOKED` 或重新取 binding revision」）。**算法全文没写**：DDL 只说 `rights_pointer_set` 是「去重后的」四键数组，没说 `rights_revision_set_hash` 是「这个数组的 JCS 的 sha256」还是「排序后再哈希」还是「四键里只取 `rights_hash` 拼起来哈希」。**「去重」的去重键也没说**（四键全等？还是 `(rights_owner, rights_id)`？）。这直接决定 E30-A3 能否工作：S02 与 S10 必须用**完全同一个**算法才算得出可比的两个值，而算法不在任何契约里。本文件收 64 位裸 hex（照本仓库既有约定，见 PDL-5 / PRD-4），**但那是格式约束，不是算法约束**——两个不同的算法都能产出合法的 64 位 hex。见 ABS-3。另外这条 hash 与 `content_hash` 的**关系**也没定义：C10-6（行 807）说「权利指针集合的 hash 放进 binding revision 的 `content_hash`（因此 manifest 间接固定权利版本）」，所以 `content_hash` 是**包含**权利信息的父哈希，而 `rights_revision_set_hash` 是它的一个子集哈希——但「怎么放进去」没写。"
+    },
+    "superseded_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5.3 行 614（示例 `6`）+ §4.3 行 484（`UPDATE 旧 revision SET state='SUPERSEDED'`）+ §2.3 DDL 行 185（`state text NOT NULL CHECK (state IN ('SEALED','SUPERSEDED'))`）。**`minimum: 1` 而字段本身没有 DDL 列**——`binding_set_revision` 的 `revision` 有 `CHECK (revision >= 1)`（行 184），所以被作废的那一版最小是 1。**首次封存时这个字段无值，而事件不画那种情形**：`head_revision` 的默认值是 0、注释写明「0 = 尚未封存」（行 166），`current_revision` 可空（行 167）——所以第一次封存时没有旧 revision 可作废，事件里 `superseded_revision` 应当缺席或为 null。§5.3 的示例是 rev 7 / superseded 6（既非首版），把这个情形掩掉了。本文件收成必填整数，因此**首版封存事件在本契约下无法表达**——与 S08 的 SMC-4、MSC-3 是同一形态的第三次出现。见 ABS-5。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "binding_set_ref",
+    "series_id",
+    "episode_id",
+    "branch_id",
+    "entry_count",
+    "owner_service_counts",
+    "rights_revision_set_hash",
+    "superseded_revision"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`contracts/assets/binding-set.v1.schema.json` 本体",
+      "demanded_by": "plans/S10-asset-catalog.md §2.3 DDL 行 187（`payload jsonb NOT NULL,  -- 完整 binding-set.v1（含展开结果）`）、§11.1 行 816（「**契约先行**：`contracts/assets/binding-set.v1.schema.json`（本文 §5.3 的 payload 形态）……必须先于任何服务代码」）、S10 §1 行 15（`episode-manifest.v2` 只接受一个 `binding_set_ref`）",
+      "s10_status": "`contracts/assets/` 目录不存在，`binding-set.v1.schema.json` 也不在 `contracts/` 下。而 `binding_set_revision.content_hash = sha256(JCS(payload))`（DDL 行 186）——这个 hash 会进本事件的 `binding_set_ref.content_hash`，再进 `episode-manifest.v2` 成为整集溯源的锚点。**没有 payload schema，这个 hash 就没有契约意义**：两个实现可以各自序列化出不同的 payload、得到不同的 hash，而同一条 manifest 的 `binding_set_ref` 在两边不等。本 schema 只能约束到「hash 是 64 位 hex」，约束不到「hash 的对象是什么」。要补需要 owner 定：`binding-set.v1` 的完整字段（至少含 `binding_expansion` 的每行、`expanded_from`、`rights_pointer_set`），以及它是否就是本事件的 data 减去那几个聚合字段。"
+    },
+    {
+      "field": "`rights_revision_set_hash` 的算法与去重键",
+      "demanded_by": "plans/S10-asset-catalog.md §5.3 行 613（注释「权利指针集合的 hash，便于 S02 快速比对」）、§2.3 DDL 行 190（`rights_pointer_set jsonb NOT NULL -- 去重后的 [{rights_owner,rights_id,rights_revision,rights_hash}]`）、§8.5 行 756（E30-A3 要求 S02 与 S10 的 hash 可比）",
+      "s10_status": "全文只有「hash」两个字，没有算法、没有去重键、没有排序规则。而 E30-A3 的验收用例**必须**两方算出同一个值才能判「一致/不一致」——若算法不同，每一次比对都会判不一致，于是 S02 要么永远走 `RIGHTS_REVOKED`（全拒），要么永远走「重新取 binding revision」（白跑）。这不只是精度问题，是 gate 的行为被一个未定义算法决定。要补需要 owner 定：哈希输入（`rights_pointer_set` 整体 JCS？还是只取 `rights_hash` 的排序列表？）、去重键（四键全等，还是按 `(rights_owner, rights_id)` 取最高 revision）、以及数组顺序是否参与哈希。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "ABS-1",
+      "summary": "事件的 `content_hash` 哈希的是一个仓库里不存在的契约，而它要进 manifest 当溯源锚点",
+      "payload_ddl": "plans/S10-asset-catalog.md §2.3 行 186–187：`content_hash char(64) NOT NULL,     -- sha256(JCS(payload))` 与 `payload jsonb NOT NULL,        -- 完整 binding-set.v1（含展开结果）`",
+      "required_contract": "§11.1 行 816：「1. **契约先行**：`contracts/assets/binding-set.v1.schema.json`（本文 §5.3 的 payload 形态）+ `asset-identity.v1.schema.json`。必须先于任何服务代码。」",
+      "actual_state": "`contracts/assets/` 不存在；`contracts/` 下没有任何 `binding-set` 开头的文件；全仓库（除 design-package）grep `binding-set.v1` 只命中 S10 §11.1 自己",
+      "downstream": "S10 §1 行 15：`episode-manifest.v2` 只接受一个 `binding_set_ref`（`{service_id,id,revision,content_hash}`），S08 只 CAS 这一个引用。所以 `binding-set.v1` 的序列化形态一旦不确定，manifest 的资产溯源就不可复现",
+      "why_it_matters": "这不只是「少一份 schema」。`content_hash = sha256(JCS(payload))` 的可复现性**完全依赖 payload 的字段集与顺序**——JCS 只能规范化键序与数字格式，规范化不了一个未定义的字段集。两个实现若各自决定 `payload` 里放哪些键（要不要含 `expanded_from`？要不要含 `variant_selector`？空值省不省？），会得到不同的 hash，而这两个 hash 都会是合法的 64 位 hex、都能通过 DDL 的 `bsr_hash_len` 与本 schema 的 pattern。于是同一份绑定在两次重建后「内容不同」，`bsr_hash_uniq`（行 198–199）本该拦住的重复封存会**拦不住**（hash 不同），而 `episode-manifest.v2` 的 `binding_set_ref` 会指向一个无法复算的值。**这条与 S08 的 SMC-4 后半是同一个病**：那边 `parent_manifest_ref.content_hash` 需要从两列回查得到而没人说要这么做，这边 `binding_set_ref.content_hash` 需要一个不存在的 schema 来定义它哈希什么。区别是这边 S10 自己已经意识到并写进了 §11.1，只是那个文件没被建出来——所以本条目是**记录被违反的顺序**，不是发现新缺口。要定的是：先建 `binding-set.v1`，还是先承认 `content_hash` 暂时只覆盖一个未冻结的形态。"
+    },
+    {
+      "id": "ABS-2",
+      "summary": "C10-3 说 S07 与 S09 要感知绑定变化，而 S09 订阅的是一个不存在的 topic 名、S07 的订阅表里没有它",
+      "claim": "plans/S10-asset-catalog.md §10 行 804（C10-3）：「`event-topics.v2.json` 只登记 `asset.binding-set.created`，没有 revision 更新/生命周期事件；**但 S07/S09 需要感知绑定变化**」",
+      "s09_side": "plans/S09-lineage-impact.md §5.4 行 790：`| asset.binding.changed | S10 | 写 / 关闭 ASSET_BINDING | 同上 |`——**订阅的 event_type 是 `asset.binding.changed`**",
+      "catalog": "contracts/event-topics.v2.json 里 S10 只发布 `asset.binding-set.created`（topic `drama.asset-catalog.v2`）；全 55 个 topic 里没有 `asset.binding.changed`",
+      "s07_side": "plans/S07-change-management.md §5.6 行 908–912 的消费表只有三条（S08 / S02 / S16），**没有 S10 的任何事件**；全文 grep `asset.binding` 零命中",
+      "why_it_matters": "两处对不上，性质不同，但后果同向。(1) **S09 订阅了一个不存在的 event_type**：它按 `asset.binding.changed` 建订阅，而 S10 永远不发这个名字。若 S09 真按名字订阅，它**永远收不到**绑定变化——`ASSET_BINDING` 边（S09 §2.1 的 `edge_kind` 闭集里有它，因为它要写这条边）就不会被写入或关闭，于是 E03 的「改一个镜头的影响闭包」在**换素材**这条路径上会漏节点。这不是「事件没人收」而是「有人收、但收了错的信封」。若 S09 改成订阅 `asset.binding-set.created`，那它要自己处理「每次封存都是一条 created」这层语义（C10-3 的结论正是如此），而 payload 里**没有条目级的引用细节**（只有 `entry_count` 与按 owner 的计数，见 ABS-4），所以它建不出具体的边——只能知道「这个 binding set 又变了一版」。(2) **S07 根本没订阅**：C10-3 说 S07 要感知，而 S07 §5.6 只列了三条。S07 走的应该是同步 `POST /impact-queries`（S07 §5.6 行 914 的说法同理），所以「S07 需要感知绑定变化」可能是 C10-3 的误判——真正需要的是 S09，而 S09 的名字写错了。要定的是：S09 的订阅名改成 `asset.binding-set.created`（那 ABS-4 就得先解决），还是新增一个 `asset.binding.changed` topic（那 C10-3 的结论「复用 created、不新增 topic」要推翻）。**本条不选边**——两个方向都在文档里有交代，但它们互相矛盾。"
+    },
+    {
+      "id": "ABS-3",
+      "summary": "`rights_revision_set_hash` 没有算法也没去重键，而 E30 的权利 gate 要靠 S02 与 S10 算出同一个值",
+      "field": "plans/S10-asset-catalog.md §5.3 行 613：`\"rights_revision_set_hash\":\"…\",  // 权利指针集合的 hash，便于 S02 快速比对`",
+      "source_data": "§2.3 DDL 行 190：`rights_pointer_set jsonb NOT NULL,        -- 去重后的 [{rights_owner,rights_id,rights_revision,rights_hash}]`",
+      "acceptance": "§8.5 行 756（E30-A3）：「`rights_revision_set_hash` 与 S02 记录的 hash 不一致 | S02 判 `RIGHTS_REVOKED` 或重新取 binding revision；S10 不改历史」",
+      "why_it_matters": "「去重后的」是 DDL 唯一给出的加工规则，而**去重键没写**：四键全等去重会让同一权利的两个 revision 都留下（因为 `rights_revision` 不同），按 `(rights_owner, rights_id)` 去重只留最新一版——两种规则对同一个 binding set 会给出**不同大小的数组**，进而不同 hash。哈希输入也没写：数组整体 JCS 与「只取 `rights_hash` 排序后拼接」得到的 hex 都合法。于是 E30-A3 这个验收用例的结论**取决于两个实现是否独立地选了同一个未成文约定**。若它们不一致，这条用例会稳定地判「不一致」，而 S02 的分支是「判 `RIGHTS_REVOKED` 或重新取 binding revision」——前者是拒绝派单（安全但业务瘫痪），后者是每次派单前都多一次回查（成本翻倍且掩盖了真撤销）。**这与 C10-4 / C10-6 是同一片区域**：C10-4（行 805）说 docs/10 没定义 `rights_revision` 的拥有者与形态，S10 把它定义成 `rights_ref{rights_owner,rights_id,rights_revision,rights_hash}`；C10-6（行 807）说 manifest 不要求 `rights_revision`，S10 的解法是把权利 hash 折进 `content_hash`。两条都解决了「形状」与「放哪」，**没有一条解决「怎么算」**。要定的是算法本身，并且要写进契约（而不是只写进 S10 的实现），因为 S02 必须独立算出同一个值。"
+    },
+    {
+      "id": "ABS-4",
+      "summary": "`entry_count` 与 `owner_service_counts` 数的是 overlay 还是展开结果，事件里看不出，而两者在 scope 复用下不相等",
+      "event_fields": "plans/S10-asset-catalog.md §5.3 行 611–612：`\"entry_count\":6` 与 `\"owner_service_counts\":{\"S11\":2,\"S12\":1,\"S13\":1,\"S14\":1,\"S15\":1}`——两者之和相等（6），所以示例无法区分",
+      "overlay_table": "§2.4 DDL 行 211–228（`binding_entry`）：一条 entry 带 `scope_kind ∈ {series,episode,scene,shot}` + `scope_id` + `role_key`，主键含 `revision_floor`。**这是草稿层**——§2.3 行 206 明说「草稿在 `binding_entry` 层表达」",
+      "expansion_table": "§2.4 DDL 行 232–247（`binding_expansion`）：主键含 `revision`，带 `resolved_from text NOT NULL -- shot|scene|episode|series（哪一层胜出）`",
+      "ddl_column": "§2.3 DDL 行 188：`entry_count integer NOT NULL`——**无 CHECK、无注释**，无法从列名判断（它叫 entry_count，而 entry 是草稿层的表名）",
+      "why_it_matters": "一条 `scope_kind='series'` 的 entry（全剧默认）展开到 40 个镜头就是 40 条 `binding_expansion` 行，而 overlay 只有 1 条。所以两个数是**不同量级**的，而名字 `entry_count` 指向 overlay、示例值指向 expansion。**对消费方这不是学术问题**：`owner_service_counts` 若按 overlay 数，它告诉的是「这条 binding set 声明了几条绑定」；若按 expansion 数，它告诉的是「这一集最终用到几个资产」——后者才是 S07/S09 估算影响与成本时要的（一条 shot 级 entry 只影响一个镜头，一条 series 级 entry 影响全剧）。而事件**没有条目级细节**（没有 `binding_expansion` 的行、没有 `variant_selector`、没有 `owner_hash`），所以消费方拿到这个计数后，除了「大概多少」之外建不出任何具体的边——这也是 ABS-2 里 S09 即使订阅了也建不出边的直接原因。要定的是：两个计数字段各自对应哪张表；以及若要支持 S09 建 `ASSET_BINDING` 边，条目级的 `{scope_kind, scope_id, role_key, owner_service, owner_local_id, owner_revision, owner_hash}` 是否要随事件发（体积会大，`data_ref` 是 `null`，行 616）。"
+    },
+    {
+      "id": "ABS-5",
+      "summary": "首版封存在事件里无法表达：`superseded_revision` 画成必填，而 rev 1 没有旧版本可作废",
+      "event": "plans/S10-asset-catalog.md §5.3 行 614：`\"superseded_revision\":6`——示例是 rev 7 作废 rev 6",
+      "ddl": "§2.3 行 166–167：`head_revision integer NOT NULL DEFAULT 0,   -- 0 = 尚未封存` 与 `current_revision integer,                      -- 最近一次 SEALED 的 revision`——**`current_revision` 可空**，即首次封存前无当前版本",
+      "transaction": "§4.3 行 483–487：「5) INSERT binding_set_revision (revision = head+1, state='SEALED')\n6) UPDATE 旧 revision SET state='SUPERSEDED'」——**第 6 步在第一次封存时无事可做**（没有旧 revision），而第 9 步无条件写 outbox",
+      "why_it_matters": "第一次封存（`head_revision` 还是默认 0 → 新 revision = 1）时，事务第 6 步是空操作，所以事件里没有可填的 `superseded_revision`。本文件照示例收成必填整数，于是**每个 binding set 的第一个 revision 的事件都会被本契约拒**——而那是新建 episode 的必经之路（S03 建集 → S10 建容器 → 首封存）。这与 S08 的 SMC-4（`parent_manifest_ref` 与 `accepted_revision` 的首次为空）和 MSC-3（`source_manifest_ref` 的 `branch_init` 无 manifest）是**同一形态的第三次出现**：示例只画「中间版本」，DDL 允许的首版/终版被掩掉。本 schema 收必填是照 §5.3，代价是拒掉合法事件；拒是可观测的（好），但拒错了对象。要定的是：`superseded_revision` 是否可空/可省略，或者事件是否要带一个显式的 `is_first_revision` 之类的标志。"
+    },
+    {
+      "id": "ABS-6",
+      "summary": "事件的 `aggregate_id` 示例是 `bs_01J...`，而 topic 的 partition key 写 `tenant_id:binding_set_id`、DDL 列名是 `binding_set_id`——三处命名不一致，且 partition key 形态与别的 topic 不同",
+      "event_header": "plans/S10-asset-catalog.md §5.3 行 606：`\"aggregate_id\":\"bs_01J...\",\"aggregate_sequence\":7`",
+      "partition_claim": "§5.3 行 598：「发布（`drama.asset-catalog.v2`，partition key `tenant_id:binding_set_id`，`aggregate_sequence = revision`）」",
+      "catalog": "contracts/event-topics.v2.json 的该 topic：`\"partition_key\": \"tenant_id:aggregate_id\"`",
+      "outbox_ddl": "§2.8 DDL 行 345–356：`aggregate_id text NOT NULL,             -- binding_set_id` 与 `partition_key text NOT NULL,       -- tenant_id || ':' || aggregate_id` 与 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`",
+      "why_it_matters": "三处说法能对齐（`binding_set_id` = `aggregate_id` = `bs_01J...`），但**写法不同**：方案正文用列名 `binding_set_id`，catalog 用 envelope 概念名 `aggregate_id`，示例用前缀化 id `bs_...`。它们不矛盾，但对外部实现者是个陷阱：`partition_key` 在 catalog 里是 `tenant_id:aggregate_id`，而 S10 的 DDL 注释写的是 `tenant_id || ':' || aggregate_id`——一致；只是方案正文的 `tenant_id:binding_set_id` 会让实现者以为要拿列名去拼，而在事件侧 `binding_set_id` 并不作为独立字段出现（它藏在 `binding_set_ref.id` 里）。**更实质的是 outbox 的唯一约束**：`UNIQUE (aggregate_id, aggregate_sequence, event_type)`（行 356）与 `aggregate_sequence = revision`（行 598）组合起来，意味着**同一个 revision 只能发一条 `asset.binding-set.created`**——这与 S08 的 SMC-1 是同一个约束、同一个风险面，但 S10 这里**安全**：§2.3 行 185 的 `state` 只有 `SEALED` 与 `SUPERSEDED` 两态，而 `SUPERSEDED` 不另发事件（§4.3 第 6 步只改状态）。所以 S10 没有 S08 那个「接受与作废都要发同一事件」的问题——**这一条是记录差异，不是缺陷**。真正要定的只有一处：方案正文的 `partition key tenant_id:binding_set_id` 是否该改成与 catalog 一致的说法，以免实现者按列名拼 key。"
+    },
+    {
+      "id": "ABS-7",
+      "summary": "`episode_id` 的写法在方案集里不统一（`ep3` vs `ep003`），而它跨服务 join",
+      "s10": "plans/S10-asset-catalog.md §5.3 行 610：`\"episode_id\":\"ep3\"`；同方案 §1 行 15 的 `binding_set_ref` 也隐含同一坐标",
+      "s09": "plans/S09-lineage-impact.md §5.4 行 771：`\"affected_episode_ids\":[\"ep003\"]`；§2.3 行 284 的 `branch_id`/`series_id` 并列",
+      "s08": "plans/S08-revision-snapshot.md §6.1 行 649：`\"subject\":\"manifest/manifest_ep3\"`——manifest id 里含 `ep3`",
+      "why_it_matters": "`episode_id` 的词法没有任何契约定义：`contracts/` 下没有 `episode-id` 之类的 schema，S03（project catalog，拥有 episode）也没有规定形态。于是每个方案各写各的：`ep3`、`ep003`、`manifest_ep3`。**在示例层面无害**（都是非空字符串、都能过 schema），**在集成层面致命**：S09 的 `affected_episode_ids` 若来自 S08 闭包（`ep3.master`）而对照 S10 的 `episode_id`（`ep003`），两边永远不相等，于是「这个 binding 属于哪一集」的 join 全部落空——而落空是静默的（`scope_id` 是个自由字符串，`binding_expansion` 的 `resolved_from` 会照常给结果，只是对不上集）。这不是本事件能修的：要修得在 S03 定 `episode_id` 的词法并让全部方案对齐。本条只是**把不一致固定在契约层可观测处**——本 schema 收 `minLength: 1`、不约束形态（约束了就要猜一个还没定的规则，`contracts/README.md` 明说「不从散文推断这些值」）。要定的是：`episode_id` 是否走 `ep_0142` 这类固定宽度形态，还是任意外部 id。"
+    }
+  ]
+}

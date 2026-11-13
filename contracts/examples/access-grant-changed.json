@@ -1,0 +1,37 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBF2K4M6P8R0T2V4X6Z8B0D2",
+  "source": "S01",
+  "type": "access.grant.changed",
+  "subject": "prn_01J9Y3H7K2M5N8Q1R4S7T0V3W6",
+  "time": "2026-11-06T10:12:00Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "grn_01JBE8N3P5R7T9V1X3Z5B7D9F1",
+  "aggregate_sequence": 2,
+  "correlation_id": "cmd_01JBF2J9D4G7K1N5Q9T3W7Z0B3",
+  "causation_id": "cmd_01JBF2J9D4G7K1N5Q9T3W7Z0B3",
+  "traceparent": "00-3d7f1b5e9a2c6d0f4b8e2a6c0d4f8b2e-3d7f1b5e9a2c6d0f-01",
+  "data": {
+    "schema_version": "2.0",
+    "grant_id": "grn_01JBE8N3P5R7T9V1X3Z5B7D9F1",
+    "grant_revision": 2,
+    "state": "revoked",
+    "previous_state": "active",
+    "subject_principal_id": "prn_01J9Y3H7K2M5N8Q1R4S7T0V3W6",
+    "role_key": "director",
+    "effect": "allow",
+    "scope_kind": "series",
+    "scope_id": "ser_01J9Z5M2P4R6T8V0X2Z4B6D8",
+    "tenant_revocation_epoch": 812,
+    "personal_revocation_epoch": 3,
+    "changed_by": {
+      "principal_id": "prn_01J9Y0A2C4E6G8J0L2N4P6R8T0",
+      "principal_type": "human"
+    },
+    "reason": "role.reassigned",
+    "occurred_at": "2026-11-06T10:12:00Z"
+  },
+  "data_ref": null
+}

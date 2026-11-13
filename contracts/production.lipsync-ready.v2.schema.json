@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/production.lipsync-ready.v2.schema.json",
+  "title": "production.lipsync.ready payload v2",
+  "description": "event `production.lipsync.ready` 的 data 部分。权威定义在 plans/S32-lipsync.md §6.4（事件体形状，行 1090–1110）；三个枚举字段的闭集来自 §4 的 DDL（行 773–781）。这个事件宣布「这条口型 take 就绪，检查点前进到它」。它的四个关键输入是「源视频 + 源音频 + 音频窗口 + 处理帧区间」——缺任何一个下游都无法判断这条 take 是否还对应当前素材。**不含**媒体 URL、人脸轨引用、生物特征、供应商信息、差异掩膜（§6.4 行 1112：「人脸轨引用尤其不能出——它是一份人脸位置数据，属于生物特征派生信息（docs/14 最小化）」）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有 payload 约定；S32 §6.4 的示例没有画它。"
+    },
+    "lipsync_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S32 §6.4 行 1092。发布此事件的口型作业。"
+    },
+    "lipsync_take_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S32 §6.4 行 1093。就绪的口型 take。与 `checkpoint.to` 同值。"
+    },
+    "shot_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S32 §6.4 行 1094 + §6.4 行 1085（aggregate 就是它）。跨 Run 计数的锚点（S29 §8.2 的 `AttemptCounterKey` 含它）。"
+    },
+    "speaker_character_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S32 §6.4 行 1095。说话的角色 ID。**这是本 payload 里唯一允许出现的角色标识**：§6.4 行 1112 明确「`speaker_character_id` 之外的生物特征」不能出事件。S11 的角色资产与 S37 的说话人识别都以它为键。"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "来源：S32 §6.4 行 1096（示例已给完整四字段）。形状与 plans/S28-artifact-ingest.md 行 94 的规范定义一致（与 episode-manifest.v2 的 accepted_artifact_ref 同构）。",
+      "properties": {
+        "service_id": {
+          "const": "S28",
+          "description": "来源：S28 行 94 —— 归档产物引用恒指向 S28。S32 §6.4 的示例也写 `\"service_id\": \"S28\"`。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S28 行 94。S28 行 94 声明「`revision` 只在 `artifact_id` 内有意义」。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.content_hash。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "source_video_ref": {
+      "type": "object",
+      "description": "来源：S32 §6.4 行 1099（`{ \"id\": \"…\", \"content_hash\": \"…\" }`）。**只有两个字段，没有 service_id 也没有 revision**——与同文件里的 artifact_ref 形状不同，见 x-conflicts PLR-1。它指向本条口型所依据的视频，与 `artifact_ref`（口型成品）不是一回事。§6.4 行 1122 说 S32 消费 `production.video.ready`，新片段到达时作废相关 take（`video_changed`）——判断「是不是新片段」靠这个引用。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S32 §6.4 行 1099。"
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S32 §6.4 行 1099。S32 没有声明它是 64 位 hex（同文件的 artifact_ref.content_hash 在 S28 的定义里有 pattern，这一处是 S32 自己画的），故不收窄为 pattern。"
+        }
+      },
+      "required": [
+        "id",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "source_audio_ref": {
+      "type": "object",
+      "description": "来源：S32 §6.4 行 1100（`{ \"id\": \"…\", \"content_hash\": \"…\" }`）。同 `source_video_ref`，形状只有两个字段。它让消费方能判断「这条口型对的是哪一版音频」——§6.4 行 1120 说 S32 消费 `production.speech.ready`，新音频到达时作废相关 take（`audio_changed`）。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S32 §6.4 行 1100。"
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S32 §6.4 行 1100。同 source_video_ref.content_hash，不收窄。"
+        }
+      },
+      "required": [
+        "id",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "audio_take_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S32 §6.4 行 1101。**与 `source_audio_ref` 重复**：一个说「音频是哪一份」（id + hash），一个说「是哪条 S31 take」。两者应指向同一份音频，但 schema 无法强制，见 x-conflicts PLR-2。S31 侧的 take ID 形式是 `vt_…`（S31 §6.4 行 1047）。"
+    },
+    "audio_window": {
+      "type": "object",
+      "description": "来源：S32 §6.4 行 1102（`{ \"start_ms\": 820, \"end_ms\": 4100 }`）。这是**口型处理区间**，不是整条音频。§2 的请求体里 audio_window 有更多字段（行 317：`{start_ms, trim_head_ms, trim_tail_ms, source}`），事件里只带两个——见 PLR-3。F5（§4 行 563）说「缺 `audio_window` → `422 AUDIO_WINDOW_REQUIRED`」，所以这个区间是口型的必需输入。",
+      "properties": {
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S32 §6.4 行 1102 + §2 行 327（「`start_ms >= 0`」）。"
+        },
+        "end_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S32 §6.4 行 1102 + §2 行 327（「`end_ms > start_ms`」）。**跨字段不等式 schema 表达不了**（end_ms > start_ms 需要两个属性的比较），由 S32 的请求校验保证。"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms"
+      ],
+      "additionalProperties": false
+    },
+    "frames": {
+      "type": "object",
+      "description": "来源：S32 §6.4 行 1103（`{ \"process_start\": 23, \"process_end\": 125, \"fps\": 30.0 }`）。真正被改动的是哪一段帧。**它与 audio_window 是两条独立的时间轴**：audio_window 是音频毫秒，frames 是视频帧号——两者通过 fps 换算，换算不精确就会让口型与声音错位，而这正是 S37 要报的 `AUD.LIPSYNC.OFFSET`。§6.4 行 1112 特别说「不含…差异掩膜」，所以这里只有帧号范围，没有每帧的改动量。",
+      "properties": {
+        "process_start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S32 §6.4 行 1103（`23`）。起始帧号。S32 没有说明是 0-based 还是 1-based，本 schema 只约束 `>= 0`。"
+        },
+        "process_end": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：S32 §6.4 行 1103（`125`）。结束帧号。**语义未定义**：是含还是不含、是否与 process_start 同基准。§6.4 行 1269 在「记录」列表里提到 `process_frame_start/end` 与 `processed_frames`——第三个字段是帧数，可由前两者推出，但推得对不对取决于含/不含。见 x-needs-owner。"
+        },
+        "fps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "来源：S32 §6.4 行 1103（`30.0`）。与 S30 的 `frame_rate`（S30 §6.4 行 960）是同一种量，但在 S30 里叫 frame_rate、DLL 列名也是 frame_rate，这里叫 fps——见 x-conflicts PLR-4。"
+        }
+      },
+      "required": [
+        "process_start",
+        "process_end",
+        "fps"
+      ],
+      "additionalProperties": false
+    },
+    "visibility_grade": {
+      "type": "string",
+      "enum": [
+        "full",
+        "partial"
+      ],
+      "description": "来源：S32 §4 DDL 行 774–775（`visibility_grade text NOT NULL CHECK (visibility_grade IN ('full','partial'))`）+ §2 行 519（「0.5 – 0.9 → `partial`：正常处理，但 take 标 `visibility_grade='partial'`」）。**语义是「这张脸有多少被看见」**，不是「口型做得好不好」：0.5 以下大概是无法处理（被拒），0.5–0.9 是能处理但标 partial，0.9 以上是 full。partial 的 take 仍然可用，但下游（尤其 S36 的语义质检）应知道嘴部区域只露了一部分——那种情况下口型对了也未必看得出。"
+    },
+    "other_face_drift": {
+      "type": "string",
+      "enum": [
+        "none",
+        "minor"
+      ],
+      "description": "来源：S32 §4 DDL 行 777–778（`CHECK (other_face_drift IN ('none','minor'))`）+ §2 行 495（「`eps_pixel < max_diff <= warn_pixel`（默认 8/255）→ 通过但记 `other_face_drift='minor'`，供 S36 参考」）。**改一个角色的嘴可能牵动画面里别人的脸**——这个字段记录「有没有牵动」。`minor` 不是错误，是交给 S36 判断的线索。"
+    },
+    "voice_defect_check_at_build": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "not_yet_available"
+      ],
+      "description": "来源：S32 §4 DDL 行 780–781（`CHECK (voice_defect_check_at_build IN ('clean','not_yet_available'))`）。**这个名字说的是「构建时音频侧的 voice 缺陷检查做没做」**，不是「音频有没有缺陷」。`not_yet_available` 表示当时 S37 的对齐/ASR 结果还没到，所以无法判断音频本身念得对不对——这正是 S31 §4.6 讲的跨族边界（口型缺陷不能反推语音缺陷）。"
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "来源：S32 §6.4 行 1107（`{ \"from\": \"lt_00X…\", \"to\": \"lt_01J…\", \"checkpoint_seq\": 2 }`）。与 S30/S31 同形（`from`/`to`/`checkpoint_seq`），与 S29 的 `from_candidate_id`/`to_candidate_id` 不同——同 PSR-3。",
+      "properties": {
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "来源：S32 §6.4 行 1107。首个 take 必为 null。"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S32 §6.4 行 1107。与顶层 `lipsync_take_id` 同值。"
+        },
+        "checkpoint_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S32 §6.4 行 1107（`2`）。单调递增。"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "checkpoint_seq"
+      ],
+      "additionalProperties": false
+    },
+    "input_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S32 §6.4 行 1108。整条 take 的输入指纹。§7.1 的幂等键用到它（同其它生产服务）；S32 §4 行 1269 的记录列表里也点名 `input_fingerprint`、`video_hash`、`audio_hash`、`window_start_ms`、`process_frame_start/end`、`processed_frames`、`visibility_grade`、`other_region_max_diff`、`stale_basis`、`deny 原因码`——注意其中 `video_hash`/`audio_hash` 就是本 payload 的 `source_video_ref.content_hash`/`source_audio_ref.content_hash`，`other_region_max_diff` 则**不在事件里**（只有折算后的 other_face_drift），见 PLR-5。S32 未声明 fingerprint 的算法与长度，不收窄。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "lipsync_job_id",
+    "lipsync_take_id",
+    "shot_lineage_id",
+    "speaker_character_id",
+    "artifact_ref",
+    "source_video_ref",
+    "source_audio_ref",
+    "audio_take_id",
+    "audio_window",
+    "frames",
+    "visibility_grade",
+    "other_face_drift",
+    "voice_defect_check_at_build",
+    "checkpoint",
+    "input_fingerprint"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "frames.process_start / frames.process_end 的基准",
+      "demanded_by": "plans/S32-lipsync.md §6.4 行 1103（示例 `{ \"process_start\": 23, \"process_end\": 125, \"fps\": 30.0 }`）",
+      "s32_status": "没有说明帧号是 0-based 还是 1-based、process_end 是否含在内、是否与源视频的绝对帧号一致。本 schema 只约束 `>= 0`。这三点有实际后果：S37 要按帧号把口型区间与音频对齐，差一帧就会报出一个假的 lipsync offset。§6.4 行 1269 提到 `processed_frames` 这个量（帧数），它只能由 start/end 推出——所以含/不含的约定必须唯一。"
+    },
+    {
+      "field": "source_video_ref / source_audio_ref 的 service_id 与 revision",
+      "demanded_by": "plans/S32-lipsync.md §6.4 行 1099–1100（`{ \"id\": \"…\", \"content_hash\": \"…\" }`）",
+      "s32_status": "只有两个字段。同一条 payload 里的 `artifact_ref` 是四字段（含 service_id 与 revision）。缺 service_id 意味着「这个 id 属于哪个服务」要由上下文推断——`source_video_ref` 显然指 S30 的 clip candidate、`source_audio_ref` 指 S31 的 voice take，但这只是推断。缺 revision 则意味着无法区分「同一 artifact 的两次修订」。见 PLR-1。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PLR-1",
+      "summary": "同一个 payload 里三处引用有三种形状",
+      "s32": "§6.4 行 1096 `artifact_ref`：{service_id, id, revision, content_hash}（四字段，与 S28 规范一致）；行 1099 `source_video_ref`：{id, content_hash}（两字段）；行 1100 `source_audio_ref`：{id, content_hash}（两字段）；行 1101 `audio_take_id`：裸字符串",
+      "why_it_matters": "四个引用指向四份东西，形状却分三类。消费方要写三套解析，而且两字段的那两个缺少 service_id——「这个 id 是 S30 的 clip candidate 还是 S28 的 artifact」只能靠字段名猜。若某天 S32 的源视频改为从别处来（例如预热缓存），解析代码不会报错，只会静默指向错误的对象。本 schema 按示例的三类形状分别收，不统一——统一需要一个由 S32 决定的迁移。"
+    },
+    {
+      "id": "PLR-2",
+      "summary": "audio_take_id 与 source_audio_ref 描述同一份音频，schema 无法强制一致",
+      "s32": "§6.4 行 1100–1101：两个字段并列出现，示例都指向同一段音频",
+      "why_it_matters": "同 PIR-2 / PVR-2 那一类：一个冗余字段若某次只更新了其中一侧，事件会自相矛盾。`audio_take_id` 是 S31 的 take 标识（`vt_…`），`source_audio_ref` 是 S28 的 artifact 引用——S31 的一个 take 对应一个 artifact，理论上可推导，但推导链（take → artifact）需要查 S31，而事件的用意正是让消费方不必回查。要么删掉一个，要么由 S32 的 outbox 在构造时断言二者指向同一份。"
+    },
+    {
+      "id": "PLR-3",
+      "summary": "audio_window 在请求体有 4 个字段，在事件里只有 2 个",
+      "s32_request": "§2 行 317：`audio_window: {start_ms, trim_head_ms, trim_tail_ms, source}`",
+      "s32_event": "§6.4 行 1102：`audio_window: { \"start_ms\": 820, \"end_ms\": 4100 }`",
+      "why_it_matters": "事件里的 `end_ms` 在请求体里根本不存在（请求体是 start_ms + 两个 trim 量 + source），而请求体里的三个字段在事件里都没有。这意味着**请求体与事件里的 audio_window 是两个不同的对象被取了同一个名字**。消费方若按请求体的理解去解析事件，会找不到 trim_head_ms/trim_tail_ms/source；若按事件的理解去构造请求，就会缺字段而触发 F5 的 `AUDIO_WINDOW_REQUIRED`（§4 行 563）。本 schema 按事件示例收（start_ms + end_ms），但两处的名字应该分开。"
+    },
+    {
+      "id": "PLR-4",
+      "summary": "帧率在 S30 叫 frame_rate，在 S32 叫 fps",
+      "s30": "plans/S30-video-production.md §6.4 行 960：`frame_rate: 24.0`；DDL 行 707 列名也是 `frame_rate`",
+      "s32": "plans/S32-lipsync.md §6.4 行 1103：`fps: 30.0`",
+      "why_it_matters": "S32 消费 S30 的 `production.video.ready`（§6.4 行 1122），也就是说同一个服务既要读 frame_rate 又要写 fps，两个名字指同一个量。这是最容易被「顺手复制」掩盖的一种不一致：类型都是 number、都 > 0，写错不会报错。S37 的对齐计算要用它把毫秒换成帧号，换错基准就会得到假 offset。"
+    },
+    {
+      "id": "PLR-5",
+      "summary": "§6.4 的「记录」列表里的 other_region_max_diff 不在事件里，事件里有一个它折算后的 other_face_drift",
+      "s32_record": "§6.4 行 1269 的记录列表含 `other_region_max_diff`（原始像素差）",
+      "s32_ddl": "§4 DDL 行 777 的列是 `other_face_drift`（三值：none/minor）",
+      "why_it_matters": "原始差值被折成三档后才进 DDL 与事件。折算阈值（§2 行 495：默认 8/255 的 warn_pixel）是可配的，所以同一个 `minor` 在不同配置下意味着不同的像素差。**下游无法从事件反推出原始差值**——若 S36 需要按自己的阈值重新判断，它就缺原料。这是有意的信息最小化（少暴露画面细节）还是意外丢失，需要 S32 确认。本 schema 按事件与 DDL 收 other_face_drift（两值），不收 original 差值。"
+    }
+  ]
+}

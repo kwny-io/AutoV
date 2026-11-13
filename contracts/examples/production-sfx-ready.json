@@ -1,0 +1,49 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+  "source": "S33",
+  "type": "production.sfx.ready",
+  "subject": "sfx_01J9ZBCY0A2B7C4D1E6F9G3H8",
+  "time": "2026-11-06T09:14:22Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "shot_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+  "aggregate_sequence": 12,
+  "correlation_id": "run_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "causation_id": "cmd_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "sfx_job_id": "job_01J9ZBBZ1B3C8D5E2F7G0H4I9",
+    "sfx_take_id": "sfx_01J9ZBCY0A2B7C4D1E6F9G3H8",
+    "cue_id": "cue_ep3_sc7_sfx_03",
+    "cue_revision": 2,
+    "shot_lineage_id": "shot_01J9ZB3M4P7Q2R8S5T1U6V9W3",
+    "cue_index": 3,
+    "sfx_family": "hard_effect",
+    "artifact_ref": {
+      "service_id": "S28",
+      "id": "art_01J9ZBDZ2C4D9E6F3G8H1I5J0",
+      "revision": 1,
+      "content_hash": "9d2b4f7a1c3e50682ad94c7b3e1f0d85b7263a1c4d5e8f90a1b2c3d4e5f60718"
+    },
+    "natural_duration_ms": 950,
+    "loopable": false,
+    "rights_state": "usable",
+    "source_kind": "generated",
+    "checkpoint": {
+      "from": null,
+      "to": "sfx_01J9ZBCY0A2B7C4D1E6F9G3H8",
+      "checkpoint_seq": 1
+    },
+    "content_fingerprint": "c4e8a1d3f5b7092aec63b8d4f1e07492b5a3c6d18e0f2a4b7c9d1e3f50627489",
+    "gap_state": "none"
+  },
+  "data_ref": {
+    "service_id": "S33",
+    "id": "sfx_01J9ZBCY0A2B7C4D1E6F9G3H8",
+    "revision": 1,
+    "content_hash": "7e2a5c9b1d4f6083ac21b7e93d0f8452c6a1b3d5e7f9021a4c8b6d3e5f7091ab"
+  }
+}

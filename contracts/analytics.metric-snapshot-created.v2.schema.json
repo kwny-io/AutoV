@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/analytics.metric-snapshot-created.v2.schema.json",
+  "title": "analytics.metric.snapshot.created payload v2",
+  "description": "event `analytics.metric.snapshot.created` 的 data 部分。**§6.3 对这条事件只给了聚合键一行**（行 677：`aggregate_id = snapshot_id`），没有任何字段清单；本 schema 的键取自 §5 的 `analytics.metric_snapshot` DDL（行 393–415，17 列）与 §4.1 的流程（行 227–242）和 §3.2 的「无状态机」（行 200–208），不是从散文推出来的形状。**这条事件有唯一一个已被点名的外部消费者**：plans/S44 自己的 §6.4（行 681–687）说 S25 的模型路由会消费 per-model 首轮可用率，约束是「只能用**已经算完的、带 n 与 CI 的快照**」「`low_confidence=true` 时 S25 不得据此调整」。所以 `n`、`ci95`、`low_confidence` 三个字段在本 schema 里**是必填且必须随事件出去**——它们的用途不是给人看，是路由抖动的防线。**快照不可变**（§3.2 行 206「重算 = 新快照（同 `cohort` + 新 `watermark`）。不修改旧快照」），所以同一个 `snapshot_id` 只有一条事件，`aggregate_sequence` 恒为 1。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.3 没有示例可依，按 contracts 既有 payload 约定补。"
+    },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 395（主键，行 411）与 §6.3 行 675 表头 + 行 677 本事件那一行（`aggregate_id`）。**这是聚合键**，也是本批三个 S44 事件里唯一一个「每个 ID 只发一条事件」的聚合（另两个见 `evaluation.completed` 与 `cost.projection.updated` 的说明）。§9 行 795 的 E12-S44-01「同 command 重投快照请求 → 返回同一 snapshot_id」说明重投不会产生第二个快照——所以消费方按 `snapshot_id` 去重是安全的。"
+    },
+    "metric_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 396（`metric_key text NOT NULL`）与行 367 的列注释（`'usable_rate','cost_per_usable_minute',…`）。**与 `metric_version` 组成主键的一半**：`analytics.metric_definition` 的主键是 `(metric_key, version)`（行 377），即指标定义是**只追加**的版本化对象。**取值域不收窄**：注释里的两个只是举例（`…` 结尾），§10 行 822 说「MetricDefinition 七个 KPI + 口径写死」，七这个数字出现在实施顺序里而不是 DDL 里，且 §6.1 行 614–629 的响应示例里出现的是 `usable_rate` / `cost_per_usable_minute` / `first_pass_shot_rate` 三个（第三个不在 DDL 注释里）。三者对不上，见 x-conflicts AMS-1。"
+    },
+    "metric_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5 行 397（`metric_version integer NOT NULL`）与行 377（`PRIMARY KEY (metric_key, version)`）。**必须带，因为同一 `metric_key` 的不同版本算出来的数不可比**：§4.6 行 354「指标定义版本变化 | 新快照用新版本；旧快照保留但标 `superseded_definition`」。消费方把两个版本的值放进同一张图就是错误结论——这也正是 `mixed_versions` 字段存在的原因。"
+    },
+    "cohort_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 398（`cohort_id text NOT NULL`）与 `analytics.cohort` 表（行 380–389，主键 `(tenant_id, cohort_id)`）。**cohort 是冻结的**：行 384 有 `frozen_at timestamptz NOT NULL`，行 385 有 `member_count`，行 386 记 `source_watermarks`。§3.2 行 206 说重算的触发是「同 `cohort` + 新 `watermark`」，所以**同一个 `cohort_id` 会对应多个快照**——`snapshot_id` 才是唯一键，`cohort_id` 只是分组维度。消费方按 `cohort_id` 去重会丢快照。"
+    },
+    "value": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "来源：§5 行 399（`value numeric`，**可空**）与行 413–414 的 `snapshot_value_null_iff_zero_n CHECK ((n = 0 AND value IS NULL) OR (n > 0))`。**本 schema 用 `allOf` 的 if/then 复刻了那条 CHECK**（见文件末尾）：`n = 0` 时 `value` 必须为 null，`n > 0` 时必须是数值。**这条约束是整个 S44 最重要的口径**：§4.6 行 348「cohort 成员为空 | `value: null`，`n: 0`，不返回 0」、§9 行 762 的 E38-S44-06「n=0 → `value=null`，不返回 0」。把「没有数据」写成 0 会让所有下游图表把空集读成「合格率 0%」。**注意这条 CHECK 只约束 null 与 n 的关系，不保证 `value` 在合理范围内**：`numeric` 无上下界，一个算错的 1e12 也能通过。"
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5 行 400（`unit text NOT NULL`）与行 369（`unit text NOT NULL`，在 `metric_definition` 里）。**两个表都有 `unit` 列**，DDL 没有约束它们必须相等——快照里存一份自己的 `unit` 是为了让快照在定义被改版后仍能自解释（§3.2 行 206 的不可变性要求）。取值是自由文本：示例里出现 `ratio` 与 `CNY/min`（§6.1 行 614、620），没有任何 CHECK。**`CNY/min` 这种带货币单位的写法与 §8 行 747「日志不含：客户合同金额」不冲突**，但消费方不能从 `unit` 反推金额——币种是 `unit` 的一部分，会计口径由 S23 负责（§1「明确不写」表）。"
+    },
+    "n": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5 行 401（`n integer NOT NULL`）与行 412（`CONSTRAINT snapshot_n_nonneg CHECK (n >= 0)`）。**`minimum: 0` 照抄 DDL 的 CHECK**。**这是 S25 的前置条件之一**：§6.4 行 685「S25 只能用**已经算完的、带 n 与 CI 的快照**」——不带 `n` 的数字无法判断可信度。**`n` 的口径由 `sample_unit` 决定**（`metric_definition.sample_unit`，行 372，取值 `'episode'|'shot'|'minute'|'node'`），而**本事件不带 `sample_unit`**：同一个 `n=1130` 在 `minute` 口径下是分钟数、在 `shot` 口径下是镜头数（§6.1 行 620 的 `cost_per_usable_minute` 示例确实是 1130）。消费方要解释 `n` 必须回查 `metric_definition`。见 x-needs-owner 第 1 条。"
+    },
+    "distribution": {
+      "type": "object",
+      "description": "来源：§5 行 402（`distribution jsonb NOT NULL, -- {p50,p90,p95,p99,max}`）与 §6.1 行 615、621 的响应示例（一个只有 `p50/p90/p95/max`，另一个有 `p50/p90/p95/p99/max`）。**两个示例的键不一致**：行 615 的 `usable_rate` 缺 `p99`，行 621 的 `cost_per_usable_minute` 有。DDL 的列注释写着五个键，示例只给四个或五个。本 schema 因此只收 `object`、不列必填键——把 `p99` 定为必填会拒掉行 615 那种示例；定为可选则等于承认 DDL 注释只是「典型键」。见 x-conflicts AMS-2。**`NOT NULL` 意味着每个快照都得有一份分布**，即使指标是比率（行 615 的四个百分位全是 1.0，因为二值样本的 p50 就是 1 或 0）——空分布不合法。"
+    },
+    "ci95": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§5 行 403（`ci95 jsonb`，**可空**）与行 374（`metric_definition.ci_method text NOT NULL, -- 'wilson'|'bootstrap_percentile'|'none'`）以及 §6.1 行 616–622 的示例（`{\"low\":0.62,\"high\":0.92}` 配 `\"method\":\"wilson\"`）。**必须可 null**：`ci_method` 允许 `'none'`，那种定义算不出区间。**但本 schema 不收 `method`**（示例里它和 `ci95` 并列在响应对象里，而快照表**没有 `method` 列**——算法在 `metric_definition` 里）。**S25 需要区间，但它判断「有没有区间」的方式只能是 `ci95 != null`**：一个 `ci_method='none'` 的指标与一个算失败了的指标在事件里长得一样。这与 §4.5 行 338「必须给区间，不给单点」的要求在措辞上冲突——那条说的是成本**投影**，而指标快照允许 `none`。见 x-conflicts AMS-3。**键名收成 `low`/`high`**：示例两处一致，但 DDL 只说 `jsonb`，所以本 schema 不强制内部形状（`type: object`），只登记「示例里是这个形状」。"
+    },
+    "excluded": {
+      "type": "object",
+      "description": "来源：§5 行 404（`excluded jsonb NOT NULL, -- {failed_runs,failed_items,abandoned,...}`）、§4.6 行 352（`PARTIAL` 时快照带 `excluded.failed_items`）、§9 行 761 的 E38-S44-05（「`excluded` 字段在所有快照都出现，且计数与实际剔除一致」）与 E25-S44-02（行 773：「快照里 `abstain_treated_as: \"not_pass\"` 显式可见」）。**这个对象是两个验收用例的落点**，而它的键在文档里出现了**三种互不相同的集合**：DDL 注释 `failed_runs` / `failed_items` / `abandoned`；行 617–623 的示例 `failed_runs` / `abandoned` / `estimated_allocation_minutes` / `abstain_treated_as`；E25-S44-02 只要求 `abstain_treated_as`。三个集合互不包含。本 schema 只收 `object`，不列键——收窄会拒掉其中两种。见 x-conflicts AMS-2。**`NOT NULL` 意味着即使什么都没剔除也必须给 `{}`**，这正是 E38-S44-05 要的「在所有快照都出现」。"
+    },
+    "mixed_versions": {
+      "type": "boolean",
+      "description": "来源：§5 行 405（`mixed_versions boolean NOT NULL`）与 §6.1 行 631（响应示例 `\"mixed_versions\": false`，配行 632 的 `version_set`）。**这是本 schema 里最不可省略的诚实位**：它说明这张快照的样本跨了多个版本（模型/prompt/policy）。§6.1 行 632 的 `version_set` 给出具体是哪几个版本，而**快照表没有 `version_set` 列**——所以事件不发版本集合，只发这个布尔。消费方看到 `mixed_versions=true` 时必须知道「这个数字不是同一口径下的样本算出来的」，但**无法知道跨了哪些版本**。这对 S25 的路由是有意义的（行 685–687 的约束之外再加一层噪声），对经营看板则意味着「不能拿两个 `mixed_versions=true` 的快照相减」。见 x-conflicts AMS-3。"
+    },
+    "stale_sources": {
+      "type": "object",
+      "description": "来源：§5 行 406（`stale_sources jsonb NOT NULL DEFAULT '{}'::jsonb`）、§4.1 行 238（「若任一源落后于 cohort.frozen_at → 标记 stale_sources，可选择等待或标 partial」）、§4.6 行 346（源服务 503 → 「快照 `PARTIAL`，标 `stale_sources`」）。**默认为空对象意味着「所有源都够新」**——这是唯一一处可以安全解释的默认值，因为 `source_watermarks`（下一个字段）独立记录实际水位。**键的形状未定义**：§6.1 行 611 的响应示例是 `{\"s23\":\"12s\",\"s26\":\"3s\",\"s35\":\"45s\"}`（源名 → 滞后时长），而 §4.1 行 249 的 `staleness` 是同一个形状。但那是**查询响应**的字段，不是快照表——`stale_sources` 里存的到底是同样的「源名 → 滞后」还是「源名 → watermark」，文档没说。本 schema 只收 `object`。见 x-needs-owner 第 2 条。"
+    },
+    "source_watermarks": {
+      "type": "object",
+      "description": "来源：§5 行 407（`source_watermarks jsonb NOT NULL`）与 `analytics.cohort.source_watermarks`（行 386，注释 `{s23:.., s26:.., s35:.., s40:.., s08:.., s43:..}`）。**这是快照可复现的钥匙**：§9 行 759 的 E38-S44-03「同 cohort + 同 watermark 重算 → 结果逐字段相同」、§4.6 行 355–357「同一 cohort 并发重算 | 允许；结果应相同（除非源变了），不同则告警 `nondeterministic_snapshot`」。没有水位，「同 watermark」这件事无法判定。**cohort 表也有一份 `source_watermarks`**（冻结时刻的各源水位），快照这一份是**计算时**的——两份不同正是「源在冻结之后又前进了」的证据。键的集合是六个服务（`s23`/`s26`/`s35`/`s40`/`s08`/`s43`），但 DDL 注释用的是小写服务号且以 `..` 结尾，本 schema 不列必填键。**注意 `s35` 在注释里代表 S35–S38 四家 QC**（§6.3 行 659 的消费列表有四个 QC 事件），用一个水位覆盖四家是否够，文档没说。"
+    },
+    "allocation_policy_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§5 行 408（`allocation_policy_version text`，**可空**）与 §9 行 757 的 E38-S44-01（「S23 原始条目不变，改变 `AllocationPolicy` 版本 → 新快照，旧快照保留，两者可对比」）。**必须可 null**：成本类指标才用分摊策略，比率类指标（`usable_rate`、`first_pass_shot_rate`）根本不分摊，示例行 614–629 也只有第三个示例没给这个字段而响应级给了一个。**可空 + 可比较 = 消费方必须显式处理 null**：拿一个 `allocation_policy_version=null` 的快照与一个非 null 的比成本，比的是两种口径。"
+    },
+    "low_confidence": {
+      "type": "boolean",
+      "description": "来源：§5 行 409（`low_confidence boolean NOT NULL DEFAULT false`）、§9 行 763 的 E38-S44-07（「成本类指标…n<30 标 `low_confidence`」）与 §6.4 行 687（「快照的 `low_confidence=true` 时，S25 **不得**据此调整（否则小样本噪声会驱动路由抖动）」）。**这是契约里唯一一条写明了「消费方不得怎么做」的字段**——S25 的排序/加权必须跳过它。**门限 `n<30` 只对成本类指标写了**，比率类用什么门限文档没说（E38-S44-07 的措辞限定在「成本类指标」）；而 §4.3 行 307 对盲评用的是 `n < 5`。三个门限（30 / 5 / 未定义）说明它是按指标族分的策略，不是全局常量——**但事件只发布尔，不发「按什么门限判定」**，所以同一份 `low_confidence=false` 在不同指标族下含义不同。见 x-conflicts AMS-3。"
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5 行 410（`computed_at timestamptz NOT NULL DEFAULT now()`）。**与 envelope `time` 不同**：后者是事件落 outbox（§5 行 560–571）的时刻，积压重投时会与新快照的计算时刻错开。**与 `source_watermarks` 一起构成「数据截至」**：§4.1 行 250「工作台（S47）展示时必须显示『数据截至 XX:XX』，不能假装是实时的」——`computed_at` 是**算完**的时刻，各源的实际截至时刻在 `source_watermarks` 里，两者都不是「现在」。S47 若只有这一个字段可用，会把「20 分钟前算的」显示成「20 分钟前的数据」，而各源可能更旧。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "metric_key",
+    "metric_version",
+    "cohort_id",
+    "value",
+    "unit",
+    "n",
+    "distribution",
+    "ci95",
+    "excluded",
+    "mixed_versions",
+    "stale_sources",
+    "source_watermarks",
+    "allocation_policy_version",
+    "low_confidence",
+    "computed_at"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "n": {
+            "const": 0
+          }
+        },
+        "required": [
+          "n"
+        ]
+      },
+      "then": {
+        "properties": {
+          "value": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "value": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`sample_unit` 决定 `n` 的单位，但不进事件",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 372（`sample_unit text NOT NULL, -- 'episode'|'shot'|'minute'|'node'`）、行 401（`metric_snapshot.n integer`）、§6.1 行 620（`cost_per_usable_minute` 的 `n: 1130`）",
+      "s44_status": "`sample_unit` 只存在于 `metric_definition` 表，**快照表没有这一列**，事件因此不带。于是 `n=1130` 是 1130 分钟还是 1130 个镜头，只能回查定义表——而定义表是版本化的（`(metric_key, version)`），**旧快照配旧版本定义**时查得到，但消费方要发两次查询才能解释一个数字。本批次不收这个字段的原因：快照表没有它，加上就是无来源的推断（contracts/README「不从散文推断这些值」）。要得的话是 S44 在 `metric_snapshot` 里加一列（或事件改成带 `metric_definition_ref` 四键引用），属 owner 决定。"
+    },
+    {
+      "field": "`stale_sources` 与 `source_watermarks` 的键集合与值的形状",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 386（cohort 的 `source_watermarks jsonb`，注释给了六个键）、行 406–407（快照的两列）、§4.1 行 249 与 §6.1 行 611（查询响应的 `staleness` 是另一形状）、§4.6 行 346",
+      "s44_status": "三处形状都不完全一样：cohort 的注释是 `{s23:.., s26:.., s35:.., s40:.., s08:.., s43:..}`（六个小写服务号，值未说明）；快照的两列只有类型 `jsonb`；查询响应的 `staleness` 是 `{\"s23\":\"12s\",…}`（时长字符串）。**`s35` 在消费列表里实际覆盖 S35–S38 四家**（§6.3 行 659），一个键代表四个源的水位是否够，文档没说。本 schema 对两列都只收 `object`。要收窄需要 owner 给出：键的规范集合（六服务还是按事件源分）、值的形状（watermark 数值 / 时长 / 时间戳）、以及 `s35` 是否该拆成四个。"
+    },
+    {
+      "field": "`value` 的数值口径（比率是否 0–1、金额单位）在事件里不可判定",
+      "demanded_by": "plans/S44-evaluation-analytics.md §5 行 399（`value numeric`）、行 400（`unit`）、§6.1 行 614–620（`0.81` 配 `ratio`、`4.21` 配 `CNY/min`）",
+      "s44_status": "`value` + `unit` 是自由文本配 `numeric`，**没有任何闭集**。仓内既有契约对同类字段是收窄过的（例如金额用整数 micro、哈希用 `^[0-9a-f]{64}$`），而这里 0.81 是比率、4.21 是每单位货币值——两者在 schema 层同形。若下游按 `unit` 做算术（乘集数、换算币种），拼错 `unit` 不会被任何一层拦住。本 schema 已按 DDL 保持开放（`number` + `string`），**不发明闭集**。要收窄需要 S44 先给 `unit` 的登记表（与 `contracts/quality/action-families.v2.json` 同类的做法）。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "AMS-1",
+      "summary": "「七个 KPI」这个数字在实施顺序里，而 DDL 注释、响应示例、验收用例各给了一个不同的指标清单",
+      "s44_count": "§10 行 822（实施顺序第 1 步）：「`MetricDefinition` **七个 KPI** + 口径写死（与 docs/15 逐字对齐）」——**唯一的数字来源**，且它要求与 docs/15 逐字对齐",
+      "s44_ddl": "§5 行 367 的列注释：`'usable_rate','cost_per_usable_minute',...` —— 两个 + 省略号",
+      "s44_example": "§6.1 行 614–629 的响应示例三个：`usable_rate`、`cost_per_usable_minute`、`first_pass_shot_rate` —— **第三个不在 DDL 注释里**",
+      "s44_tests": "§9 的验收用例提到的口径名：K1（行 760）、K3（行 765）、K5 返工率（行 804–805）、K2（行 772）—— 四个 K 编号，与三个示例键不一一对应",
+      "why_it_matters": "本 schema 的 `metric_key` 不收窄，正是因为**没有任何一处给出完整的七个**。这不是无害的空白：`(metric_key, version)` 是 `metric_definition` 的主键，跨服务的指标口径是 E38（费用与效果重算）与 E40（FDE 移交）的落点——§6.5 行 691–697 明说导出的表格首行要写「指标定义版本」，客户拿到报表要能自己解释口径。若 `metric_key` 的集合与哪个 K 编号都没对齐，客户问「4.21 是怎么来的」时，回答需要先确定「4.21 属于哪个 K」。要 owner 定的是：七个 KPI 的完整 `metric_key` 清单、它们与 K1–K7 的对应关系，以及 `first_pass_shot_rate` 是否就是其中之一（它在数字上是第三个示例，但 K 编号里没有一个叫「首过镜头率」的）。"
+    },
+    {
+      "id": "AMS-2",
+      "summary": "`distribution` 与 `excluded` 两个「必有」的 jsonb，其键集合在三处文档里互不相同",
+      "s44_ddl": "§5 行 402：`distribution jsonb NOT NULL, -- {p50,p90,p95,p99,max}`；行 404：`excluded jsonb NOT NULL, -- {failed_runs,failed_items,abandoned,...}`",
+      "s44_example": "§6.1 行 615：`\"distribution\":{\"p50\":1.0,\"p90\":1.0,\"p95\":1.0,\"max\":1.0}` —— **没有 `p99`**；行 621：`{\"p50\":3.90,\"p90\":5.60,\"p95\":6.30,\"p99\":8.10,\"max\":9.40}` —— 五个键。`excluded` 三处示例分别是 `{\"failed_runs\":2,\"abandoned\":1}`（行 617）、`{\"failed_runs\":2,\"estimated_allocation_minutes\":40}`（行 623）、`{\"abstain_treated_as\":\"not_pass\"}`（行 628）",
+      "s44_tests": "§9 行 761 E38-S44-05：「`excluded` 字段在所有快照都出现，且计数与实际剔除一致」；行 764 E38-S44-08：「估算分摊与精确分摊在同一 KPI 中被标记区分，不混成一个数」；行 773 E25-S44-02：「快照里 `abstain_treated_as: \"not_pass\"` 显式可见」",
+      "why_it_matters": "两列都是 `NOT NULL`，即**每张快照都必须给一份**，可它们的键集合没有一处是完整且一致的：`distribution` 的 `p99` 在 DDL 注释里有、在比率示例里没有；`excluded` 的八个候选键散在 DDL 注释、三处示例与三个验收用例里，没有任何一处列全。E38-S44-05 只验「出现且计数一致」，**不验键集合**；E38-S44-08 要求「估算分摊与精确分摊被标记区分」，可**没有任何一处说这个标记叫什么键**（`estimated_allocation_minutes` 是示例里的名字，DDL 注释里没有）；E25-S44-02 要求 `abstain_treated_as` 显式可见，而它只在一处示例出现。后果是：同一个 `NOT NULL` 约束下，实现可以给出互不兼容的对象，而所有验收用例都能过。本 schema 对两者都不收窄。要 owner 定的是：两个对象的**必填键最小集**（尤其 `p99` 是否必填、`estimated_*` 的键名、`abstain_treated_as` 是否所有快照都带），以及是否把它们改成独立列（`jsonb NOT NULL` 装一个「每次都要有」的计数集合，本质上是把结构藏进了字符串）。"
+    },
+    {
+      "id": "AMS-3",
+      "summary": "「未知不等于通过」在 S44 的落点是一个布尔字段，而门限本身按指标族不同、且不随事件发出",
+      "s44_low_conf": "§5 行 409：`low_confidence boolean NOT NULL DEFAULT false`；§9 行 763 E38-S44-07：「成本类指标同时给 p50/p95/max 与 CI；**n<30 标 `low_confidence`**」",
+      "s44_other_thresholds": "§4.3 行 307：「样本量太少不能出结论。**n < 5** 的维度标 `insufficient_data`，不给均值（给均值就是误导）」；§4.6 行 353：「盲评 α 过低 | 结果标 `low_agreement`」",
+      "s44_ci": "§5 行 374：`ci_method text NOT NULL, -- 'wilson'|'bootstrap_percentile'|'none'`；行 403：`ci95 jsonb`（可空）",
+      "why_it_matters": "这里有三个**不同性质**的「不可用」信号，而它们都只以「某个布尔或某个 null」的形式到达消费方：(1) `low_confidence=true`——样本量不足，门限 **30 只对成本类**写了，比率类没有；盲评用的是 5，那是另一条路径；(2) `ci95=null`——区间算不出来（`ci_method='none'`），但这与「算失败了」不可区分；(3) `insufficient_data` / `low_agreement`——**这两个词在 DDL 里根本没有列**，`blind_review.agreement_alpha`（行 495）是 `numeric(4,3)` 可空，`insufficient_data` 只出现在散文里。消费方（尤其 S25，§6.4 行 687 明令 `low_confidence=true` 时不得调整路由）要判断「这个数能不能用」，必须同时看 `n`、`ci95`、`low_confidence` 三个字段并自己知道门限——**而门限不在契约里**。这是「未知不等于通过」在分析域的落点：一个 `low_confidence=false` 但 `ci95=null` 的快照，S25 按行 685 的字面（「带 n 与 CI」）应当拒用，可按行 687 的字面（只看 `low_confidence`）会用。两行相邻，规则不同。要定的是：门限是否进契约（例如快照带 `confidence_basis: {min_n, actual_n}`），以及 `low_confidence` 与 `ci95=null` 谁优先。"
+    }
+  ]
+}

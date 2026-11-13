@@ -1,0 +1,33 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG3N4P5Q6R7S8T9U0V1W2X3",
+  "source": "S26",
+  "type": "generation.job.state-changed",
+  "subject": "pj_seedance_8f21c4",
+  "time": "2026-11-06T10:02:41Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "pj_seedance_8f21c4",
+  "aggregate_sequence": 5,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "cmd_01JBG3P5Q6R7S8T9U0V1W2X3Y4",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "attempt_id": "atm_01JBG1G7H8J9K0M1N2P3Q4R5S6",
+    "state": "SUBMISSION_UNKNOWN",
+    "previous_state": "SUBMITTING",
+    "business_attempt": 1,
+    "network_retry": 0,
+    "submit_attempts": 1,
+    "provider": "seedance",
+    "channel": "volcengine",
+    "node_id": "shot_3_2.video",
+    "node_epoch": 4,
+    "execution_fence": 2,
+    "must_reconcile": true,
+    "reason_code": "SUBMIT_TIMEOUT_AFTER_SEND"
+  },
+  "data_ref": null
+}

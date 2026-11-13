@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/scheduler.permit-changed.v2.schema.json",
+  "title": "scheduler.permit.changed payload v2",
+  "description": "event `scheduler.permit.changed` 的 data 部分。权威定义在 plans/S22-scheduler-quota.md §6.1（行 754–780）。**事件里带池的计数快照是刻意的**（行 782–784）：S47 的队列看板需要实时容量，但 S22 不为 UI 提供高频轮询接口。所以 UI 从事件流构建水位——**也因此必须显示水位时间，不能把旧事件当当前值**。`aggregate_sequence` 与状态一一对应（行 780：RESERVED=1, DISPATCH_AUTHORIZED=2, INFLIGHT=3, RELEASED=4, EXPIRED=5），这比 S21 的 `projection_watermark` 简单，但**意味着一件事：同一 permit 不能合法地重复发出同一 sequence**，重投递只能靠 envelope id 去重。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。来源：S22 §6.1 示例未画（示例只画 data 内部），按 contracts 既有 payload 约定补。"
+    },
+    "permit_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S22 §6.1 行 766。与 envelope 的 `aggregate_id` 同值（行 756）。"
+    },
+    "pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S22 §6.1 行 767（示例 `pool_seedance_volc_a1`）。池的标识。S47 按池聚合做队列看板。池的定义来自 S24 的 `model.capability.changed`（行 795：更新池的 revision/inflight_limit/rpm/tpm）——**S22 是池的运行时状态权威，S24 是池的定义权威**，两者不能混。"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S22 §6.1 行 768。一次业务尝试的 ID。**这是 S22 与 S26 之间唯一的连接点**：S22 不知道 provider_job_id，S26 不知道 permit_id，两者靠 attempt_id 对上。"
+    },
+    "previous_state": {
+      "type": "string",
+      "enum": [
+        "RESERVED",
+        "DISPATCH_AUTHORIZED",
+        "INFLIGHT",
+        "RELEASED",
+        "EXPIRED"
+      ],
+      "description": "来源：S22 §4 DDL 行 133（`CHECK (state IN ('RESERVED','DISPATCH_AUTHORIZED','INFLIGHT','RELEASED','EXPIRED'))`）。**注意 `EXPIRED` 不在 DDL 的 `release_reason` 闭集里**——过期把 state 置 EXPIRED 而不是 RELEASED（行 705：`UPDATE permit SET state='EXPIRED', release_reason='NEVER_DISPATCHED'`），所以 `EXPIRED` 状态**可以**带 `release_reason`。见 x-conflicts PSP-1。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "RESERVED",
+        "DISPATCH_AUTHORIZED",
+        "INFLIGHT",
+        "RELEASED",
+        "EXPIRED"
+      ],
+      "description": "来源：同 `previous_state`，S22 §4 DDL 行 133。对应的 `aggregate_sequence` 是 1–5（行 780），见 x-conflicts PSP-2——**这条映射只写在散文里，DDL 没有约束**。"
+    },
+    "release_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "SETTLED",
+        "SUPERSEDED_BY_BUDGET",
+        "SUPERSEDED_BY_FENCE",
+        "NEVER_DISPATCHED",
+        "RECONCILED_ABSENT",
+        "OPERATOR",
+        null
+      ],
+      "description": "来源：S22 §4 DDL 行 135–137（`CHECK (release_reason IS NULL OR release_reason IN ('SETTLED','SUPERSEDED_BY_BUDGET','SUPERSEDED_BY_FENCE','NEVER_DISPATCHED','RECONCILED_ABSENT','OPERATOR'))`）。六个值照收。**DDL 行 156 还有 `state <> 'RELEASED' OR release_reason IS NOT NULL`**：RELEASED 时必须非 null，其余状态可 null——但 `EXPIRED` 也会带一个（见 `previous_state` 的说明），所以「非 RELEASED 就必须 null」是错的。本 schema 用 `enum` 含 `null` 表达这个联合，单向蕴含由 S22 保证。"
+    },
+    "dispatch_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S22 §6.1 行 770（示例 `disp_01H...`）。**必须可 null**：RESERVED 状态还没有派单。S22 没有说它何时出现，但从状态机看只可能在 DISPATCH_AUTHORIZED 之后。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S22 §6.1 行 771。**permit 携带 fence 是为了让 S21 能识别「这个 permit 属于一个已经被取消的 run」**（行 888：S21 消费本事件处理「permit 被外部释放/过期 → 影响该节点的判定」）。fence 的作用域是 run/branch（AGENTS.md 速查表），不是 permit 自己的版本号。"
+    },
+    "inflight_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S22 §6.1 行 772（示例 `38`）。**池级计数快照，不是增量**。S47 用它画水位（行 782–784）。"
+    },
+    "inflight_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S22 §6.1 行 773（示例 `40`）。池的并发上限。**它来自 S24 的池定义**（行 795），S22 只是把它连同当前用量一起发出来，方便 UI 不用再查一次 S24。同一池的多个 permit 事件里它会重复出现——**每个事件都是自洽的快照，不是差量**。"
+    },
+    "account_used_inflight": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S22 §6.1 行 774（示例 `53`）。**与 `inflight_used` 是两个不同层次**：池是模型+渠道的组合，账户是供应商侧的账号。一个池可能跨多个账户，所以 `account_used_inflight > inflight_used` 完全合法（示例就是 53 > 38）。S47 若把两者当成同一个量会画出错误的图。"
+    },
+    "account_cap_inflight": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S22 §6.1 行 775（示例 `60`）。账户级并发上限，层次同 `account_used_inflight`。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "permit_id",
+    "pool_id",
+    "attempt_id",
+    "previous_state",
+    "state",
+    "release_reason",
+    "dispatch_id",
+    "execution_fence",
+    "inflight_used",
+    "inflight_limit",
+    "account_used_inflight",
+    "account_cap_inflight"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "计数快照的「水位时间」",
+      "demanded_by": "plans/S22-scheduler-quota.md §6.1 行 782–784（「UI 必须显示水位时间（docs/04 §5），不能把旧事件当当前值」）",
+      "s22_status": "**这条要求落在消费方身上，而消费方唯一能用的时间戳是 envelope 的 `time`**。但 `time` 是事件**产生**时间，不是计数**采样**时间——若 S22 在发出前排队、或 outbox 重试导致延迟，两者会差开。事件里没有单独的 `sampled_at`。本 schema 照示例不加这个字段（示例里没有），但消费方要遵守这条要求就只能用 `time`，而它严格来说不是它需要的那个量。若要精确，S22 应加 `sampled_at`；这是 additive，不破坏现有形状。"
+    },
+    {
+      "field": "dispatch_id 何时非 null",
+      "demanded_by": "plans/S22-scheduler-quota.md §6.1 行 770",
+      "s22_status": "示例里非 null，S22 没有说明它与 state 的关系。从状态机推断（RESERVED 尚未派单）应只在 DISPATCH_AUTHORIZED 之后才有，但这是推断不是契约。本 schema 只让它是 `[string, null]`。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PSP-1",
+      "summary": "EXPIRED 状态也会带 release_reason，但 release_reason 的 CHECK 只写在 permit 表上，而「哪些状态必须有它」只有一个单向约束",
+      "s22_ddl": "§4 行 135–137（六个值 + `IS NULL`）与行 156（`CHECK (state <> 'RELEASED' OR release_reason IS NOT NULL)`）",
+      "s22_update": "§4 行 705：`UPDATE permit SET state='EXPIRED', release_reason='NEVER_DISPATCHED', released_at=now()`",
+      "why_it_matters": "行 156 只说 RELEASED 必须有 reason，**没说 EXPIRED 可以有**——但行 705 就给 EXPIRED 写了 reason。所以「`release_reason` 非 null 当且仅当 RELEASED」这个看似自然的读法是错的，实现若按它写会在过期路径上拒掉合法数据。反过来说，`EXPIRED` + `release_reason='SETTLED'` 是否合法？DDL 的 CHECK 允许（它只看 state ≠ RELEASED 时不管 reason），但语义上荒谬。**契约层没有约束 state 与 release_reason 的合法组合**。本 schema 让 release_reason 是六值加 null，不表达组合约束。"
+    },
+    {
+      "id": "PSP-2",
+      "summary": "aggregate_sequence 在 S22 内部有两个不同定义：一处是 1..N 计数器，一处是写死的状态映射",
+      "s22_outbox": "§1 行 232–238：OUTBOX 约束 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`，随后写「`aggregate_sequence`：每个 permit 一个 1..N 的本地序列（RESERVED=1, DISPATCH_AUTHORIZED=2, INFLIGHT=3, RELEASED=4）。这让下游能按 permit 的 sequence 判断乱序。」",
+      "s22_event": "§6.1 行 780：「`aggregate_sequence`: RESERVED=1, DISPATCH_AUTHORIZED=2, INFLIGHT=3, RELEASED=4, EXPIRED=5」",
+      "why_it_matters": "两处都用了「=」写法，但含义不同。行 238 的括号是「到该状态时 sequence 恰好是这个值」的**举例**，前提是 1..N 计数器（否则 `UNIQUE (aggregate_id, aggregate_sequence)` 会在同一 permit 第二次写同一状态时撞键）；行 780 是**写死的映射**，把 sequence 变成 state 的冗余编码。两者在同一场景下给出不同答案：一个在 RESERVED 就过期掉的 permit，按计数器它的第二次也是最后一次写入是 sequence=2；按映射它应当是 5。更实质的后果是**乱序检测**：行 238 说「这让下游能按 permit 的 sequence 判断乱序」，但如果 sequence 是映射，它就只有 5 个可能值，**无法检测丢事件**——连发两次 INFLIGHT 与只发一次，下游看到的最后 sequence 都是 3。S21 消费本事件处理「permit 被外部释放/过期」（§6.1 行 888），它若按 sequence 单调来丢弃陈旧事件，在计数器语义下是对的，在映射语义下则可能丢掉合法的状态推进。本 schema 收 state 的 5 值，不表达 sequence 语义；`aggregate_sequence` 属于 envelope，不在 payload 里。要定的是：sequence 是计数器还是状态编码。若是计数器，`EXPIRED` 没有固定 sequence，行 780 的写法要改成「按发生顺序编号」。"
+    },
+    {
+      "id": "PSP-3",
+      "summary": "事件名后缀 `changed` 与 S21 的 `state-changed` 是两种写法，而两者的 sequence 语义本来就不同",
+      "s22": "§4 DDL 与 §6.1 用 `permit` / `permit_id`",
+      "contracts": "contracts/event-topics.v2.json：event_type `scheduler.permit.changed`，topic `drama.scheduler-quota.v2`",
+      "why_it_matters": "命名本身不是错误，但它暗示了一种不存在的统一性。S21 的 `orchestration.run.state-changed` 与 S22 的 `scheduler.permit.changed` 都发「状态 + 快照」，如果消费方按后缀做通用处理（「凡是状态变更事件都按 sequence 单调丢弃旧事件」），那么 PSP-2 说明的差异会让这个通用处理在 permit 上出错。本 schema 不解决命名，只记下这两个事件不能共用一套消费逻辑。"
+    }
+  ]
+}

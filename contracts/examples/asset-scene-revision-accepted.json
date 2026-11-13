@@ -1,0 +1,59 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCN2R6W8Y0B2D4F6H8J0K2M",
+  "source": "S13",
+  "type": "asset.scene.revision.accepted",
+  "subject": "scene/scn_01JCGZ4M6P8R0T2V4X6Z8B0D2F",
+  "time": "2026-10-31T09:04:12Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "scn_01JCGZ4M6P8R0T2V4X6Z8B0D2F",
+  "aggregate_sequence": 4,
+  "correlation_id": "cmd_01JCN2Q8S0U2W4Y6A8C0E2G4H",
+  "causation_id": "cmd_01JCN2Q8S0U2W4Y6A8C0E2G4H",
+  "traceparent": "00-3e7b1d94a2c05f6e8b0d3f1479c2a5e6-9f2c4d6e8a0b1c35-01",
+  "data": {
+    "schema_version": "2.0",
+    "scene_ref": {
+      "service_id": "S13",
+      "id": "scn_01JCGZ4M6P8R0T2V4X6Z8B0D2F",
+      "revision": 4,
+      "content_hash": "2d4667c40c2338b96245a4b3605704966f1d305a9ef7a26d894a5c4859b799c8"
+    },
+    "topology_hash": "724192c02cd0ef50e47907caea0f98953ba5264d1bccd6f1b41e645c4a73ed37",
+    "topology_changed": true,
+    "impact_plan_ref": {
+      "service_id": "S09",
+      "id": "impact_01JCN2M4Q6S8U0W2Y4A6C8E0G",
+      "revision": 1
+    },
+    "became_canonical": true,
+    "canonical_revision": 4,
+    "location_class": "primary_set",
+    "era": {
+      "label": "contemporary",
+      "year_band": "2015-2025",
+      "region": "cn_urban"
+    },
+    "lighting_axes": [
+      "day",
+      "night",
+      "dusk"
+    ],
+    "anchor_ids": [
+      "front",
+      "back",
+      "left",
+      "right",
+      "from_door"
+    ],
+    "rights_ref": {
+      "rights_owner": "S02",
+      "rights_id": "rights_scene_office_3f",
+      "rights_revision": 2,
+      "rights_hash": "28412babec6611fe1c1821f0f333426edf515b078fe9f305d48bbc987f7eeeed"
+    }
+  },
+  "data_ref": null
+}

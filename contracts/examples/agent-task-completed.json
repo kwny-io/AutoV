@@ -1,0 +1,45 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBE1R4T6V8W0X2Y4Z6A8C0E1",
+  "source": "S19",
+  "type": "agent.task.completed",
+  "subject": "agent-task/agt_01JBDQ8N2P4R6T8V0X2Z4B6D8F",
+  "time": "2026-11-06T18:04:12Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "agt_01JBDQ8N2P4R6T8V0X2Z4B6D8F",
+  "aggregate_sequence": 1,
+  "correlation_id": "cmd_01JBDQ7H3J5L7N9P1R3T5V7X9Z",
+  "causation_id": "cmd_01JBDQ7H3J5L7N9P1R3T5V7X9Z",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "role": "breakdown",
+    "state": "SUCCEEDED",
+    "stop_reason": "GOAL_REACHED",
+    "root_task_id": "agt_01JBDQ8N2P4R6T8V0X2Z4B6D8F",
+    "correction_round": 0,
+    "result_ref": {
+      "id": "res_01JBDQ9C4E6G8J0L2N4Q6S8U0W",
+      "revision": 1,
+      "content_hash": "7b3e9f1a5c8d0246e8b1f3a5c7e9d1b3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5"
+    },
+    "usage": {
+      "steps_used": 7,
+      "tokens_in": 51200,
+      "tokens_out": 8100,
+      "cost_micro": 182000,
+      "cost_state": "FINAL"
+    },
+    "node_id": "shot_3_2.script",
+    "node_epoch": 4,
+    "execution_fence": 2
+  },
+  "data_ref": {
+    "service_id": "S19",
+    "id": "res_01JBDQ9C4E6G8J0L2N4Q6S8U0W",
+    "revision": 1,
+    "content_hash": "7b3e9f1a5c8d0246e8b1f3a5c7e9d1b3f5a7c9e1b3d5f7a9c1e3b5d7f9a1c3e5"
+  }
+}

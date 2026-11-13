@@ -1,0 +1,56 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JBG6A1B2C3D4E5F6G7H8J9K0L",
+  "source": "S41",
+  "type": "post.timeline.revision.created",
+  "subject": "tl_ep3",
+  "time": "2026-11-06T15:04:12Z",
+  "tenant_id": "tnt_01J9Z4Q2K7M3N8P5R1S6T0V4W2",
+  "home_cell": "cell_a1",
+  "aggregate_id": "tl_ep3",
+  "aggregate_sequence": 10,
+  "correlation_id": "run_01JBG0B2C3D4E5F6G7H8J9K0M1",
+  "causation_id": "cmd_01JBG6B2C3D4E5F6G7H8J9K0L1M",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "schema_version": "2.0",
+    "timeline_id": "tl_ep3",
+    "revision": 10,
+    "content_hash": "7c1e4a9b2d5f80316ea84c2b9d0f7a35c81e4d629b0a3f75d8e2c14b6a93057f",
+    "duration_ticks": 5400000,
+    "completeness": "incomplete",
+    "formal_master_eligible": false,
+    "built_against": {
+      "manifest_ref": {
+        "id": "mf_ep3_v2",
+        "revision": 7
+      },
+      "execution_fence": 2,
+      "node_epoch": 4
+    },
+    "diff_ref": {
+      "timeline_id": "tl_ep3",
+      "from_revision": 9,
+      "to_revision": 10,
+      "diff_hash": "b83f5d0c7a19e2468b31f0d5c7a29e4b6d08f31a5c7e9b2d406a8f1c3e5b7d90"
+    },
+    "affected_ranges": [
+      {
+        "start": 0,
+        "end": 600000
+      },
+      {
+        "start": 3600000,
+        "end": 4200000
+      }
+    ],
+    "affected_tracks": [
+      "v1",
+      "a1",
+      "a_sfx",
+      "a_bgm"
+    ]
+  },
+  "data_ref": null
+}

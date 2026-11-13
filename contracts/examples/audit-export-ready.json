@@ -1,0 +1,37 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCHN9S2U4W6Y8A0C2E4G6J8",
+  "source": "S45",
+  "type": "audit.export.ready",
+  "subject": "audit-export/exp_01JCHN5R7T9V1X3Z5B7D9F1H3",
+  "time": "2026-11-06T08:10:00Z",
+  "tenant_id": "tnt_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "home_cell": "cell_a1",
+  "aggregate_id": "exp_01JCHN5R7T9V1X3Z5B7D9F1H3",
+  "aggregate_sequence": 1,
+  "correlation_id": "cmd_01JCHN7Q3S5U7W9Y1A3C5E7G9",
+  "causation_id": "cmd_01JCHN7Q3S5U7W9Y1A3C5E7G9",
+  "traceparent": "00-7c2e9a1f3b5d8064c8a0e2f4b6d8a0c2-7c2e9a1f3b5d8064-01",
+  "data": {
+    "schema_version": "2.0",
+    "export_id": "exp_01JCHN5R7T9V1X3Z5B7D9F1H3",
+    "state": "READY",
+    "record_count": 128774,
+    "segment_count": 14,
+    "chain_continuous": true,
+    "bundle_ref": {
+      "service_id": "S45",
+      "id": "exp_01JCHN5R7T9V1X3Z5B7D9F1H3",
+      "revision": 1,
+      "content_hash": "ccd6b382ebb2304f93b3661fc15f4ff1774ad351816d1411a6308305bb51190f"
+    },
+    "expires_at": "2026-11-07T08:10:00Z"
+  },
+  "data_ref": {
+    "service_id": "S45",
+    "id": "exp_01JCHN5R7T9V1X3Z5B7D9F1H3",
+    "revision": 1,
+    "content_hash": "e9a2c77e07c8ba906d485e4766bfd9ed917ec8737b4d91e1802974150569f2b0"
+  }
+}

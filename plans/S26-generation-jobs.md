@@ -898,14 +898,19 @@ CREATE TABLE command_receipt (
 );
 
 CREATE TABLE outbox (
-  id            bigserial PRIMARY KEY,
-  aggregate_id  text NOT NULL,
-  aggregate_seq bigint NOT NULL,
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id     text NOT NULL,          -- 事件信封 required
+  aggregate_id  text NOT NULL,                  -- job_id
+  aggregate_seq bigint NOT NULL,        -- job.revision
   event_type    text NOT NULL,
+  partition_key text NOT NULL,          -- tenant_id || ':' || aggregate_id
   payload       jsonb NOT NULL,
+  headers       jsonb NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
   published_at  timestamptz,
-  UNIQUE (aggregate_id, aggregate_seq)
+  UNIQUE (aggregate_id, aggregate_seq, event_type)
 );
+CREATE INDEX outbox_unpublished_idx ON outbox (id) WHERE published_at IS NULL;
 ```
 
 `attempt_ledger` 是 `docs/11 §3` 与 `docs/16 E26` 的落点：`换模型、换 Run 不能清零已消耗的总费用`。它按 `(tenant, node)` 累计，不按 Run 重置。

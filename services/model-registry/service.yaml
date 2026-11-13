@@ -4,7 +4,7 @@
 service_id: S24
 slug: model-registry
 name: 模型能力与价格注册
-maturity: design_only
+maturity: implemented
 
 domain: models
 owner_team: models

@@ -4,7 +4,7 @@
 service_id: S26
 slug: generation-jobs
 name: 统一生成任务协调
-maturity: design_only
+maturity: implemented
 
 domain: execution
 owner_team: execution

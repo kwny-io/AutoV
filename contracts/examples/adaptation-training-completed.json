@@ -1,0 +1,46 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCHK7M2P4R6T8V0X2Z4B6D9",
+  "source": "S48",
+  "type": "adaptation.training.completed",
+  "subject": "training-job/job_01JCHA9C2E4G6J8L0N2P4R6T8V",
+  "time": "2026-11-05T10:15:00Z",
+  "tenant_id": "tnt_01JBG9F2M4Q6S8U0W2Y4A6C8E0",
+  "home_cell": "cell_a1",
+  "aggregate_id": "job_01JCHA9C2E4G6J8L0N2P4R6T8V",
+  "aggregate_sequence": 7,
+  "correlation_id": "cmd_01JCHAB5D7F9H1K3M5P8R0T2W4",
+  "causation_id": "cmd_01JCHAB5D7F9H1K3M5P8R0T2W4",
+  "traceparent": "00-9e4b2c6d8f0a3e5b7d9c1f3a5b7d9e1c-9e4b2c6d8f0a3e5b-01",
+  "data": {
+    "schema_version": "2.0",
+    "job_id": "job_01JCHA9C2E4G6J8L0N2P4R6T8V",
+    "state": "EVAL_FAILED",
+    "adaptation_type": "character_lora",
+    "target_ref": {
+      "service_id": "S11",
+      "id": "char_linlan",
+      "revision": 4
+    },
+    "base_model_ref": {
+      "service_id": "S24",
+      "id": "mdl_x",
+      "revision": 7,
+      "content_hash": "62b5c9112de0087d611e0dbd84b64f0826ef896fcb7058e20f7077bc7ee2281b"
+    },
+    "artifact_ref": null,
+    "dataset_ref": {
+      "service_id": "S48",
+      "id": "ds_01JCHB1E3G5J7L9N1Q3S5U7W9Y",
+      "items_hash": "003506948e981c72c56c11024f8e912602b0865b173027c23dbba7b890347f39"
+    },
+    "evaluation_passed": false,
+    "metrics_summary": {
+      "identity_preservation": 0.61,
+      "overfit_score": 0.48
+    },
+    "gpu_seconds_consumed": 18400
+  },
+  "data_ref": null
+}

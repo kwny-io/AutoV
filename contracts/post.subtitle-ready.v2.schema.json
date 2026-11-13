@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/post.subtitle-ready.v2.schema.json",
+  "title": "post.subtitle.ready payload v2",
+  "description": "event `post.subtitle.ready` 的 data 部分。权威定义在 plans/S38-subtitles.md §7（事件体示例，行 384–407）、§2.2（subtitles.rendition DDL，行 124–133）、§3.0（字节全部在 S28）。S38 §12 C4 明确要求：本事件必须有 payload schema，且 artifacts[].artifact_id 必须属 S28 的 ID 空间，不能是 S38 自定义 ID。本文件就是那条要求的落地。事件名是 `post.subtitle.ready`（既有 catalog），但语义包含「已自校验」——缺陷随 data.qc_report_ref 带出，S39 直接读（§7 行 409、S35 §12 C4 的答案）。与 quality.* 三个事件不同，本事件的 data_ref 指向 subtitle track 而不是 QCReport。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有约定；S38 §7 的示例没有画它。"
+    },
+    "track_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S38 §2.2 DDL 行 125（`track_id text NOT NULL`）+ §7 示例（`sub_…`）。S38 的 outbox 用 aggregate_id = track_id、aggregate_sequence = subtitle_revision（行 161），故 track_id 必须等于 envelope.aggregate_id 且本字段的 revision 等于 envelope.aggregate_sequence——schema 跨不到 envelope，由 S38 保证。前缀 `sub_` 只在示例里出现（行 389/405），S38 未把它写成约束，故此处不收窄。"
+    },
+    "subtitle_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S38 §2.2 DDL 行 126（`subtitle_revision integer NOT NULL`）+ §7 示例（3）。等于 envelope.aggregate_sequence（行 161）。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S38 §7 事件示例（行 390 `\"episode_id\": \"ep3\"`）。S38 §2.2 的 rendition 表**没有 episode_id 列**——它应来自 track 表（§2.2 上半部分）。事件里带上它是为了让订阅方不必回查就知道属于哪一集。见 x-conflicts QSC38-2 的邻近说明（同一类「事件带表里没有的折叠字段」）。"
+    },
+    "branch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S38 §7 事件示例（行 390 `\"branch_id\": \"canon\"`）。分支维度，与 S08 的 branch 一致。"
+    },
+    "timeline_ref": {
+      "type": "object",
+      "description": "来源：S38 §7 事件示例（行 391 `{ \"id\": \"tl_ep3\", \"revision\": 9 }`）。**注意它比 §5 命令体的同名对象少两字段**：命令体行 359 的 timeline_ref 是 `{service_id: \"S41\", id, revision, content_hash}` 四字段完整 ref，事件里只剩 id + revision。见 x-conflicts QSC38-1。本文件按事件示例的 2 字段写。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S38 §7 事件示例（行 391）。S41 的 timeline id。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S38 §7 事件示例（行 391 `\"revision\": 9`）。字幕绑定的是哪一个 timeline revision——S41 改了时间线之后旧字幕即过期，这个值就是判定依据。"
+        }
+      },
+      "required": [
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "target_locale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S38 §2.2 上半部分 DDL 行 61（`target_locale text NOT NULL -- zh-CN / en-US / ja-JP ...`）+ §7 示例。注释给了示例写法但没声明它是 BCP 47，故不收窄为 enum。S37 的 language 字段有同样的未定问题（见 quality.alignment-completed 的 x-needs-owner）。"
+    },
+    "cue_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S38 §7 事件示例（行 393 `\"cue_count\": 142`）。可由 cue 表按 (track_id, subtitle_revision) 计数得出；事件里带是为了让下游不必回查就估算工作量。S38 未给独立定义。"
+    },
+    "formats": {
+      "type": "array",
+      "description": "来源：S38 §7 事件示例（行 394）+ §2.2 rendition 表的 format CHECK（行 127 `format IN ('srt','vtt','ass')`）。**字段名是复数 `formats`**，而 rendition 表的列名与 §5 命令体 profile 里的名字是单数 `format`（行 366 `\"format\": [\"srt\", \"vtt\", \"ass\"]`）——同一个东西两种拼写。本文件按事件示例用 `formats`。",
+      "items": {
+        "type": "string",
+        "enum": [
+          "srt",
+          "vtt",
+          "ass"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "来源：S38 §7 事件示例（行 395–399）+ §2.2 rendition DDL（行 124–133）+ §3.0（字节在 S28，这里只有指针）。**S38 §12 C4 的核心要求**：artifact_id 必须属 S28 的 ID 空间。rendition 表的主键是 (track_id, subtitle_revision, format)、`UNIQUE (artifact_id)`——一个格式一行、一个 artifact 只被一行引用。事件里 artifacts[] 应与 formats[] 一一对应；schema 无法表达这个跨数组的一一对应，由 S38 保证。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "srt",
+              "vtt",
+              "ass"
+            ],
+            "description": "来源：S38 §2.2 DDL 行 127 的 CHECK 闭集。注意此处是单数 `format`——artifacts[] 的每一项内部用单数，外面那层数组用复数 `formats`。"
+          },
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：S38 §2.2 DDL 行 128（`artifact_id text NOT NULL -- S28 的 artifact_id`）+ §7 示例 + §12 C4。**必须是 S28 的 ID 空间（`art_<ulid>`，见 S28 §2.1 行 164），不能是 S38 自定义 ID。** schema 只能约束它是非空字符串——前缀的归属是契约约定，不是形状约束，故此处不写 `^art_` pattern：S28 的 DDL 注释是 `art_<ulid>` 但没有把前缀写成 CHECK，写死会拒掉 S28 自己允许的形式。这条必须由 S38 实现侧保证（§12 C4 就是这么要求的）。"
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "来源：S38 §2.2 DDL 行 129（`content_hash char(64) NOT NULL -- 与 S28 manifest 一致`）。小写 hex 64。调用方据此校验从 S28 下载到的字节——这是「S38 不是第二个字节权威」的兑现方式：S38 只知道 hash，不知道字节。"
+          }
+        },
+        "required": [
+          "format",
+          "artifact_id",
+          "content_hash"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "qc_report_ref": {
+      "type": "object",
+      "description": "来源：S38 §7 事件示例（行 400）+ §7 行 409（「缺陷随 data.qc_report_ref 携带，S39 直接读」）。指向 S38 自己的 QCReport——本事件的 data_ref 指向 subtitle track，不是报告，所以报告必须另有指针。形状按 envelope data_ref 的完整 ref（§7 示例写全了四个字段）。",
+      "properties": {
+        "service_id": {
+          "const": "S38",
+          "description": "来源：S38 §7 事件示例（行 400）。恒为 S38——字幕层的质检报告由 S38 自己产出，不存在第二个 owner。"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：S38 §7 事件示例（行 400 `\"id\": \"qc_…\"`）。报告 ID，与 quality.*.completed 同一命名空间形态。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "来源：S38 §7 事件示例（行 400 `\"revision\": 1`）。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：S38 §7 事件示例（行 400）。S39 拉取报告后据此校验内容未被篡改。"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "qc_decision": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "repair",
+        "human_review",
+        "abstain"
+      ],
+      "description": "来源：S38 §7 事件示例（行 401 `\"repair\"`）+ §9 E25-U1（行 468「S37 对齐报告 abstain 时请求字幕 → S38 仍出草稿但 qc_decision=abstain；不得标 qc_passed」）。**字段名是 `qc_decision`，不是 `decision`**——与 quality.* 三个事件不同名，尽管取值闭集相同。S39 读字幕层的结论时要按这个名字取。"
+    },
+    "defect_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S38 §7 事件示例（行 402 `\"defect_count\": 2`）。与 quality.* 的同名字段处境相同：从 qc_report_ref 指向的报告折叠出来的数，没有独立 DDL 列。"
+    },
+    "stale_translation_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：仅 S38 §7 事件示例（行 403 `\"stale_translation_count\": 0`）。**全文没有第二处定义**：不在 §2.2 的 DDL 里，§3 的流程没提，§9 的测试清单也没有针对它的用例。语义推测是「译文对应的 source hash 已过期、需要重译的 cue 数」，但 S38 没写。见 x-needs-owner——这个字段名本身是清楚的，问题在于没有任何地方说明它怎么算，而它看起来像是下游会依赖的信号（非零大概意味着字幕内容不可信）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "track_id",
+    "subtitle_revision",
+    "episode_id",
+    "branch_id",
+    "timeline_ref",
+    "target_locale",
+    "cue_count",
+    "formats",
+    "artifacts",
+    "qc_report_ref",
+    "qc_decision",
+    "defect_count",
+    "stale_translation_count"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "stale_translation_count",
+      "demanded_by": "plans/S38-subtitles.md §7 事件示例（行 403）",
+      "s38_status": "只在事件示例里出现一次。§2.2 的 DDL 没有对应列，§3 的本地化流程（行 205）没有提到「过期译文」这一状态，§9 的测试清单里也没有用例。如果它的含义是「译文绑定过期的 cue 数」，那么非零就意味着字幕内容与当前 source 不一致——那是下游必须知道的信息，值得有定义和测试；如果只是统计展示，那就是可从 cue 表算出的冗余。需要 S38 明确。"
+    },
+    {
+      "field": "cue_count",
+      "demanded_by": "plans/S38-subtitles.md §7 事件示例（行 393）",
+      "s38_status": "虽然语义无歧义（cue 条数），但 S38 没有把它列为事件必需字段，也没有说它是否包含 not_applicable 的 cue。S38 §2.2 的 cue 表可计数得到同一量，事件里带属冗余。不是错误，只是没有定义。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "QSC38-1",
+      "summary": "timeline_ref 在命令体是 4 字段完整 ref，在事件里只剩 2 个",
+      "s38_command": "§5 行 359：`timeline_ref: {service_id: \"S41\", id: \"tl_ep3\", revision: 9, content_hash: \"…\"}`",
+      "s38_event": "§7 行 391：`timeline_ref: {id: \"tl_ep3\", revision: 9}`",
+      "why_it_matters": "少了 service_id 与 content_hash。service_id 恒为 S41 所以省掉无害；content_hash 省掉则意味着订阅方无法验证「字幕绑定的那份 timeline 内容」——它只知道 revision 号，而 revision 号在同一个 timeline 上会递增，回查时看到的是最新那份，不是当时那份。如果下游要做「字幕与当时时间线一致」的审计（E24 系列要求证据可追溯），这个字段必须在。要么事件补齐 4 字段，要么 S38 说明为什么字幕不需要绑定 timeline 内容。本文件按事件示例的 2 字段写，不擅自补。"
+    },
+    {
+      "id": "QSC38-2",
+      "summary": "episode_id / branch_id 在事件里，但 rendition 表没有这两列",
+      "s38": "§2.2 DDL 行 124–133 的 rendition 表只有 track_id / subtitle_revision / format / artifact_id / content_hash / byte_size / rendered_at；§7 事件示例却带 episode_id 与 branch_id（行 390）",
+      "why_it_matters": "这不是冲突而是折叠：这两个值应从 track 表（§2.2 上半部分）取。风险在于事件发出时若 track 行与 rendition 行不在同一事务读，可能出现 episode/branch 与 track 实际归属不符。S38 行 161 只规定了 `post.subtitle.ready` 与 rendition 行同事务，没提 track 的读取时机。属实现注意点，不是契约缺陷——记在这里是因为同一类「事件带表里没有的字段」在 S37 也出现了（QAC-2），可能是这套方案的共同写法。"
+    },
+    {
+      "id": "QSC38-3",
+      "summary": "同一组格式值有单复数两种字段名",
+      "s38": "§5 命令体 profile：`\"format\": [\"srt\", \"vtt\", \"ass\"]`（行 366，单数）；§7 事件：`\"formats\": [...]`（行 394，复数）；§2.2 DDL 列名：`format`（行 127，单数）；§7 事件里 artifacts[] 的每一项又用 `format`（单数）",
+      "why_it_matters": "四个位置三种用法：命令体用单数指数组、DDL 用单数指标量、事件数组用复数、数组元素用单数。实现时很容易让某一侧写成 `format: [...]` 而另一侧读 `formats`。这属于命名噪音而非语义冲突（取值闭集是一致的 `srt|vtt|ass`），但跨服务 payload 里一个字段两种名字是实打实的对接成本。本文件按事件示例用 `formats`（数组）+ `format`（元素），与 S38 §7 一致。"
+    }
+  ]
+}

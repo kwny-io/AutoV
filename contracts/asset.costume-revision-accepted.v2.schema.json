@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/asset.costume-revision-accepted.v2.schema.json",
+  "title": "asset.costume.revision.accepted 的 data 载荷",
+  "description": "S12 服装资产一版 revision 被接受时发布的载荷。来源是 plans/S12-costume-assets.md §5.3 行 516–524 的事件 `data` 块（8 个键）+ §2.1 行 112–134 的 costume DDL + §2.2 行 148–173 的 costume_revision DDL + §4.2 行 405–419 的接受事务 + §1.3 行 79 的文字说明。\n\n**这个事件的键集比它自己的 DDL 窄一半，而窄掉的恰好是订阅方最该复核的那几件。** `costume_revision` 有 16 列（行 149–164），其中 10 列不进事件：`payload` / `outfit` / `material_palette` / `accessories` / `variant_manifest` / `source_kind` / `parent_revision` / `quality_gate_ref` / `accepted_at` / `accepted_by`。事件另有 6 个键在 revision 表里不存在（`costume_ref` 是把四列折叠成引用，`character_ref` 与 `costume_kind` 来自 `costume` 表，`became_canonical` / `canonical_revision` 来自 `canonical_pointer`，`unverified_refs` 没有来源表）。这个折算是合法的——事件是通知不是镜像——但**方案为 `variant_axes` 写下的那句「必须发出去，否则订阅方不知道这一版支持哪些破损档」（行 530）在同一个键上就不成立**：§1.3 行 82–87 声明了三个轴，事件只带两个（缺 `makeup`）。见 CCA-2。\n\n**「质量门」这个词在本方案里指向两个不存在的质检服务。** 行 234 / 422 / 665 / 681 / 686 / 697 六处写 `S33/S34` 承担身份不变性检查，而 `contracts/service-catalog.v2.json` 里 S33 是 `音效生产`、S34 是 `BGM与音乐`。真正的技术质检是 S35、语义质检是 S36。这与 S11 的 CRC-6 是同一个错误家族（S14 七处、S12 六处、S11 五处、S13 两处）。更进一层：**即便把名字改成 S35/S36 也接不上**——`QCReport v2` 的 `shot_ref` 是顶层必填（S35 行 197），`artifact_kind` 枚举里没有任何「资产图」类取值（行 278–281），S35 与 S36 两篇方案对「入库」的命中均为 0。见 CCA-1。\n\n收紧与否逐键按 DDL 判定：`costume_kind` 收四值 enum（行 118–119 是真 CHECK）、`costume_ref.content_hash` 收 `^[0-9a-f]{64}$`（行 152 是 `char(64)`、行 166 是 `costr_hash_len` 真 CHECK）、`revision` 收 `minimum: 1`（行 151 是真 CHECK）、`source_kind` 的四值 CHECK（行 160）**不在事件里**所以无从收、`variant_axes` 的键与值都**不收 enum**（行 158 只有一句注释，无 CHECK）。`rights_ref` 与 `unverified_refs` 都只收结构：前者全文无键集（行 159 只有 `jsonb NOT NULL`），后者连元素形状都没有定义（行 391 / 479 / 523 / 537 四处提到它，无一处说它长什么样）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "载荷版本，与 envelope 的 `schema_version` 分开。全仓库统一为 `2.0`。\n\n**本事件的方案示例里没有这个键**：行 510 的 `\"schema_version\":\"2.0\"` 在 envelope 层（与 `specversion` 并列），行 516 的 `data` 块直接从 `costume_ref` 开始。这里仍然收为必填，因为全仓每一份载荷 schema 都把它列进 `required`，示例文件也据此补上了它。这是本仓既定的统一约定，不是从 S12 的散文推出来的——所以它是**补进去的必填键**，不是抄下来的。"
+    },
+    "costume_ref": {
+      "type": "object",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false,
+      "description": "四键引用。出处：§5.3 行 517 `{\"service_id\":\"S12\",\"id\":\"cos_linlan_reddress\",\"revision\":2,\"content_hash\":\"…\"}`；与 S11 / S13 / S14 的事件同形。`revision` 的最小值 1 来自 §2.2 行 151 `revision integer NOT NULL CHECK (revision >= 1)`；`content_hash` 的 hex 长度来自行 152 的 `char(64)` 与行 166 的 `costr_hash_len`；主键 `(tenant_id, costume_id, revision)`（行 165）说明三键合起来唯一确定一行。\n\n**id 前缀与 DDL 注释不一致**：`costume` 表行 114 的注释写 `costume_id text NOT NULL, -- 'cos_01J...'`，而事件示例（行 512 / 514 / 517）与 §4.3 的读响应（行 445）都用 `cos_linlan_reddress`——是语义名不是 ULID。同一个不一致在 S14 的 PRP 里也出现过（`prp_01J...` vs `prop_key`）、S13 的 SCN-8 亦然。本字段只收 `string, minLength: 1`，不设 pattern：两种写法都能过，因为没有任何一处文档能裁定该用哪个。\n\n**`aggregate_sequence` 与本处的 `revision` 是同一个数**：行 506 定 `aggregate_sequence = revision`。JSON Schema 无法跨 `data` 边界比较，所以「两个数必须相等」只能由生产者保证。"
+    },
+    "character_ref": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "service_id": {
+              "type": "string",
+              "pattern": "^S[0-9]{2}$"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "service_id",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "这套衣服「是为谁做的」。出处：§5.3 行 518 `{\"service_id\":\"S11\",\"id\":\"chr_linlan\"}`；DDL §2.1 行 120 `character_ref jsonb, -- {service_id:'S11', id:'chr_linlan'} 软引用，可空`。\n\n**只有两个键，没有 `revision`——这不是遗漏，是 §1.2 的结论。** 行 65–75 明写它「不参与 canonical 判定」「不用于身份一致性检查」，做成强引用会让「这套军装给 A 做的、B 也要穿」这种合法场景被拒，也会给 S12 引入一个 S11 挂掉就封不了版的同步依赖。所以这里与 `costume_ref` / `prop_ref` 刻意不同形：那两者指到一版具体内容，这个只指到一个角色，且允许为空（通用服装，行 141）。\n\n**「可空」在 DDL 里是列可空，在事件里是值可为 `null`，两者不是一回事**：本 schema 把键收为必填、值收为 `null-or-object`，含义是「生产者总是发出这个键，没有角色时显式给 `null`」。这与 envelope 对 `causation_id` 的处理方向相反（那边是键可缺、出现则必须非空）——因为这里的 `null` 表达的是「本资产没有主人」这个真实事实，而不是「这个字段不适用」。\n\n**它不能替代 binding**：行 20 的职责表把「这一场林岚穿红裙还是职业装」记在 S12，紧跟一句「（binding 由 S10 固定）」；行 58 把「谁在哪一场穿它」判给 S10。本键只是一个审计线索，不是「谁穿了」的答案。"
+    },
+    "costume_kind": {
+      "type": "string",
+      "enum": [
+        "character_outfit",
+        "uniform",
+        "group_costume",
+        "generic_wardrobe"
+      ],
+      "description": "服装类别。出处：§5.3 行 519 `\"costume_kind\":\"character_outfit\"`；DDL §2.1 行 118–119 的真 CHECK `costume_kind IN ('character_outfit','uniform','group_costume','generic_wardrobe')`。\n\n**收 enum 有 DDL 依据**，与同一事件里的 `variant_axes`（只有注释）形成对照。四个值的语义在行 136–143：`character_outfit` 通常是某个角色的造型、`uniform` 是多人共用的制服、`group_costume` 是同款不同人、`generic_wardrobe` 是背景人物/临时服装。\n\n**它与 canonical 存在一条 DDL 不表达的耦合**：行 141 说 `generic_wardrobe` 允许 `canonical_revision IS NULL`，行 143 解释理由是「背景人物的服装不需要全剧一致的唯一基准 —— 强行要求会让 500 个背景角色的登记成本爆炸」。反过来说，行 93–101（§1.4）说「同一角色的多套服装，每套各自有 canonical」。于是「非 `generic_wardrobe` 时 `canonical_revision` 不该为 null」像是成立——但 DDL 行 122 只是 `canonical_revision integer,`，没有任何 CHECK，行 128 的 `canonical_within_head` 只约束 `<= current_revision`，对 `NULL` 恒真。本 schema **不**据此加 if/then：那会把一条散文里的意图变成比 DDL 更严的契约。见 CCA-7。\n\n**C12-6 仍开着**：行 685 记「docs/10 未定义 `costume_kind`（制服/群像/背景）」「本文新增枚举；需确认是否进入契约」。DDL 有 CHECK，docs/10 行 8 只有「服装 | outfit、材质配色、配饰、妆造、破损湿度变体 | 角色身份不变、服装图与文本匹配」一行，没有这四个词。本 schema 按 DDL 收，但「这个枚举是否已被设计方承认」仍是 owner 的事。"
+    },
+    "became_canonical": {
+      "type": "boolean",
+      "description": "这一版在这次接受中是否成为 canonical。出处：§5.3 行 520（示例值 `true`）；语义来自 §4.2 行 408–416 的 `set_canonical` 分支与行 496 的 `POST /costumes/{id}:set-canonical`。\n\n**`costume_revision` 里没有这一列**：它是 `canonical_pointer` 上的一次动作的结果，不是 revision 的属性。行 243–257 的 `canonical_pointer` 有 `decision_kind`（行 249 的真三值 CHECK）与 `prior_canonical`（行 251），**两者都不进事件**。于是消费方拿到 `became_canonical=true` 却不知道这是人审通过、`policy_auto` 溜过去、还是首次导入。§2.5 行 262 与 §4.2 行 409–412 恰好把 `policy_auto` 拦在两种情况下（变体缺覆盖、身份检查未过），所以「它是怎么放行的」正是审计要问的。见 CCA-4。\n\n**`false` 有两种含义，事件分不出**：行 619（E08-C1）「第 2 集补一张细节图（`set_canonical=false`）」是「这一版不是权威但也不是回退」；而 `generic_wardrobe`（行 141–143）可能永远不设 canonical，于是 `became_canonical=false` + `canonical_revision=null` 是它的常态而非「这次没动」。`costume_kind` 在事件里，所以订阅方能自己补这层判断——但没有任何一处文档要求它这么做。"
+    },
+    "canonical_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ],
+      "description": "该 `costume_id` 当前的 canonical revision。出处：§5.3 行 521（示例值 2）；DDL §2.1 行 122 `canonical_revision integer,`（**可空**），行 128 的 `canonical_within_head` 只约束 `canonical_revision IS NULL OR canonical_revision <= current_revision`。\n\n**`null` 是有意义的状态，不是缺值**：行 141 明写 `generic_wardrobe` 允许 `canonical_revision IS NULL`，行 143 给出理由。同时行 547（§5.4 错误码）有 `404 CANONICAL_NOT_SET`，说明「没有 canonical」是一等状态。\n\n**`became_canonical=false` 时它可以是 `null`、也可以是「别的 revision」**：行 177 的 `costr_parent_lt` 之类都不约束它，行 128 只给上界。于是「2 是因为这一版刚成为 canonical」与「2 是因为 2 一直是 canonical，而这次接受的是 3」在事件里长得一样——除非读者同时看 `became_canonical`。当 `became_canonical=true` 时它应当等于 `costume_ref.revision`，而 JSON Schema 无法表达跨字段相等（`aggregate_sequence = revision` 那条也一样）。\n\n**它会在零事件的情况下变化**：行 496 的 `POST /costumes/{id}:set-canonical` 是独立命令，行 345 的图里写明它用于「回退」，§5.1 行 496 与 S11 的同名命令一字不差。按本事件缓存「当前 canonical 是哪一版」的消费方会在回退之后永久陈旧。见 CCA-4。",
+      "x-note": "本键的 allOf 分支见顶层 `allOf`：`became_canonical=true` 时不允许为 `null`。"
+    },
+    "variant_axes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "uniqueItems": true
+      },
+      "description": "本 revision 支持的变体轴与取值。出处：§5.3 行 522 `{\"damage\":[\"none\",\"light\",\"torn_shoulder\",\"bloodied\"],\"wetness\":[\"dry\",\"damp\",\"soaked\"]}`；DDL §2.2 行 158 `variant_axes jsonb NOT NULL, -- 本 revision 支持的轴与取值（复制自 schema 版本）`。\n\n**键与值都不收 enum，且这是有意的**：行 158 只有一句注释，`costume_revision` 的建表语句**没有任何 CHECK** 约束它。§11.2 行 704 把「变体轴是否全局固定」列为未决并当前选「可扩展」；行 175 给出理由（将来加 `weather_stain` 这种新轴时，旧 revision 的 `variant_axes` 仍是旧集合，读取方知道「这一版没有这个轴」）。收 enum 等于替 S12 把闭集定死，与行 704 直接冲突。所以这里只收结构：`object` → `array of non-empty string`。\n\n**事件里的这个键比方案自己声明的少一个轴，而这正是它存在的理由所在。** §1.3 行 84–86 声明三个轴：`damage` 四值、`wetness` 三值、`makeup` 三值（`natural` / `evening` / `injured_smudged`）。`variant_manifest` 的 DDL 注释（行 157）也写 `{damage:{none:ref,torn_shoulder:ref}, wetness:{...}, makeup:{...}}`；§4.1 的起草命令（行 379）同样是三轴。而行 522 的事件示例只有 `damage` 与 `wetness`。行 530 紧接着说「`variant_axes` 必须发出去。否则订阅方（S17 的期望状态校验）不知道『这一版支持哪些破损档』，就只能猜」——对 `makeup` 这个轴，订阅方仍然只能猜。见 CCA-2。\n\n**`minProperties: 1` 与每轴 `minItems: 1` 的依据是语义而非 DDL**：空对象等于「这一版不支持任何变体」，而 `variant_manifest` 是 `NOT NULL`（行 157）、行 177 又要求「变体必须全部有 artifact，不允许『变体声明了但没有图』」。空轴数组则是「声明了这个轴但一个值都没有」，在行 388 的覆盖校验里恒真，没有意义。这两个下限是本 schema 的**判断**，不是抄来的。\n\n**被点名的订阅方读不到它**：行 530 说 S17 的期望状态校验要读本键，`plans/S17-continuity.md`（532 行）全文对 `variant_axes` **与** `costume` 的命中均为 **0**；它 §7.3 的视觉状态检查（行 428–444）走的是「S16 取期望 → S10 取 canonical 变体 → 结构化 VQA」，而 S10 明说 `variant_selector` 由 owner 解释、S10 不知道变体叫什么（S10 行 224 / 252 / 829）。见 CCA-2。"
+    },
+    "unverified_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": true
+      },
+      "description": "候选里那些指向 S14 道具、但 S12 没有校验过是否存在的引用。出处：§5.3 行 523（示例值 `[]`）；§4.1 行 391「`accessories` 里的每一项如果引用 S14 的道具……S12 **不校验**它存在（S14 可能还没建），只记录 `unverified_refs`」；§4.4 行 479（F14）「引用了 S14 的道具但 S14 无该 revision → **允许**，记 `unverified_refs` → 200/201，响应带警告列表」。\n\n**全文没有一处说明它的元素长什么样**：行 391 说的是「记录」，行 479 说的是「响应带警告列表」，行 523 给的是空数组，行 537 说的是「消费 `asset.prop.revision.accepted` 时把 `unverified_refs` 里匹配的项标记已验证（仅本地标记）」。四处都提到它，零处定义它。也没有任何表有这一列（`costume_revision` 的 16 列见行 149–164，`costume_candidate` 的列见行 229–240）——所以它是一个**只存在于事件与响应里的派生值**，与 S14 的 `text_changed`（PRP-5）同类：不可回查、不可重算。\n\n**「匹配」需要一个可比较的键，而那个键只可能是 `revision_reference` 的形状**：§2.6 行 267–277 的表有 `ref_role` / `target_service` / `target_id` / `target_revision` / `target_hash`，主键是 `(tenant_id, costume_id, revision, ref_role, target_service, target_id)`。S14 的事件会带 `prop_ref = {service_id, id, revision, content_hash}`，所以「匹配」至少要比 `target_service`+`target_id`（可能还要 `target_revision`）。方案没说，本 schema 也就不敢收成四键——**收成四键是替 S12 编契约**。这里只收 `array of object`，且对象至少有一个键、允许任意键，沿用 `integration.command-accepted.v2.schema.json` 的 `target` 那份先例（开对象）；`uniqueItems` 也不设，因为元素形状未定，深度相等比较没有可辩护的语义。\n\n**声明的消解方不认这件事**：行 537 说 S14 的 `asset.prop.revision.accepted` 到达后标记已验证，而 `plans/S14-prop-assets.md` 全文对 `unverified_refs` 的命中为 **0**。见 CCA-3。"
+    },
+    "rights_ref": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true,
+      "description": "权利引用指针。出处：§5.3 行 524 `\"rights_ref\":{...}`；DDL §2.2 行 159 `rights_ref jsonb NOT NULL,`——**S12 全文没有一处写出它的键集**（对 `rights_owner` / `rights_id` / `rights_hash` 的命中均为 0）。§2.8 行 319 的反模式表 `| costume_rights_status | 只存指针。|` 与 §0 行 25「这套衣服的版权/授权是否仍有效 | S02（S12 只存指针）」说明这是刻意的：只存指针、不存状态。\n\n**为什么不照 S10 的四键收**：`{rights_owner,rights_id,rights_revision,rights_hash}` 出现在 S10 §2.2 行 223 的列注释里，是 S10 自己 binding 表的形状，不是 S12 的定义。跨服务照抄就是替 S12 编契约——S14 的 PRP 在同一个位置上也是这么判的。所以收 `object` + `minProperties: 1` + 任意键。\n\n**E30 的防线同样不在本事件里**：§8 行 635（E30-C1）要求「服装授权撤销后 S12 仍返回 revision」时带 `rights_recheck_required=true`，而该字段出现在 §4.3 行 456 的读响应中，**不在本事件里**。这与 S11 的 CRC-3、S13 的 SCN-4、S14 的 PRP-4 是同一个结构：读路径告诉调用方要复查，事件路径不告诉。见 CCA-4 与 CCA-6。\n\n**行 635 的 E30-C2 与行 547 的 `404 CANONICAL_NOT_SET` 同属读路径，事件一律不带。** 本 schema 收下全部 8 个键、不擅自增删。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "costume_ref",
+    "character_ref",
+    "costume_kind",
+    "became_canonical",
+    "canonical_revision",
+    "variant_axes",
+    "unverified_refs",
+    "rights_ref"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "became_canonical": {
+            "const": true
+          }
+        },
+        "required": [
+          "became_canonical"
+        ]
+      },
+      "then": {
+        "properties": {
+          "canonical_revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  ],
+  "x-needs-owner": [
+    {
+      "field": "`quality_gate_ref` 指向谁的什么对象（事件里没有它，但 DDL 行 162 是 `NOT NULL`）",
+      "demanded_by": "S12 的 `policy_auto` 门（§4.2 行 409–412）、E24-C2（行 640）、以及任何要回答「这一版服装为什么可以自动成为权威」的审计路径",
+      "s12_status": "未决，且指向的服务不存在。行 422 说它「指向 S33/S34 的 QC 结果」，而行 686（C12-7）自己也记着「S12 实际还需要 S33/S34 的 QC 结论」。S33 是音效生产、S34 是 BGM与音乐（service-catalog.v2.json、docs/design-package/DESIGN.md 行 159–160），两篇方案（1496 / 1635 行）对 `costume` 的命中为 0。改成 S35/S36 也接不上——见 CCA-1。"
+    },
+    {
+      "field": "`identity_invariance_check` 由谁产出、形状是什么、可能的取值有哪些",
+      "demanded_by": "§4.2 行 411 的 `policy_auto` 硬门（`!= 'pass'` 即 422 `IDENTITY_CHECK_REQUIRED_FOR_AUTO`）、E24-C2（行 640）",
+      "s12_status": "未决。`git grep -F identity_invariance_check` 全仓命中 **1 处**，就是行 411 自己；没有表列、没有键集、没有取值枚举（`'pass'` 之外是什么？`'fail'`？`null`？）。§2.5 行 234 的 `evaluation jsonb NOT NULL, -- S33/S34 结果 + 身份不变性检查 + 图文匹配分数` 是三件东西塞进一个无键集的 jsonb，所以「它在 `evaluation` 里」只是最合理的猜测，不是文档说的；行 411 用的是裸变量名，看起来像候选表的一列，而候选表没有这一列。见 CCA-5。"
+    },
+    {
+      "field": "`variant_axes` 该带全部声明轴还是只带「破损类」轴（`makeup` 缺席）",
+      "demanded_by": "行 530 自己给出的理由（「订阅方不知道这一版支持哪些破损档，就只能猜」）、§2.2 行 177 的「变体必须全部有 artifact」、§1.3 行 84–86 的三轴声明",
+      "s12_status": "未决，且方案内部不一致。声明三轴（行 84–86 / 行 157 / 行 379），事件只带两轴（行 522）。若 `makeup` 是有意不带（它属于「妆造」而不是「服装破损」），那么行 530 那句「必须发出去」的理由就只覆盖了三分之二的轴；若是漏带，则 `variant_manifest` 里 `makeup` 的覆盖校验（行 388）在事件侧没有对应声明。两种解释都需要一句话来定，方案没有。见 CCA-2。"
+    },
+    {
+      "field": "`unverified_refs` 的元素形状，以及「消解」在 S14 侧对应哪个动作",
+      "demanded_by": "§4.1 行 391、§4.4 行 479（F14）、§5.3 行 537 的消费行、§11.1 行 698 的实施顺序第 5 步",
+      "s12_status": "未决。四处提到、零处定义元素。最可能的形状是 `revision_reference`（行 267–277）的四键子集，但那是猜测。消解方也不认：行 537 说 S14 的 `asset.prop.revision.accepted` 会让它消解，而 S14 方案全文对 `unverified_refs` 的命中为 **0**。见 CCA-3。"
+    },
+    {
+      "field": "`rights_ref` 的键集；以及本事件是否该带 `rights_recheck_required`",
+      "demanded_by": "S02（权利实时复查的唯一权威）、S45（审计：任意 revision 能追溯到权利依据）、E30-C1（行 635）",
+      "s12_status": "未决。S12 全文只有 `rights_ref jsonb NOT NULL`（行 159）与事件里的 `{...}`（行 524），无键表。读响应带 `rights_recheck_required`（行 456），事件不带。S10 的四键形是可疑的类比，照抄就是跨服务编造。与 S13 的 SCN-4、S14 的 PRP-4 同构。"
+    },
+    {
+      "field": "`costume_kind` 这个四值枚举是否已被设计方承认（C12-6）",
+      "demanded_by": "docs/10 行 8 的服装质量门、S10 的 `asset_type` 枚举（其值集含 `costume` 但不含 `costume_kind` 的细分）、E02-A2 / E02-C4 的断言",
+      "s12_status": "未决，方案自己记着。行 685（C12-6）：「docs/10 未定义 `costume_kind`（制服/群像/背景）」→「本文新增枚举；需确认是否进入契约」。DDL 行 118–119 有真 CHECK，所以本 schema 按 DDL 收；但 docs/10 没有这四个词，`service.yaml` 也没有。四条值里 `generic_wardrobe` 还背着「可以没有 canonical」这条只在行 141–143 说过的规则（见 CCA-7）。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "CCA-1",
+      "summary": "九处把 `S33/S34` 当成身份质检的来源（6 处成对 + 3 处单写 `S33`），而它们是音效生产与 BGM 制作；改成真正的质检服务 S35/S36 也接不上——`QCReport v2` 要求顶层 `shot_ref`，`artifact_kind` 枚举里没有资产图，两篇 QC 方案对「入库」零命中",
+      "s12_claims": "行 234（`evaluation` 列注释 `S33/S34 结果`）、行 422（`quality_gate_ref` 指向 S33/S34 的 QC 结果）、行 665（反模式 5：归 S33/S34）、行 681（C12-2）、行 686（C12-7）、行 697（实施顺序第 4 步）——共 6 处字面 `S33/S34`。另有 3 处裸 `S33`：行 204（`era_style` 兼容性是 S17/S33 的检查项）、行 320（跨类型兼容性归 S17/S33 检查）、行 615（E02-C4「S33 报告身份保持」）。合计 9 行提到 S33 或 S34。",
+      "what_s33_s34_are": "contracts/service-catalog.v2.json：`S33 音效生产`（depends_on `[S26,S28]`）、`S34 BGM与音乐`（depends_on `[S26,S28]`）。docs/design-package/DESIGN.md 行 159–160 同。它们的方案（plans/S33-sound-effects.md 1496 行、plans/S34-music.md 1635 行）全文对 `costume` 的命中为 0（S33 是 0，S34 也是 0）。一个不做视觉的服务不可能产出「角色身份不变」的结论。",
+      "real_qc": "S35 `媒体技术质检`（depends_on `[S28]`）、S36 `视觉语义与时序质检`（depends_on `[S28,S17,S26]`）。S36 §5.1 行 182–191 确实有身份与服装的 check_id：`VIS.IDENTITY.FACE_DRIFT` / `FACE_SWAP_WITHIN_SHOT`（blocker）、`BODY_PROPORTION` / `OUTFIT_REVISION` / `ACCESSORY_MISSING`（major）、`ACCESSORY_EXTRA`（minor）。语义上是**对的**——「换脸」正是 `VIS.IDENTITY.FACE_SWAP_WITHIN_SHOT`。",
+      "why_renaming_does_not_fix_it": "两处硬阻断。**其一**：`QCReport v2` 的 `required`（S35 行 195–203）里有 `shot_ref`，且 `shot_ref` 的定义（行 326–334）是 `{shot_id, shot_revision, logical_node_id, node_epoch}` 全必填、`additionalProperties: false`。一张服装资产图不是镜头，没有 `shot_id` 也没有 `node_epoch`，于是任何资产图片的 QCReport 都过不了这个 schema。**其二**：`subject.artifact_kind`（行 278–281）枚举是 `[\"video\",\"audio\",\"image\",\"subtitle_track\",\"master\"]`——`image` 在，所以单看这一条资产图可以；但与上一条合起来仍然缺 `shot_ref`。此外 S35 与 S36 两篇方案的全文对 `入库` 的命中均为 **0**（S35 的那三处 `costume` 命中是 defect 维度名与动作路由表，行 111 / 127 / 518，不是资产入库质检）。S12 的 `depends_on` 是 `[S28,S01]`（catalog），没有 S35/S36；行 686 自己也记着这件事。",
+      "why_it_matters": "这是资产族共有的编号错误，不是 S12 的孤例。逐篇扫 `S33`/`S34`（成对与单写都算）：**S12 九处（6 对 + 3 单）、S14 八处（7 对 + 1 单）、S11 六处（5 对 + 1 单）、S13 两处（2 对，无单写）**，合计 25 处。资产族五篇方案里四篇都写错，说明它抄的是同一条错误源头。错误本身还容易修（改个编号）；**难修的是它掩盖了一个真实缺口**：`quality_gate_ref` 是 `costume_revision` 的 `NOT NULL` 列（行 162），`policy_auto` 的放行依赖它（行 409–412），而当前文档树里没有任何一条可执行的路径能产出它。若只把 `S33/S34` 改成 `S35/S36`，读者会以为缺口已补，实际上 S35/S36 连 schema 都过不了。",
+      "consequence": "按现状实现，团队在两种坏结果之间二选一：(a) 直接调视觉模型比对人脸——正是行 665（反模式 5）禁止的，也让 S12 依赖 GPU；(b) 接受一个 `quality_gate_ref` 永不填充的现实，于是 `NOT NULL` 只能塞占位值，`policy_auto` 的 `IDENTITY_CHECK_REQUIRED_FOR_AUTO` 永远不触发，E24-C2「身份变化（换脸）→ policy_auto 被拒」不可测。两种都不是 S12 想要的，而错误的服务编号让这个决定被推迟了。",
+      "fix_shape": "需 owner 定：(1) 六处字面 `S33/S34` 与三处裸 `S33` 应统一指向哪一个（技术层是 S35、语义层是 S36，身份检查属 S36）；(2) **更要紧的是补一条真正可行路径**——若资产入库质检归 S36，则 `QCReport v2` 需要一个不要求 `shot_ref` 的目标形态（或一个独立的 `asset_ref`），并明确 `check_manifest` 里哪些 check 对资产图适用；若不归 S36，则须说明「角色身份不变」这条质量门由谁执行，否则行 162 的 `NOT NULL` 无法满足；(3) 行 615 的 E02-C4 与行 640 的 E24-C2 的断言要跟着改；(4) 与 S11 的 CRC-6、S14 的 PRP、S13 的 SCN 同批处理，不要逐篇改。"
+    },
+    {
+      "id": "CCA-2",
+      "summary": "`variant_axes` 被说成「必须发出去否则订阅方只能猜」，可它自己只带了三个声明轴里的两个（缺 `makeup`）；而被点名要读它的 S17 对它和 `costume` 双双零命中",
+      "s12_claim": "§5.3 行 530：「`variant_axes` 必须发出去。否则订阅方（S17 的期望状态校验）不知道『这一版支持哪些破损档』，就只能猜。」",
+      "three_axes": "§1.3 行 84–86 声明三轴：`damage: none | light | torn_shoulder | bloodied`、`wetness: dry | damp | soaked`、`makeup: natural | evening | injured_smudged`。`variant_manifest` 的 DDL 注释（行 157）写 `{damage:{none:ref,torn_shoulder:ref}, wetness:{...}, makeup:{...}}`；§4.1 的起草命令（行 379）也写三轴。",
+      "two_in_event": "§5.3 行 522 只有 `{\"damage\":[...],\"wetness\":[...]}`——**`makeup` 不在**。§4.3 行 447 的读响应回显 `{\"damage\":\"torn_shoulder\",\"wetness\":\"dry\",\"makeup\":\"natural\"}` 是带 `makeup` 的。同一服务，事件少一个轴，读路径不少。",
+      "s17_zero_hits": "`plans/S17-continuity.md`（532 行）全文对 `variant_axes`、`costume`、`asset.costume.revision.accepted` 的命中均为 **0**；它对 `drama.*.v2` 主题名的命中也是 0，全文没有订阅表（对 `订阅` 的命中为 0）。它 §7.3（行 428–444）的视觉状态检查第一步是「从 S16 取期望」，第二步「从 S10 取 canonical 变体：S11 的角色外观 + S12 的服装 + S14 的道具」——**经由 S10**，不直接读 S12 的事件。而 S10 明说 `variant_selector` 由 owner 解释、自己不知道变体叫什么（S10 行 224 / 252 / 829），所以 S17 从 S10 也拿不到「这一版支持哪些轴」。",
+      "why_it_matters": "这句话的结构问题与 S14 的 PRP-2、S11 的 CRC-2 完全一样：**「某某需要它」这类句子从来没有被下游方案回执过**。S12 与 S14 都要在事件里多发一份变体声明，理由都是「S17 要知道」，而 S17 两处都不读。不同的是 S12 这边还多一层自伤——它连自己声明的三个轴都没带全。若按行 530 实现，订阅方拿到 `variant_axes` 会以为它是完整的轴清单，进而把「`makeup` 不在清单里」读成「这一版不支持妆造变体」，而实际上 §1.3 与 `variant_manifest` 都说支持。**一个为消除猜测而加的字段，自己制造了一次猜测。**",
+      "consequence": "两种实现都会出错：(a) 订阅方信任 `variant_axes` 的完整性 → 妆造变体被判为不可用，`resolve` 时对 `makeup` 的请求会走行 437 的 422 `VARIANT_NOT_AVAILABLE`，而资产其实有那三个妆造图；(b) 订阅方不信任它 → 那行 530 的理由就不成立，这个键的存在只是为了满足 S12 自己的对称感。此外 §4.3 行 460 说读响应回显的 `variant`「可能包含『未指定轴取默认』」，而 §9 行 661 的反模式是「读变体缺失时静默退回 `none`」、行 437 是「组合中某个轴缺值 → **不静默退回** → 422」。三句话在「默认」这个词上互相拉扯：未指定轴取默认算不算静默退回？方案没区分。",
+      "fix_shape": "需 owner 定：(1) `makeup` 该进事件还是不该——若该，行 522 补上；若不该，行 530 那句话要限定为「支持哪些**破损与湿度**档」，并说明妆造轴的完整性由谁负责（读路径行 447 是带的）；(2) 行 530 点名的 S17 若不消费，改成真实订阅方，或删掉那句理由；(3) §4.3 行 460 的「未指定轴取默认」与行 661 / 行 437 的关系要写清：建议明确「未指定 → 取该轴第一值/`none` 是允许的默认；指定了但该值不存在 → 422」，两句不矛盾但要显式分档。本 schema 收下 `variant_axes` 全部键、不收 enum，不改行 522 的形状。"
+    },
+    {
+      "id": "CCA-3",
+      "summary": "`unverified_refs` 四处提到、零处定义元素形状，也没有任何表存它；声明的消解方 S14 对这个字段零命中，于是「允许悬空 + 事后消解」这条折中在两端都没有实现",
+      "four_mentions": "行 391（§4.1 起草时「只记录 `unverified_refs`」）、行 479（F14「记 `unverified_refs`，响应带警告列表」）、行 523（事件示例 `[]`）、行 537（消费 `asset.prop.revision.accepted` 时「把 `unverified_refs` 里匹配的项标记已验证（仅本地标记）」）。外加行 684（C12-5）与行 708（未决第 6 条）在讨论它。",
+      "not_a_column": "`costume_revision`（行 149–164）16 列里没有它，`costume_candidate`（行 229–240）里没有它，`revision_reference`（行 267–277）里也没有名为它的列（该表存的是**已确认的引用**，`ref_role` 四值含 `accessory_of`）。所以它是一个只存在于事件与 HTTP 响应里的派生值：接受事务（行 405–419）的第 8 步把整个事件塞进 outbox，之后无法回查这一版当时有哪些悬空引用。",
+      "shape_undefined": "若「消解」要比对，至少需要 `target_service` + `target_id`（可能还要 `target_revision`）——这正好是 `revision_reference` 的列（行 272–274）。但方案从未这么写。S14 的事件带 `prop_ref = {service_id, id, revision, content_hash}`，所以「匹配」的实现只能靠猜：猜比两键还是三键、猜要不要比 hash、猜一个 revision 被 superseded 之后旧悬空引用算不算消解。",
+      "consumer_zero_hits": "`plans/S14-prop-assets.md` 全文对 `unverified_refs` 的命中为 **0**。S14 §5.3 的消费表（该篇）里没有任何一行指向服装事件，也没有「标记引用已验证」的动作。于是行 537 承诺的那条闭环在生产者侧是「发出去」，在消费者侧是「不知道有这回事」。",
+      "why_it_matters": "F14 的取舍写得很好：「硬拒会让流程卡住；但不记录就没人知道它是悬空的。折中是『允许 + 显式记录』，由 S09/S17 在需要时看到」（行 482）。这句话的前提是记录能活到「需要时」——而它只活在一条 at-least-once 的事件里（`normal_retention_days` 14），重建 read model 之后就没有了。S09 与 S17 对 `costume` 本来也是零命中（S17 已核实；S09 对 `costume` 与 `unverified_refs` 同样零命中），所以「由 S09/S17 看到」这一层也没有落地。**折中本身没错，错在它没有落点。**",
+      "consequence": "实现方会做一件事：把 `unverified_refs` 恒发 `[]`（示例就是 `[]`），于是 F14 变成「允许 + 什么都不记」，E30 之外的悬空引用彻底不可见。或者把 `revision_reference` 的一行塞进数组，于是事件里出现一个按 §4.1 行 391 本该「不校验存在」却已经被写进引用表的对象——两种做法都能通过本 schema，因为它们都不违反任何一条成文约束。",
+      "fix_shape": "需 owner 定：(1) `unverified_refs` 的元素形状（建议四键 `{target_service,target_id,target_revision,target_hash}`，与 `revision_reference` 列对齐，`target_hash` 可空）；(2) 是否需要一个 `costume_unverified_ref` 表来在事件之后仍可回查——若不需要，则行 708 的未决第 6 条「消解时限」无从实施；(3) S14 侧是否真的要做「标记已验证」这个动作，若做，S14 的消费表要加一行（且那意味着 S14 要知道服装的存在，与 C12-5 的「谁拥有配饰」是同一个裁决）；(4) 行 684 的 C12-5 与本条绑定，建议一并裁。"
+    },
+    {
+      "id": "CCA-4",
+      "summary": "canonical 可以在零事件的情况下移动（`:set-canonical` 回退），而决定「谁批的、凭什么叫它权威」的 `decision_kind` / `prior_canonical` 从不进事件；`rights_recheck_required` 也只在读路径里",
+      "set_canonical": "§5.1 行 496：`| POST | /costumes/{id}:set-canonical |`。行 345 的状态图注「回退（set-canonical，留审计）」。与 S11 的行 525 同名同义：「显式改 canonical（不产生 revision，仅重指向已有 revision）」。`event-topics.v2.json` 里 `producer: \"S12\"` 只有 `asset.costume.revision.accepted` 一条，所以这条路径不发任何事件。",
+      "never_in_event": "`canonical_pointer`（行 243–257）有 `decision_kind`（行 249 的真三值 CHECK `human_approved|policy_auto|initial_import`）、`prior_canonical`（行 251）、`decided_by`（行 248）、`reason_text`（行 250）、`superseded_at`（行 252）。事件带的是 8 个键：`costume_ref` / `character_ref` / `costume_kind` / `became_canonical` / `canonical_revision` / `variant_axes` / `unverified_refs` / `rights_ref`。**`decision_kind` 与 `prior_canonical` 都不在。**",
+      "policy_auto_is_the_point": "行 409–412 是 S12 最重要的一条自动放行规则：变体缺覆盖或身份检查未过时，`policy_auto` 被 422 阻断。它的可审计证据是 `canonical_pointer.decision_kind`，而「这次是不是 `policy_auto`」在下游完全不可见。于是「门有没有生效」这件事，只能靠 S12 自己的指标（行 588 的 `s12_accept_total{set_canonical,costume_kind}` 也不按 `decision_kind` 分）来断言。",
+      "same_in_four_services": "S11 的 CRC-4、S13 的 SCN-2、S14 的 PRP-4、S12 的 CCA-4——四个资产服务、同一个形状：只有一个 topic、canonical 有独立命令、事件不带 `decision_kind`。这是第四次出现，说明它不是某篇的疏漏而是全族的模式缺一个 canonical 变更事件。",
+      "rights_also_read_only": "§4.3 行 456 的读响应带 `rights_recheck_required: true`（S11 的对应处是「恒为 true」），本事件不带。§8 行 635（E30-C1）的断言因此只能对读路径测。与 S13 的 SCN-4、S14 的 PRP-4 同构。",
+      "consequence": "按本事件缓存「当前 canonical 是哪一版」的消费方，在 `:set-canonical` 回退之后会永久陈旧——而回退正是行 345 明写的用途（「发现第 2 版才是对的，把 canonical 从 3 指回 2」）。这与 S11 的 CRC-4 后果一字不差。更隐蔽的是 `became_canonical=true` 的语义：它只说「成了」，不说「怎么成的」，而 `policy_auto` 溜过去正是最需要被看见的那一种成法。",
+      "fix_shape": "需 owner 定（与 S11/S13/S14 同批）：(1) 是否补一个 canonical 变更事件（带 `decision_kind`/`decided_by`/`prior_canonical`/`reason_text`），让 `:accept` 与 `:set-canonical` 两条路径都有信号；(2) 若不补，至少把 `canonical_revision` 定义为「接受那一刻的快照」并要求消费方按 `GET /costumes/{id}/canonical`（行 430）复核；(3) `decision_kind` 是否进本事件——建议进，理由与 S11 的 CRC-4 相同：行 409–412 的门需要它才可验；(4) 是否给资产族四个事件统一补 `rights_recheck_required`。本 schema 不擅自加这些键。"
+    },
+    {
+      "id": "CCA-5",
+      "summary": "`identity_invariance_check` 与 `IDENTITY_CHANGED` 各在全仓只出现一次，都只在这篇方案里；它们是 `policy_auto` 与 E24-C2 的判据，却既没有表列、也没有键集、也没有取值枚举，而 S36 的真实 check_id 叫别的名字",
+      "identity_invariance_check": "`git grep -F identity_invariance_check` 全仓命中 **1 处**：§4.2 行 411 `-- identity_invariance_check != 'pass' 且 policy_auto → 422 IDENTITY_CHECK_REQUIRED_FOR_AUTO`。它出现在事务伪代码里，写法像候选表的一列；而 `costume_candidate`（行 229–240）的列是 `tenant_id` / `candidate_id` / `costume_id` / `content_hash` / `payload` / `evaluation` / `variant_check` / `state` / `created_by` / `created_at` / `expires_at`——**没有它**。§2.5 行 234 的 `evaluation` 注释写「S33/S34 结果 + 身份不变性检查 + 图文匹配分数」，所以最可能的落点是 `evaluation` 里的一个键，但 `evaluation` 本身无键集。取值只出现过一个：`'pass'`。`'fail'`？`null`？空字符串？未定义。",
+      "identity_changed": "`git grep -F IDENTITY_CHANGED` 全仓命中 **1 处**：§8 行 640（E24-C2）「身份变化（换脸） | QC 报 `IDENTITY_CHANGED`；`policy_auto` 被拒」。没有这个 check_id 的任何定义——它既不在 S35 的 check 表里，也不在 S36 的。S36 §5.1 行 186–191 的真实身份类 check_id 是 `VIS.IDENTITY.FACE_DRIFT` / `VIS.IDENTITY.FACE_SWAP_WITHIN_SHOT`（blocker）、`VIS.IDENTITY.BODY_PROPORTION`（major），`checkids` 校验器能从四份 QC 方案里认出 99 个合法 check_id，`IDENTITY_CHANGED` 不在其中。",
+      "why_it_matters": "这两处合起来是「一条质量门在两个方向上都没有可执行的定义」：`policy_auto` 的判据（`identity_invariance_check != 'pass'`）读一个不存在的东西；E24-C2 的断言（`QC 报 IDENTITY_CHANGED`）产生一个不存在的 id。而它们在文档里位置很好——一个在事务的第 3 步、一个在验收矩阵里——所以很容易被当成既有事实。这与 §9 行 665（反模式 5「S12 自己调视觉模型判断身份是否变化，归 S33/S34」）指向的是同一个空洞：那句禁止成立，但被禁止者之外的那个执行者也不存在（CCA-1）。",
+      "consequence": "实现方写 `policy_auto` 门时，`identity_invariance_check` 没有来源，只能：(a) 恒填 `'pass'` → 门永不触发，E24-C2 不可测；(b) 从 `evaluation` 里摸一个可能存在的键 → 键名靠猜，S12 与 S35/S36 之间没有约定，猜错了在运行时静默变成「非 pass」或「键缺失」两种完全不同行为。而 `IDENTITY_CHANGED` 若被实现成真实 check_id，`checkids` 校验器（三段命名 + 四份 QC 方案的取值域）会拒它——也就是说这条验收断言今天写不成可运行的测试。",
+      "fix_shape": "需 owner 定：(1) `identity_invariance_check` 是 `evaluation` 里的键、还是候选表的新列——前者要给 `evaluation` 一个键集（与 CCA-1 的 `quality_gate_ref` 一并），后者要加列并写进 DDL；(2) 取值域（`pass|fail|not_evaluated`？）；(3) E24-C2 的 `IDENTITY_CHANGED` 是否改为 `VIS.IDENTITY.FACE_SWAP_WITHIN_SHOT`（S36 行 187 的真实 id，`blocker`），若是则 §8 行 640 那句要重写；(4) 与 CCA-1 的「质检服务是谁」绑定——这两条都是同一个空洞的两个面。"
+    },
+    {
+      "id": "CCA-6",
+      "summary": "§2 开头立下「所有表的主键/唯一约束含 `tenant_id`（E28）」，而同一节的 outbox 唯一键正是四个列名里唯一没有 `tenant_id` 的那个——这句规则在 48 篇方案里 36 篇不成立、只有 S03 / S04 两篇成立",
+      "stated_rule": "§2 行 107：「Postgres，schema `costume_assets`。所有表含 `tenant_id`，主键/唯一约束含 `tenant_id`（E28）。RLS 作为第二道防线（docs/14 §2）。」同一句话在 S11 行 92、S13 行 106、S14 行 155、S15 行 159 一字不差地出现五次。",
+      "actual_ddl": "§2.7 行 296–302 的 outbox：`tenant_id text NOT NULL`（行 298，有这一列）但唯一键是行 301 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`——**不含 `tenant_id`**。`costume`（行 126 `PRIMARY KEY (tenant_id, costume_id)`）、`costume_revision`（行 165 `PRIMARY KEY (tenant_id, costume_id, revision)`）、`costume_candidate`（行 240）、`canonical_pointer`（行 253）、`revision_reference`（行 276）都含，`idempotency_record`（行 293）含，`inbox`（行 308）的主键是 `(consumer, event_id)` 也不含。所以「所有表」这条规则在 S12 自己的 7 张表里有 2 张不成立。",
+      "repo_wide": "48 篇方案逐一扫 `UNIQUE (…aggregate…)` 形态的 DDL 行：**36 篇是 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`（S24 / S25 / S26 把列名写成 `aggregate_seq`），这一行里都没有 `tenant_id`**；**2 篇带了 `tenant_id`——S03 行 366 与 S04 行 366 的 `UNIQUE (tenant_id, aggregate_id, aggregate_seq)`**；其余 10 篇（S07 / S09 / S16 / S17 / S21 / S27 / S41 / S42 / S43 / S44）没有这张表的 DDL 行，无法判定。`inbox` 更一致：**35 篇的主键是 `PRIMARY KEY (consumer, event_id)`，无一带 `tenant_id`**，另 13 篇没有 inbox 的 DDL 行。所以这不是 S12 抄错，而是**规则与模板从源头就不一致**：outbox / inbox 是基础设施表，36 篇按同一个形状写，而 §2 那句规则是按业务表写的。S03 / S04 是例外——它们与这句规则一致、与其余 36 篇不一致，**同一条规则在同一份文档集里有两种落地**，这才是要裁的东西。",
+      "is_it_a_bug": "实践上多半不是：`costume_id` 的 DDL 注释是 `-- 'cos_01J...'`（行 114），ULID 全局唯一，跨租户撞 id 只是理论问题。**但约束没有承载它依赖的那个前提**：如果将来有人改用租户内自增或语义名（事件示例与读响应用的正是语义名 `cos_linlan_reddress`，见 `costume_ref` 那条 description），这个唯一键立刻变成跨租户碰撞点——而 `tenant_id` 就在同一行的左边，加进去零成本。",
+      "why_it_matters": "这类问题的价值不在于「有个 bug」，而在于**一句被五次复制的规则句在 36 篇里都不成立、只在 2 篇里成立**，且没人发现。E28（跨租户拒绝）是验收矩阵里的硬项：按行 107 去审，这 36 篇的 outbox 都不合规、S03 / S04 合规；按各自 DDL 去实现，会做出两种 outbox。两种读法都能在文档里找到依据——这正是 AGENTS.md 说的「契约与文档冲突，停下报告，不要自行选边」。",
+      "consequence": "若按行 107 实现（给 outbox 唯一键加 `tenant_id`），每个服务的 outbox 形状就与其余 36 个不同，中继（S08 §6.4 按 `partition_key` 单线程发布）在跨服务代码复用时要处理两种 DDL——S03 / S04 已经先走了一步，所以这不是「将来可能两种」，而是「今天就有两种」；若按行 296–302 实现，则行 107 那句是假的，且它出现的五次都在 §2 的开头、被当作全局前提。前者是局部正确换全局不一致，后者是全局一致换一句假话。",
+      "fix_shape": "需 owner 定（全仓一条）：(1) 行 107 那句是「所有**业务**表」还是「所有表」——若是前者，把 `outbox` / `inbox` 显式排除并说明理由（基础设施表、`aggregate_id` 全局唯一）；若是后者，36 篇的 outbox 唯一键都要加 `tenant_id`，且要评估对中继的分区语义有何影响；(2) 顺带明确 `aggregate_id` 的全局唯一性是不是一条契约——它现在只是 DDL 注释里的 `cos_01J...`；(3) **S03 / S04 与其余 36 篇的差异是现成的对照**：先确认这两篇是有意为之还是又一次复制漂移，再决定其余 36 篇跟哪边。本 schema 不涉及此表，只记录。"
+    },
+    {
+      "id": "CCA-7",
+      "summary": "「哪一类服装可以没有 canonical」这条规则只在散文里（行 141–143），DDL 与事件都表达不了它；于是 `canonical_revision=null` 在 `character_outfit` 上是一份违规数据，在 `generic_wardrobe` 上是常态，而两者在载荷里长得一样",
+      "prose_rule": "§2.1 行 141：「`generic_wardrobe` 允许 `canonical_revision IS NULL`，因为背景人物的服装不需要全剧一致的唯一基准 —— 强行要求会让 500 个背景角色的登记成本爆炸。」行 143 是它的展开。反面在 §1.4 行 93–101：「同一角色的多套服装，每套各自有 canonical。不存在『角色的唯一服装』」，示例给三套各一个 canonical。",
+      "ddl_does_not_say_it": "§2.1 行 122 `canonical_revision integer,`——无 `NOT NULL`、无 CHECK；行 128 的 `canonical_within_head CHECK (canonical_revision IS NULL OR canonical_revision <= current_revision)` 对 `NULL` 恒真。所以 `costume` 表允许任何 `costume_kind` 有 `NULL` canonical，也允许 `generic_wardrobe` 有 canonical。DDL 与散文的差距是双向的。",
+      "event_cannot_distinguish": "本事件的 8 个键里，`costume_kind` 与 `canonical_revision` 都在，所以**订阅方在理论上可以**自己补这条规则：`costume_kind != 'generic_wardrobe'` 且 `canonical_revision IS NULL` → 数据可疑。但没有任何一处文档要求它这么做，`became_canonical=false` + `canonical_revision=null` 在两种类别下都是合法载荷。本 schema 也**不**加这条 if/then——那会把一条散文意图变成比 DDL 更严的契约，与「收 enum 要有真 CHECK 依据」是同一条纪律的反向。",
+      "why_it_matters": "这是 S12 与 S11 的一个真实差异：S11 的 `identity_kind` 是 `NOT NULL` 真 CHECK（行 103 三值），所以「哪种角色必须有 `rights_ref`」这类规则至少挂在一条硬约束上；S12 的 `costume_kind` 虽有真 CHECK（行 118–119），但**由它派生的那条规则没有任何约束承载**。于是「背景服装可以没有权威版本」这条降本决策，全靠实现者读过行 141。",
+      "consequence": "下游会遇到一个具体问题：`GET /costumes/{id}/canonical`（行 430）对 `generic_wardrobe` 返回什么？行 547 的错误码表有 `404 CANONICAL_NOT_SET`，所以「没有 canonical」是一等状态——但那是错误码，不是正常返回。于是一个 `generic_wardrobe` 的正常查询会被表达成 404，调用方无法区分「这类服装本来就没有」与「这套 `character_outfit` 的 canonical 丢了」。S17 若要做「背景人物服装一致」（§11.2 行 705 的未决第 3 条正在问这件事），它需要能区分这两种情况。",
+      "fix_shape": "需 owner 定：(1) `canonical_revision IS NULL` 是否该按 `costume_kind` 加 CHECK（`costume_kind = 'generic_wardrobe' OR canonical_revision IS NOT NULL`）——这是把行 141 变成约束，代价是行 143 说的「成本」不变但登记路径更严；(2) `GET .../canonical` 对 `generic_wardrobe` 该返回 404 还是一个正常的「无 canonical」表示（若后者，`CANONICAL_NOT_SET` 的语义要缩窄）；(3) 与 §11.2 行 705 的未决第 3 条一并裁——那条正是问「`generic_wardrobe` 是否真的不需要 canonical」。本 schema 不加 if/then，只记录。"
+    }
+  ]
+}

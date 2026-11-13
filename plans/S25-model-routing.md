@@ -469,14 +469,17 @@ CREATE TABLE degradation_option (
 
 -- Outbox：与 route_decision 同一本地事务写入，保证 decision 与 model.route.selected 不脱节
 CREATE TABLE outbox (
-  id            bigserial PRIMARY KEY,
-  aggregate_id  text NOT NULL,          -- route_id
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id     text NOT NULL,          -- 事件信封 required
+  aggregate_id  text NOT NULL,                  -- route_id
   aggregate_seq bigint NOT NULL,        -- route_decision.revision
   event_type    text NOT NULL,          -- model.route.selected
+  partition_key text NOT NULL,          -- tenant_id || ':' || aggregate_id
   payload       jsonb NOT NULL,
+  headers       jsonb NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
   published_at  timestamptz,
-  UNIQUE (aggregate_id, aggregate_seq)
+  UNIQUE (aggregate_id, aggregate_seq, event_type)
 );
 CREATE INDEX ix_outbox_unpublished ON outbox (id) WHERE published_at IS NULL;
 ```

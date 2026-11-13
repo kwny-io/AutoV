@@ -25,4 +25,8 @@
 ## MCP scope
 
 docs/13 定义了 read / plan / execute / review / admin 五档 scope。
-**注意**：`contracts/mcp-tools.v2.design.json` 目前没有 scope 字段，实施时需要先补上契约与文档的对齐。
+`contracts/mcp-tools.v2.design.json` 的 12 个工具**都带 `required_scope`**（read 4 / execute 4 /
+plan 1 / review 1 / admin 1 / **publish 1**），但两处对不上，实施前要由 owner 定：
+`drama.delivery.publish` 用的 `publish` 是五档之外的第六个值；工具清单本身也不一致
+（docs/13 具名 13 个，JSON 12 个，交集 8 个）。逐条差异见
+[contracts/README.md 缺口 2](../contracts/README.md)。

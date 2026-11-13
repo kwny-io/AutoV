@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/connector.observation-received.v2.schema.json",
+  "title": "connector.observation.received payload v2",
+  "description": "event `connector.observation.received` 的 data 部分。权威定义在 plans/S27-provider-connectors.md §6.5（行 587–608，完整示例）与 §9.2（行 681–685，发布语义）。**这条事件是 S26 的上游闭环**：S27 发的每一条都是「供应商那边现在是什么样」，S26 据此推进 job 状态机（S26 §10 行 199 起）。所以本 schema 刻意**不做语义裁决**——它不判断「这条观测该让 job 变成什么」，那由 S26 的状态机决定；它只约束 S27 能发出什么形状。**`aggregate_id` 可以为空**：关联不上时是 `UNMAPPED`（§6.4 行 580–581），事件仍然要发，不能因为挂不上 job 就静默丢弃——那是 docs/16 E17「回调早到」的落点。本 schema 不含从 S26 状态机反推的字段；S27 里没有出处的字段见 x-needs-owner。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§6.5 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "channel_route": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.5 行 596（示例 `seedance/volcengine`）+ §11 DDL 行 786（`connector_observation_outbox.channel_route text NOT NULL`）+ §5.2 DDL 行 414。**取值不是自由字符串**：它是 `connectors/<vendor>/<product>` 的目录路径，九个 `connector.yaml` 的 `channel` 字段就是这套名字（§12 行 808）。本 schema 不收 enum：渠道是 catalog 驱动的（`contracts/service-catalog.v2.json` → `connectors/*/*/connector.yaml`），把九个值冻进 payload schema 会让「新增一个渠道」变成一次契约变更，而这明明是一次 catalog 变更。`retired` 渠道（如 `sora/historical`，§2 行 60）理论上不该出现在这条事件里——S27 对它没有消费者——但那是路由层的拒绝，不是本 schema 该拦的。"
+    },
+    "dispatch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.5 行 597（示例 `dsp_...`）+ §5.2 DDL 行 411（`dispatch_id text NOT NULL UNIQUE`，注释「幂等锚点」）。**这是 S27 自己的幂等锚点**：§5.2 行 406 说即使 claim 被重放，第二次 INSERT 也会撞唯一约束。它同时也把这条观测绑回**哪一次提交**——同一个 `provider_job_ref` 在重发场景下可能对应不同 `dispatch_id`，所以观测带 `dispatch_id` 才能回答「这是对哪一次付费提交的回执」。§5.4 行 488 的 `connector_client_key_index` 也存这个字段。**不是 S26 的 job id**。"
+    },
+    "stable_client_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.5 行 598（示例 `dr-…`）+ §5.2 DDL 行 415（`stable_client_key text NOT NULL`）+ 唯一索引 `ux_receipt_client_key`（行 431）。**它是跨重发的稳定身份**，供应商侧一旦接受就放进幂等头或 metadata（§5.4 行 478–480 三种 `provider_idempotency` 模式）。**注意本计划内部有一处命名不一致**：§3.5 的 `get_status` 请求体（行 237）与回执查询接口（行 572 `correlate`）用的是 `client_key`，事件与 DDL 用 `stable_client_key`——两者是否同一个量全文没有明说，见 x-conflicts PCR-2。本 schema 取事件里的名字。"
+    },
+    "provider_job_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：§6.5 行 599（示例 `task_abc`）+ §5.2 DDL 行 421（`provider_job_ref text`，**可空**）+ §5.4 行 488。**必须可 null**：`submit` 的 `rejected` / `not_sent` / `unknown` 三种结论都拿不到供应商 id（§5.3 行 443–446 只对 `accepted` 要求「能解析出 `provider_job_ref`」），而那些结论同样要发观测——例如 `unknown` 是 `SUBMISSION_UNKNOWN` 的入口，S26 必须知道。所以 null 不是数据缺失，是「供应商没给我们 id」。消费方不得把 null 当作错误。"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "poll",
+        "callback"
+      ],
+      "description": "来源：§6.5 行 600（示例 `\"poll\" | \"callback\"`，竖线枚举）。**这个字段决定观测的可信度与代价**：`callback` 是供应商主动推（§674–679 的四种 requested 事件里有 `connector.status.requested` 触发 `get_status`，那是 `poll`）；`poll` 花了 S27 的一次出站调用，`callback` 没花。§6.4 行 575 明说**回调可能先于 submit 的响应到达**（docs/16 E17）——那种情况下这条观测是 `callback` 且 `provider_job_ref` 可能还关联不上。只有两个值，两处一致（示例行 600 与 §10 的 poll/callback 区分），故收 enum。"
+    },
+    "observed_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§6.5 行 601（示例 `...`）+ §3.5 行 243（`get_status` 响应里同名同义）。**这是供应商侧的时刻，不是 S27 收到的时刻**——两者在 `callback` 迟到时可能差很久，而 `poll` 时基本同时。本 schema 只收非空字符串而不收 `date-time` format：S27 全文没有把格式写成约束，而「用供应商给的时间还是本地时间」这个选择会影响乱序判定（S26 用例 T26 系列），不是本 schema 该替它定的。见 x-needs-owner。"
+    },
+    "provider_status_raw": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：**只有 §6.5 行 602 的示例**（值 `SUCCESS`）。它是供应商自己的状态字面量，原样透传。**这是排障与对账的唯一原始证据**：§4（行 361）要求 `fromNativeStatus` 把供应商状态映射到平台状态，而映射表（§4 行 366–374）写着「待实测」——一旦某个渠道的真实状态值不在映射表里，`provider_status_raw` 就是能回答「供应商到底说了什么」的那一项。本 schema 只收非空字符串，**不能**收窄成任何集合（那等于替九个渠道分别定义闭集，而 §4 行 375 明说「以上均未执行任何 API 调用或账户能力验证」）。"
+    },
+    "status": {
+      "type": "string",
+      "description": "来源：§6.5 行 603（示例 `succeeded`）+ §3.5 行 241（`queued|running|succeeded|failed|canceled|not_found`，6 值，竖线枚举）+ §4 行 361（`fromNativeStatus` 必映射到这 6 值之一）。**这里刻意不收 enum，理由是文档自相矛盾**：行 361 同一句话又说「**未知状态值必须报 `inconclusive`，不能猜**」——那就成了第 7 个值，而 6 值列表里没有它。`inconclusive` 在本仓库别处是一等状态（S24 `combination_probe.result` 行 237、S26 `reconcile.outcome` 行 521），所以它不是笔误。收 6 值会拒掉 §4 自己要求发出的值；收 7 值则要替 S27 决定「6 值列表是漏写还是 `inconclusive` 走别的字段」。见 x-conflicts PCR-1。**`not_found` 尤其不能被翻译成 `failed`**：§3.5 行 264 明说「两者含义完全不同」，前者是 S26 §7.3 对账的关键信号。"
+    },
+    "terminal": {
+      "type": "boolean",
+      "description": "来源：§6.5 行 604（示例 `true`）+ §3.5 行 244（`get_status` 响应同一字段）。**它声明的是「这个状态还会不会变」，不是「成功还是失败」**：`failed` / `canceled` / `not_found` 是终态，`not_found` 甚至可能只是供应商还没建好任务（S26 §7.3 用它做对账）。§6.5 的示例里 `status: succeeded` 配 `terminal: true`，但两者是独立字段——`running` 配 `true` 是矛盾组合，本 schema 不校验这一对（S27 没写这条不变量，写进 schema 等于替它定）。消费方不得用 `terminal` 判断成功，必须看 `status`。"
+    },
+    "output": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§6.5 行 605（示例 `{ \"manifest\":[ ... ] }`）+ §3.5 行 254–261（`succeeded` 时的 `output` 形状）。**本 schema 只约束到「对象或 null」，不锁键集**，因为三处形状互不相同且都不完整：§6.5 的示例只写了 `manifest`；§3.5 行 254–261 给出 manifest 元素的八个字段（`role` / `url` / `url_expires_at` / `sha256` / `bytes` / `content_type` / `width` / `height` / `duration_seconds`——九个，其中 `role` 的取值全文没有闭合）但没说 `output` 是否还有别的键；而 `provider_usage` 在 §3.5 行 260 是**嵌在 `output` 里**的，在 §6.5 行 606 却是**与 `output` 平级**——同一个字段两个位置，见 x-conflicts PCR-3。猜一个键集会把没定义过的东西冻成契约，见 x-needs-owner。**`output` 非空不等于成功**：它只是「供应商给了输出」，采纳与否由 S26/S28 决定。"
+    },
+    "provider_usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "来源：§6.5 行 606（示例 `{...}`——**省略号，没有字段**）+ §3.5 行 260（示例 `{ \"generated_seconds\": 5, \"currency\":\"USD\" }`）。**位置冲突见 PCR-3**：§3.5 把它放在 `output` 内部，§6.5 放在平级。**计量口径冲突见 PCR-4**：`generated_seconds: 5` 是供应商计费的依据之一，而 S26 §12/§13 的费用结算走 S23 账本——`provider_usage` 若被当成计价依据就与「S23 是唯一钱权威」冲突（AGENTS.md）。所以本 schema 只收对象，不锁键，且**不声明它可用于计价**。`currency` 是三字母码还是别的，全文没写。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "channel_route",
+    "dispatch_id",
+    "stable_client_key",
+    "provider_job_ref",
+    "source",
+    "observed_at",
+    "provider_status_raw",
+    "status",
+    "terminal",
+    "output",
+    "provider_usage"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`output` 的对象形状（含 `manifest` 元素的字段集与 `role` 闭集）",
+      "demanded_by": "plans/S27-provider-connectors.md §6.5 行 605、§3.5 行 253–261；消费侧 S26 §10 行 223（「观测终态成功 + 有输出 manifest 摘要」）与 S28 `POST /artifact-imports`",
+      "s27_status": "`manifest` 元素在 §3.5 行 256–258 有九个字段的示例，但那是**示例**不是定义：`role` 只出现 `\"video\"` 一个值，§10 的测试清单里也没有其它角色；`url_expires_at` 的格式未写；`sha256` 在行 257 是裸 `\"...\"`，而 §3.5 说它是供应商给的——本仓库其它契约里 `sha256` 一律是 `^[0-9a-f]{64}$`，供应商给的原始值会不会带前缀没人验证过。更根本的是 **S28 才是归档方**（S26 §10 行 227 说 `PROVIDER_SUCCEEDED → INGESTING` 靠调 S28 的 `POST /artifact-imports` 携带供应商 URL + TTL），所以 `output` 的真实形状应该由 S27 ⇄ S28 的归档契约决定，而不是由这条事件决定。要补需要 owner 先定 manifest 元素的 schema，再决定这条事件是原样透传还是只带一个引用。本 schema 只收对象。"
+    },
+    {
+      "field": "`observed_at` 的格式与时钟来源",
+      "demanded_by": "plans/S27-provider-connectors.md §6.5 行 601、§3.5 行 243",
+      "s27_status": "两处都只写 `\"...\"`。没有说它是 RFC3339、供应商的本地时间还是 S27 观测到的时刻；也没有说 `callback` 迟到时该用哪一个。这不只是格式问题：S26 消费观测时要处理乱序与重复（docs/16 的乱序/缺失事件验收项），而乱序判定的输入就是这个时间。若某渠道给的是无时区的本地时间，跨时区比较会静默错序。本 schema 只收非空字符串，不收 `format: date-time`，因为收窄会拒掉 S27 现在已经能发的形态。"
+    },
+    {
+      "field": "`provider_usage` 的键集，以及它是否进入费用结算",
+      "demanded_by": "plans/S27-provider-connectors.md §6.5 行 606（`{...}`）、§3.5 行 260（`{generated_seconds, currency}`）",
+      "s27_status": "事件示例里是一对省略号，唯一有字段的出处是 §3.5 的 `get_status` 响应示例——两个值，一个数量一个币种。**是否参与计价没有写**，而这是一个权威问题：AGENTS.md 规定 S23 是唯一钱权威，S27 若在契约里声明一个「供应商报的秒数」，下游很容易拿它乘单价算出金额，那就出现了第二个计价源。要补需要 owner 明确 `provider_usage` 是**观测原文**（供 S23 参考，不构成金额）还是**计费输入**（那它必须带可追溯的报价引用）。本 schema 只收对象，且描述里不声明任何计价语义。"
+    },
+    {
+      "field": "`dispatch_id` 与 `stable_client_key` 在重发场景下的关系",
+      "demanded_by": "plans/S27-provider-connectors.md §5.2 行 406–431（两条唯一约束）、§5.4 行 478–482（三种 `provider_idempotency`）、§6.4 行 578–581（关联顺序）",
+      "s27_status": "两个字段都必发，但**它们谁是重发场景的稳定锚点没有统一说法**：§5.2 行 411 说 `dispatch_id` 是「幂等锚点」，行 431 的 `ux_receipt_client_key` 又说「同一个 `stable_client_key` 也只能有一条回执」（注释称其为「第二重保护」）；而 §5.4 行 479–481 说 `client_lookup_only` 模式下重发由 S26 决定、`unsupported` 模式下重发就是新任务。于是「一次提交」到底是 `dispatch_id` 还是 `stable_client_key` 的粒度，取决于渠道模式——事件同时带两者，但没写消费方该按哪个去重。S26 用错粒度会要么把两次真实提交当成一次（漏账），要么把一次提交的重放当成两次（重复计尝试）。要补需要 owner 按 `provider_idempotency` 三模式各给一条去重规则。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PCR-1",
+      "summary": "`status` 说是 6 个值，同一句话又要求未知值报 `inconclusive` —— 第 7 个值不在列表里",
+      "s27_list": "§3.5 行 241：`\"status\": \"running\",  // queued|running|succeeded|failed|canceled|not_found` —— 六值竖线枚举",
+      "s27_rule": "§4 行 361：「`fromNativeStatus` 必须把供应商的所有状态映射到 6 个平台状态之一（`queued|running|succeeded|failed|canceled|not_found`）。**未知状态值必须报 `inconclusive`，不能猜。**」",
+      "repo_context": "`inconclusive` 在本仓库是通行的一等状态：S24 的 `combination_probe.result` CHECK 收 `supported|unsupported|inconclusive`（S24 行 237），S26 的 `reconcile.outcome` CHECK 收 `found|not_found|inconclusive|unsupported|error`（S26 行 521）。所以它不是随便写的词。",
+      "why_it_matters": "两种读法都让某一侧落空。若 `inconclusive` 是 `status` 的第 7 个值，那行 241 的注释与行 361 的「六值」就都写错了，而 S26 的状态机（S26 行 199–239 的转移表）没有任何一行处理 `inconclusive` 观测——它要怎么走？若 `inconclusive` 不在 `status` 里，那「未知状态值必须报 `inconclusive`」这句话就没有落点，S27 实现者面对未知供应商状态时只有两个选择：猜一个 6 值（行 361 明令禁止）或抛错（那这条观测就发不出去，而观测发不出去意味着 S26 永远停在 RUNNING 直到 deadline）。本 schema 因此两个都不收窄成 enum，保留 S27 能发任何一种的自由，把选择留给 owner。要定的是：`inconclusive` 是否进 `status`，以及进了之后 S26 怎么处理。"
+    },
+    {
+      "id": "PCR-2",
+      "summary": "同一个东西两个名字：`get_status` 里叫 `client_key`，事件与 DDL 里叫 `stable_client_key`",
+      "s27_event": "§6.5 行 598：`\"stable_client_key\":\"dr-…\"`；§5.2 DDL 行 415：`stable_client_key text NOT NULL`；行 431 唯一索引 `ux_receipt_client_key`",
+      "s27_api": "§3.5 行 237：`{ \"provider_job_ref\": \"task_abc\", \"client_key\": \"dr-…\" }`；§6.4 行 571–572：`correlate(event): { client_key?: string; provider_job_ref?: string }`",
+      "why_it_matters": "两条路径上只有名字不同，含义看起来一致（都是「我们放在供应商 metadata 里的那个稳定 key」，§6.4 行 578 原文）。但契约层的差别是实打实的：`stable_client_key` 已在事件里被 schema 化（本文件），而 `client_key` 只活在两段 jsonc 示例与一个 TS 接口里。若实现者按 `get_status` 的示例去读事件里的 `client_key`，会拿到 undefined 并静默当作「没有稳定 key」——那正好退化成 §6.4 关联路径的第 2 步（只按 `provider_job_ref` 查回执），在回调早到（E17）时直接关联失败。要定的是统一名，以及 `correlate` 接口的返回键名。"
+    },
+    {
+      "id": "PCR-3",
+      "summary": "`provider_usage` 在两处示例里位置不同：§3.5 嵌在 `output` 内，§6.5 与 `output` 平级",
+      "s27_api": "§3.5 行 253–261：`\"output\": { \"manifest\": [...], \"provider_usage\": {\"generated_seconds\": 5, \"currency\":\"USD\"} }` —— `provider_usage` 是 `output` 的子键",
+      "s27_event": "§6.5 行 605–606：`\"output\": { \"manifest\":[ ... ] },\n    \"provider_usage\": {...}` —— 与 `output` 平级",
+      "why_it_matters": "本 schema 按 §6.5（事件侧）把它放平级，因为那是这条事件的定义处。但 §3.5 是 `get_status` 的响应契约，S27 实现「把响应转成观测」那一步时，两个位置都说得通：照抄响应就把 usage 留在 `output` 里，照抄事件就提出来。**两种都会通过本 schema 的校验**（`output` 不锁键集），于是同一个渠道可能产出两种形状，而下游读 `data.provider_usage` 的那一方只认平级——`output` 里那份会被静默忽略，费用观测丢失却不报错。要定的是唯一位置；若 §3.5 的响应确实嵌在里面，则需要写明转换步骤。"
+    },
+    {
+      "id": "PCR-4",
+      "summary": "`provider_usage` 报供应商的计费秒数，但 S23 是唯一钱权威，这条事件没划清界线",
+      "s27_field": "§3.5 行 260：`\"provider_usage\": {\"generated_seconds\": 5, \"currency\":\"USD\"}`；§6.5 行 606：`\"provider_usage\": {...}`",
+      "s26_side": "S26 §10 行 219 / 行 224 / 行 414：结算发生在 `PROVIDER_SUCCEEDED` / `PROVIDER_FAILED` / `CANCELED` 之后，费用已确定，走账本",
+      "invariant": "AGENTS.md：「让某个服务变成第二个权威（例如自己记一份余额……）」是绝对禁止项；`plans/S39-repair-planning.md` §4.5 行 331 把同一条原则写成「S39 若声称『这个修完还剩 X 预算』就是第二权威——禁止」",
+      "why_it_matters": "`generated_seconds` 是一个**看起来可以直接乘单价**的数，而它来自供应商自己。如果下游（S26 或 S23）拿它算金额，就把「供应商自报」变成了计价依据，而报价是 S25 出的、账本是 S23 记的——三份数字里没有一份是对得上的强制关系。这不是学究区别：供应商报的秒数与报价时的时长档（§4 行 370 的 `5s/10s`）在超时或截断时会不一致，那时到底按谁收费必须有唯一答案。本 schema 只声明它是**观测原文**、不声明任何计价语义，并在描述里点明。要定的是：它是「供 S23 参考的供应商自报」还是「S23 必须采用的计费输入」——若后者，它就需要带上可追溯到 S25 报价的引用，否则账本无法解释自己为什么记了这笔钱。"
+    },
+    {
+      "id": "PCR-5",
+      "summary": "`UNMAPPED` 观测的 `aggregate_id` 为空，而分区键被写成 `tenant_id || ':' || aggregate_id`",
+      "s27_partition": "§11 DDL 行 790：`partition_key text NOT NULL,  -- tenant_id || ':' || aggregate_id`；行 787：`aggregate_id text,  -- 可关联时填上游 id，否则 NULL（UNMAPPED）`",
+      "s27_behavior": "§6.4 行 580–581：关联不上 → `state='UNMAPPED'`，保留 24h，等 submit 回执到达后回填；超过 24h → 告警 + dead-letter，**不丢弃**",
+      "why_it_matters": "注释把分区键定义成 `tenant_id || ':' || aggregate_id`，而两个来源字段（行 787 的 `aggregate_id`、行 788 的 `aggregate_sequence`）都**可空**。在 `UNMAPPED` 路径上 `aggregate_id` 是 NULL，那么这条注释要么会生成 `\"tenant:\"` 这种退化键（所有 unmapped 观测挤在同一分区、同一 tenant 下互相争序列），要么在实现时拼出 NULL 并违反 `NOT NULL`。这不是理论情况：E17「回调早到」正是这条路径，而它是 docs/16 的必测项。更深一层，`aggregate_id` 空意味着**这条事件不能按 job 排序**，S26 收到后要靠 `stable_client_key` 挂起（S26 §7.3）——事件契约本身没有字段说明「这是一条挂起的观测」，消费方只能从 `aggregate_id` 为空推断。要定的是：unmapped 观测的分区键用什么，以及是否需要一个显式的 `mapping_state` 字段而不是让下游从 null 推断。"
+    },
+    {
+      "id": "PCR-6",
+      "summary": "事件宣称 `aggregate_id = provider_job_id`，但 §6.5 示例填的是 `pj_...`，而字段名叫 `provider_job_ref`",
+      "s27_claim": "§9.2 行 683：「`type = connector.observation.received`，`aggregate_id = provider_job_id`（可空）」",
+      "s27_example": "§6.5 行 593：`\"aggregate_id\":\"pj_...\"`；行 599：`\"provider_job_ref\":\"task_abc\"`",
+      "why_it_matters": "`provider_job_id`（`pj_` 前缀，平台侧 job id）与 `provider_job_ref`（`task_abc`，供应商侧任务 id）是**两个不同的 id**，而文档在紧邻的两段里各用一个。S26 §10 行 1014 也说 `generation.job.state-changed` 的 `aggregate_id = provider_job_id`——那说明平台侧确实有 `pj_` 这个 id 体系。于是问题变成：观测事件的 `aggregate_id` 该填平台 job id（`pj_`）还是供应商任务 id？两者在 `UNMAPPED` 之前平台 job 可能还不存在（这正是 E17 的情形），所以只能填 `provider_job_ref`；但那样 §9.2 的「= provider_job_id」就是错的，而且同一条流里 `connector.observation.received` 与 `generation.job.state-changed` 的 `aggregate_id` 口径不一致——S47 投影按 `aggregate_id` 归并时会分裂成两个聚合。本 schema 不涉及 envelope 的 `aggregate_id`（它是 envelope 字段，不在 payload 里），但这条事件的消费者必须知道该按哪个 id 归并。要定的是：两个 id 各自的分区与归并职责。"
+    },
+    {
+      "id": "PCR-7",
+      "summary": "S27 要求 envelope 的 `aggregate_id` / `aggregate_sequence` 可空，可 envelope 两者都是必填且 `sequence >= 1`",
+      "s27": "§6.5 行 593–594：`\"aggregate_id\":\"pj_...\",  // 能关联上就填，否则为空（UNMAPPED）` / `\"aggregate_sequence\": null,  // 由 S26 分配`；§9.2 行 683：「`aggregate_id = provider_job_id`（可空）」；行 611：「`aggregate_sequence` 由 S26 分配而不是 S27——因为 S27 看不到 job 的完整序列」",
+      "envelope": "`contracts/event-envelope.v2.schema.json`：`aggregate_id` 是 `string` / `minLength 1`，`aggregate_sequence` 是 `integer` / `minimum 1`，**两者都在 `required` 里**（行 108–116）",
+      "why_it_matters": "这不是文档风格问题，是这条事件**有一部分情形根本发不出来**。`UNMAPPED` 路径（§6.4 行 580–581，docs/16 E17「回调早到」）恰恰是 `aggregate_id` 为空的情形，而 envelope 的 `additionalProperties: false` + required 列表让 `null` 与「省略该键」都过不了校验。于是 S27 只有三条路：伪造一个 id（污染分区与归并）、不发这条观测（那 E17 就无法被处理，S26 会在 deadline 前一直停在 `RUNNING`）、或者让 envelope 校验在出站前失败（观测积压）。`aggregate_sequence` 同理：S27 明确说它**看不到**完整序列、无资格分配，但 envelope 要求它必填 ≥1。本示例因此填了 `1`，那是一个占位——它不来自 S27 的任何真实知识。要定的是：观测事件是否该有「不可关联」的 envelope 形态（例如放开这两个字段的 required，或改用 `stable_client_key` 作 `aggregate_id`），以及 `aggregate_sequence` 在 S27 侧该填什么。"
+    }
+  ]
+}

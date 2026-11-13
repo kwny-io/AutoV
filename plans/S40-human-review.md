@@ -1,6 +1,6 @@
 # S40 · 人工审核与接管 —— 实现方案
 
-状态：`design_only` 服务的实现规格。本文不含业务代码，目标是"照此可以直接写"。所有容量与 SLO 数字仍是 docs/03 的规划值，**未实测**。
+状态：`implemented（内核）`。内核（`src/human_review/`）、HTTP 层（`api/app.py`）、S01/S02/S08 适配（`deps.py`）与 53 个用例已落地并全绿。所有容量与 SLO 数字仍是 docs/03 的规划值，**未实测**；与契约的 5 处冲突与 11 处缺口见 §13。
 
 依据：docs/06（核心）、docs/04 §1–§2、docs/07 §4、docs/11 §3、docs/13 §3、docs/14 §1、docs/16 §5、`contracts/openapi.v2.yaml`（`decideReview`）、`contracts/execution-context.v2.schema.json`、`contracts/episode-manifest.v2.schema.json`、`contracts/examples/service-interactions.yaml`（`accept_script_to_memory`）。
 
@@ -598,9 +598,51 @@ review_quorum_state(
 
 review_assignment_event(tenant_id, review_task_id, seq, kind, from_principal, to_principal,
                         reason, at)   -- 分派/认领/委派/收回，只 INSERT
-
-outbox(...), inbox(consumer, event_id, ...), idempotency_key(...)
 ```
+
+**基础设施表**（与 [S08 §6.4](S08-revision-snapshot.md) 同构）：
+
+```sql
+CREATE TABLE human_review.idempotency_record (
+  tenant_id text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code integer, response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE human_review.outbox (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id text NOT NULL, aggregate_id text NOT NULL  /* review_task_id */, aggregate_sequence bigint NOT NULL,
+  event_type text NOT NULL, partition_key text NOT NULL, payload jsonb NOT NULL,
+  headers jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON human_review.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE human_review.inbox (
+  consumer text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
+```
+
+**`review.decision.recorded` 与 `review_decision` 行必须同一本地事务。** 这是 §5「决定生效」
+的前提：若事件先于落库发出，S08 会收到一个查不到的决定；若落库先于事件，决定永久停在
+`RECORDED` 而无人推动下游。
+
+`aggregate_id = review_task_id`，`aggregate_sequence = review_task.revision`。
+
+**注意 S40 的 outbox 承担两类写入，不要混：**
+
+| 用途 | 语义 | 对应 §5.1 |
+|---|---|---|
+| 发布 `review.decision.recorded` | 与决定落库同事务的正常 outbox | 主路径 |
+| S08 不可达时的重试 | `status` 停在 `RECORDED`，**按同一 `command_id` 重试 S08** | 失败路径 |
+
+第二类**不是** outbox 重发：那是本地持久重试队列，重试的是对 S08 的 CAS 调用，不是重发事件。
+两者共用 `outbox` 表容易在实现时混淆，所以 §5.1 的重试表单独记录 `attempt_count` 与
+`next_attempt_at`，且**绝不**因为 S08 不可达而把决定降级为本地接受。
 
 ### 10.2 事件
 
@@ -709,3 +751,84 @@ outbox(...), inbox(consumer, event_id, ...), idempotency_key(...)
 - 缺口 G1（`decideReview` 无法表达 6 种决定）是**阻塞实现**的：当前 schema 下 `replace` / `change_spec` / 例外接受只能靠改契约或塞进 `reason`。建议优先解决。
 - 缺 G5（无 review-task schema）：§2/§3 的结构是本文档提案，需固化为契约后再生成代码。
 - `quorum` 与职责分离的规则归属（S02 gate 规则 vs S40 任务字段）需要与 S02 所有者对齐；本方案假定规则在 S02、状态在 S40。
+
+---
+
+## 13. 实现记录：与方案/契约的偏离
+
+按 AGENTS.md「契约与文档冲突 → 停下，报告冲突，不要自行选边」，本节只登记冲突与
+处理方式。缺口的机器可读副本在 `src/human_review/schema.py::CONTRACT_GAPS`，每次
+建任务/读任务都随响应带出（`x-contract-gaps`）。
+
+### 13.1 闸序偏离（实现主动选择）
+
+§6.2 的伪代码把「终态 → 历史留档」排在幂等之前。那样做，同一 `command_id` 的
+重试会在终态判定后撞 `UNIQUE(tenant_id, command_id)`，变成 500。平台幂等是更强的
+不变量，所以实现顺序是：
+
+```
+闸 B（expected_task_revision）→ 幂等 → 一人一票 → 终态 → 闸 A（绑定）→ 闸 D（授权）→ S02
+```
+
+闸 B 提前是因为它是纯读校验、不落库；幂等必须早于一切写。
+
+### 13.2 与契约的冲突（C40-1…C40-5）
+
+| 编号 | 冲突 | 处理 |
+|---|---|---|
+| C40-1 | `decideReview.decision` 只许 `accept\|reject\|request_repair`，`additionalProperties: false`；docs/06 §3 要的 `replace` / `change_spec` / 例外接受无处安放 | `decision` 守契约三值，UI 按钮走 `option_id`（本服务自定字段）。`decision='replace'` → `400 CONTRACT_DECISION_REQUIRED`，**不**静默降级成 reject |
+| C40-2 | `context: execution-context.v2` 的 18 个必填字段装不下 `lock_version` / `artifact.content_hash` / `pack_hash`；§6.3 七维只到四维 | 信封照收，四维真查，另三维写进 `binding_dimensions_unchecked`。**不是**"校验通过" |
+| C40-3 | 响应声明为 `Operation`（202 异步），本服务同步落库 | 同步返回决定本体；只有 S08 接受这一步是异步的，暴露为 `pending_acceptance` |
+| C40-4 | 无建/列/读任务的契约路径，也无重试队列 | `POST/GET /review-tasks`、`GET /decisions/{id}`、`GET /acceptance-retries`、`:retry-acceptance`、`:expire-due` 按方案 §2 提供，无契约 |
+| C40-5 | §11 E25-07 要求 `options[].effect.advances_pointer` 永不为 true，但选项结构没有 schema（G5）、契约里也没有 `effect` 字段 | `create_task` 直接拒（`400 OPTION_CLAIMS_POINTER_ADVANCE`）。**不**静默抹成 false —— 抹掉会让「某个生产者以为 S40 能替它接受」这件事消失 |
+
+### 13.3 上游能力缺口（G1…G11）
+
+| 编号 | 缺口 | 处理 |
+|---|---|---|
+| G2 | 只有 `POST .../decisions` 有契约 | 见 C40-4 |
+| G3 | §6.4 要节点级 manifest 差异 | **部分解决**：S08 已有 `GET /manifests/{id}/node-diff`。注入后按节点判定；未注入时退化为「revision 变即 stale」，更严 |
+| G4 | 只声明了 `review.decision.recorded` | 待办队列与超时告警只能轮询 |
+| G5 | 无 `review-task.v2` / `review-decision.v2` schema | §2/§3 的形状按本文实现，仍是提案 |
+| G6 | quorum 与职责分离只在 docs/06 §3 的散文里 | `assignment.quorum` 取自任务载荷；规则判定交给 S02 |
+| G7 | S02 **没有** `validate_review_decision`（只有 `/policy-decisions:resolve-effective`、`/permission-checks`） | 判定注入为回调；未配置时**一律 abstain**（503），不当 allow |
+| G8 | S01 `/authorization-context` 返回 `permissions` 而非 roles，且按 `scope_kind/scope_id` 收窄 | 用 `review.decide` 权限键；职责分离只能落到 `actor.roles` 的声明上 |
+| G9 | 方案 §5 的**单个** `request_acceptance_CAS` 不存在 | `deps.py` 执行 S08 真实两步（`/evidence/review` → `/manifests/{id}:accept`），把 S08 错误码归一化到方案的四种结果；5xx/传输失败原样抛出，内核保持 `RECORDED` 并进本地重试队列 |
+| G10 | S08 把 `content_hash` 当不透明串存 | 决定的内容哈希权威在 S40（`sha256` over canonical fields） |
+| G11 | reject / request_repair 不推进指针（S08 `_check_decision_against` 拒非 approved） | 归一化为第四种结果 `recorded_only`：任务 → `DECIDED`，但 `accepted_pointer_written_by=null` |
+
+### 13.4 方向复查结论
+
+对照常设四条：
+
+- **(a) 方案承诺的命令/查询/错误码** —— §2–§7 的方法与 §11 表中点名的错误码全部在
+  代码里。§11 有几条（E25-01…05、E05 四档、E07-06 policy_ref 全量 supersede）需要
+  跨服务真相，不在本服务的可用证据内，**未实现为测试**，见 13.5。
+- **(b) 是否变成第二权威** —— 否。`APPLIED` 全仓只有一处写入
+  （`apply_downstream`，有 AST 断言守着）；`accepted_revision` / `acceptance_commit_id`
+  只从 S08 响应转发，不在本地计算或保存。S40 不存余额、不存 accepted pointer。
+- **(c) AGENTS.md 红线** —— 无跨库写入、无跨服务 ORM import（只依赖
+  `idempotency_sdk` / `event_sdk` 两个平台 SDK 走 HTTP）；无模型直连；无付费调用；
+  请求体里的 `tenant_id` 只用于比对，不一致即 403。
+- **(d) 版本语义** —— `execution_fence` 与 `node_epoch` 在 `compare_binding` 里是
+  两个独立的比较项（`HARD_BINDING_FIELDS`），各自产出自己的 stale 原因；测试
+  `test_node_epoch_and_execution_fence_are_checked_independently` 分别只动一个来
+  证明。旧 epoch 的结果永远到不了 `APPLIED` —— 唯一入口是 S08 的 `committed`。
+
+复查中发现并已修掉四条实现缺陷：选项谎报 `advances_pointer`、
+`SUPERSEDED`/`EXPIRED` 终结不发事件、事件缺 `task_state`、扁平 ctx 被误判成契约
+信封而在响应里谎报「只查了四维」。
+
+### 13.5 未验证
+
+- **SLO 全部未实测**。`service.yaml` 的 `verified` 保持 `false`。
+- 本服务没有真实 S01/S02/S08 实例可打：测试用按**真实接口形状**写的桩
+  （S01 返回 `permissions` 不带 `roles`；S08 两步 evidence+accept）。桩能证明归一化
+  逻辑，不能证明线上联调。
+- §11 未落地的用例：E05-01…04（四档模式门是 S22/S29 的真相）、E25-01…04（QC 全
+  abstain 与三档超时的上游判定）、E07-06 的「policy_ref 变化让现有任务全量
+  SUPERSEDED」（需要 S02 的策略变更事件驱动，S40 目前只有方法 `supersede`，
+  没有事件订阅）。
+- C-09（两人并发投票只有一个满足 quorum）未覆盖：`BEGIN IMMEDIATE` 保证串行化，
+  但没有并发测试。
+- C-06 的告警阈值与 `DOWNSTREAM_BLOCKED` 事件未实现（G4）。

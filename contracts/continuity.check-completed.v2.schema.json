@@ -1,0 +1,400 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/continuity.check-completed.v2.schema.json",
+  "title": "continuity.check.completed payload v2",
+  "description": "event `continuity.check.completed` 的 data 部分。权威定义在 plans/S17-continuity.md §5.2（行 337–365，完整示例）、§1.2（行 54–75，report DDL）、§1.3（行 82–113，defect DDL）、§2（行 189–219，17 个 category）、§2.3（行 220–240，severity/disposition 规则表）、§6（行 386–406，abstain 路径）。**这条事件是 S39 的跨集冲突入口**：S39 §11 C8（行 923）点名「S17 的 `ContinuityReport` 没有 schema 定义，S39 也未订阅其事件；否则跨集冲突永远到不了修复决策」。所以本 schema 的目标是让这条报告**能被 ingest 并被路由**，而不只是能被解析。**S17 不决定谁来修**（§1.3 行 115：`fault_hypothesis`/`fault_owner_service` 是假设）——本 schema 只约束形状，不约束推断质量。§5.2 的示例缺两个 S39 路由必须的字段，见 x-conflicts CCT-2；本文件的示例补上了它们，并说明来源。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§5.2 的示例未画这一项（示例只画 data 内部字段），按 contracts 既有 payload 约定补。"
+    },
+    "check_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.2 行 346（示例 `chk_...`）+ §1.1 DDL 行 28（`check_id text NOT NULL`，与 `command_id` 一起构成幂等索引 `check_run_idem`，行 46）。**这是 S39 路由的第一跳**：S39 §3.1 行 82 写 `entry = registry[defect.check_id]`，即用 `check_id` 去 S39 自己那份 check-registry 里查登记项。**但 S17 的 `check_id` 不在那张表能容纳的命名空间里**——见 x-conflicts CCT-4。本 schema 只要求非空字符串，不收 `chk_` 前缀 pattern：S17 全文没有把前缀写成约束（§5.2 的 `chk_...` 是示例），而收窄会让其它前缀的既有实现直接被拒。"
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.2 行 347（示例 `rep_...`）+ §1.2 DDL 行 56（`report_id text NOT NULL`，主键 `(tenant_id, report_id)`）。**它是这条事件真正指向的实体**：`data` 里只有摘要，完整报告（§5.1 行 335 的 `continuity_report` + `defect[]` + `expected_state[]` + `exemption_application[]`）要按这个 id 回查。所以 `data_ref.id` 必须等于它——见 envelope 的 `data_ref`。`check_id` 与 `report_id` 是一对多的关系（同一 check 因 checkpoint 推进可重跑出新报告，§7.2 行 425 用 `supersedes_report_id` 串起来），事件每次都带两者而不是只带 check_id，就是为了让消费方知道这是**哪一次**的结果。"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "pass_with_warnings",
+        "defects",
+        "abstained"
+      ],
+      "description": "来源：§1.2 DDL 行 63（`verdict text NOT NULL,  -- pass|pass_with_warnings|defects|abstained`，四值竖线枚举）+ §5.2 行 348（示例 `defects`）+ §9.4 行 507（「coverage = 0.6 → verdict 最高 `pass_with_warnings`，不能 `pass`」）。**四值不许压成布尔**，`pass_with_warnings` 与 `defects` 的区别是「有告警」与「有需要修的缺陷」，而 `abstained` 是「没检查」，三者对下游的含义完全不同（§1.2 行 77：「『没发现问题』和『没检查』必须能被区分」）。收 enum 的依据是 DDL 注释的逐一列举，与本仓库 S40 `status` 的处理同口径（README 行 132–136）。**与 S39 的 `decision` 词表不通用**，见 x-conflicts CCT-7。"
+    },
+    "severity_max": {
+      "type": "string",
+      "enum": [
+        "none",
+        "info",
+        "low",
+        "medium",
+        "high",
+        "blocking"
+      ],
+      "description": "来源：§1.2 DDL 行 64（`severity_max text NOT NULL,  -- none|info|low|medium|high|blocking`，六值竖线枚举）+ §5.2 行 349（示例 `blocking`）+ §1.3 DDL 行 88（缺陷级 5 值，无 `none`）+ §9.4 行 503–504（`blocking` / `medium` 两个实际断言）。报告级之所以比缺陷级多一个 `none`，是因为零缺陷报告也要回答「最高严重度是什么」，而空集的最大值只能记 `none`。**这套词表与 S39/S35/S36 那套 `blocker|major|minor|info` 不通用**，见 x-conflicts CCT-1——这不是排版差异，`blocking` 与 `blocker` 差一个字母，字符串比较会静默错判。"
+    },
+    "defect_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§1.2 DDL 行 65（`defect_count integer NOT NULL`）+ §5.2 行 350（示例 `2`）。`minimum: 0` 不是照抄 DDL（`integer` 在 PostgreSQL 里本来就允许负值），而是语义上的下界：计数没有负数。**它不必然等于 `defect_summary` 的长度**——§2.3 行 240 说低置信度的 record「仍进报告且计入 `abstain_count`」，即被 abstain 的候选也算进了报告，但它们算不算 `defect_count` 全文没写清，见 x-needs-owner NCO-5。"
+    },
+    "abstain_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§1.2 DDL 行 66（`abstain_count integer NOT NULL`）+ §5.2 行 351（示例 `1`）+ §6 行 395（abstain 路径下 `abstain_count=全量候选`）。**它度量的是「这次检查有多少候选没能判定」**，是 S17 特有的量：S35/S36/S37 的报告里没有对应字段，因为它们不做「先证明合法再报缺陷」的两段判定。`abstain_count > 0` 而 `verdict: pass` 是可能且合法的（少量候选没判定、其余全过），所以本 schema 不写跨字段不变量——那需要 owner 先定语义，见 NCO-5。"
+    },
+    "coverage_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "来源：§1.2 DDL 行 68（`coverage_ratio numeric(4,3) NOT NULL`）+ §5.2 行 352（示例 `0.94`）+ §7.1 行 414（定义式 `Σ(covered_shot_duration × weight) / total_duration`）+ §9.4 行 507。**收 0..1 而不是照抄 `numeric(4,3)` 的 0.000–9.999**：定义式是「覆盖时长 / 总时长」，商天然 ≤ 1；`numeric(4,3)` 只是存三位小数的列宽，不是值域。这与 `quality.semantic-completed` / `quality.alignment-completed` 对同类字段的处理一致（两份都收 0..1）。**它是「没检查」与「查了没问题」的唯一区分器**（§1.2 行 77 与 §7.1 行 416：< 0.85 不得 `pass`），所以必须发，不允许作为可选优化。"
+    },
+    "memory_checkpoint": {
+      "type": "object",
+      "description": "来源：§1.1 DDL 行 35（`memory_checkpoint jsonb NOT NULL,  -- {branch_id, commit_sequence, content_hash}`）+ §1.2 DDL 行 62 + §5.2 行 353（示例 `{\"commit_sequence\": 27, \"content_hash\": \"...\"}`）+ §6 行 406（`CHECKPOINT_MISMATCH`）。**这是整条报告的地基**：它声明「这次检查读的是正史的哪一刻」，而 §1.1 行 49 要求它必须与 manifest 声明的一致，§6 行 404 说水位不够就整条 abstain 而不是拿旧 checkpoint 凑合。**名字与 S16 不一致**：S16 §3.7 行 512 的同一概念叫 `checkpoint_hash`，见 x-conflicts CCT-5。",
+      "properties": {
+        "branch_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源：§1.1 DDL 行 35 的注释键集里有它，§5.2 行 353 的示例没有。**不收进 required**：两处不自洽，而缺 `branch_id` 的报告在单分支项目上仍然可用（S16 §1 行 68 的 head 是按 series+branch 计的，不写 branch 就只剩默认分支一种读法）。见 x-conflicts CCT-5。"
+        },
+        "commit_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "来源：§1.1 DDL 行 35 + §5.2 行 353（示例 `27`）+ S16 §1 行 132（「genesis：`commit_sequence = 0`」）。**`minimum: 0` 而不是 1**：S16 的 genesis 就是 0，一个尚未提交任何 claim 的 series 上跑连续性检查是合法场景（检查会因没有期望状态而 abstain，不是报错）。收 1 会把 genesis 报告拒掉。类型是 S16 的 `bigint`，本 schema 用 JSON `integer`——超过 2^53 的情形不在这个量级。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "来源：§1.1 DDL 行 35 的键集 + §5.2 行 353（示例 `\"...\"`）+ S16 §1 行 132（`checkpoint_hash = sha256(\"memcp/v2/genesis\\n\"+series_id+\"\\n\"+branch_id)`，即 64 hex）。**收 `^[0-9a-f]{64}$` 是本仓库统一口径**（`context-pack` / `enterprise-change-plan` / envelope `data_ref` 全是裸 hex），而 S16 明确它是 sha256。不收窄的话「同一 checkpoint」的相等比对会因前缀或大小写而失败，那正好触发 §6 的 `CHECKPOINT_MISMATCH` 全线 abstain——一次格式漂移变一次停检。"
+        }
+      },
+      "required": [
+        "commit_sequence",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "manifest_ref": {
+      "type": "object",
+      "description": "来源：§5.2 行 354（示例 `{\"id\":\"manifest_ep3\",\"revision\":4,\"content_hash\":\"...\"}`）+ §1.2 DDL 行 61（`manifest_ref jsonb NOT NULL`）+ §1.1 DDL 行 34（`manifest_ref`，「被检查的 manifest」）。**它和 `memory_checkpoint` 一起构成可复现性**：一个说「查的是哪版剧本结构」，一个说「读的是哪刻正史」；缺任一个，报告都无法复算。三键形状与 `episode-manifest` / `enterprise-change-plan` 的 `base_manifest_ref` 一致。**注意 DDL 的 `manifest_ref` 可空性与事件不同**：§1.2 行 61 是 `NOT NULL`，§1.1 行 34 也是，故本 schema 收 required。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "manifest 的 id，来源 §5.2 行 354（`manifest_ep3`）。不收前缀 pattern：S17 未定义 manifest id 的生成规则（那是 S03/S06 的事）。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "manifest 版本号，来源 §5.2 行 354（`4`）。`minimum: 1` 与 `event-envelope` 的 `data_ref.revision` 同口径。"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "manifest 内容哈希，来源 §5.2 行 354（`\"...\"`）。收裸 hex 的理由同 `memory_checkpoint.content_hash`：它是相等比对的输入，不是给人看的展示值。"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "defect_summary": {
+      "type": "array",
+      "description": "来源：§5.2 行 355–362（示例两条）+ §1.3 DDL 行 82–113（完整 defect 表）+ §1.2 行 65（`defect_count`）。**这是摘要不是全量**：DDL 里 defect 有 20 列（含 `expected` / `observed` / `confidence` / `disposition` / `suppression_reason` / `entity_ids`），事件只带 S39 路由所需的那几项。**这不是偷懒，是权威划分**：完整缺陷要按 `report_id` 回查（§5.1 行 335），事件里的摘要是「够不够路由一眼」，不够就必须回查而不是把 20 列抄进事件——抄了就有了两个会漂移的缺陷定义。**示例是 §5.2 的形状**，本文件在此基础上补了 `fault_hypothesis` 与 `evidence_refs`（两者 DDL 都有、§5.3 的路由与证据规则都要求，但 §5.2 的示例没画），见 CCT-2 / CCT-3。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "defect_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：§5.2 行 356（示例 `d_1`）+ §1.3 DDL 行 85（`defect_id text NOT NULL`，「稳定 ID，跨重检可关联」）+ §7.2 行 424（`stable_defect_key = sha256(category|shot_id|entity_id|predicate)`）。**稳定是硬要求**：§7.2 行 425 说重检时按它统计 `new / resolved / still_present`——如果 id 每次重跑都变，这三个统计全部失真，团队就看不出「修复到底有没有生效」。本 schema 只收非空字符串，不收 `d_` 前缀，也不要求它就是 `stable_defect_key` 的 sha 值：§7.2 只定义了那个派生式，没说 `defect_id` 必须等于它。"
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：§5.2 行 356 / 行 359（示例 `KNOWLEDGE_VIOLATION` / `INJURY_REGRESSION`）+ §1.3 DDL 行 86（`category text NOT NULL,  -- 见 §2`）+ §2.1 行 195–206（文本池 10 个）+ §2.2 行 210–218（多模态池 7 个）+ §9.4 行 501–506（断言了 `PROP_VISUAL_MISMATCH` / `MISSING_EVIDENCE`）。**刻意不收 enum**：§2 两张表列了 17 个，但 §9.4 行 506 又出现 `MISSING_EVIDENCE`、§7.1 行 416 出现 `coverage_gap`——两个都不在表里，且看不出是「漏登记」还是「另一类」。收 17 值会拒掉 §9.4 自己规定必报的类别；收 19 值等于把两处散文提升成契约。见 x-conflicts CCT-6。"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high",
+              "blocking"
+            ],
+            "description": "来源：§1.3 DDL 行 88（`severity text NOT NULL,  -- info|low|medium|high|blocking`，五值竖线枚举，**无 `none`**）+ §5.2 行 356 / 行 359（示例 `blocking` / `high`）+ §2.3 行 232–238（规则表产出 `blocking` / `high` / `medium` / `low`）+ §9.4 行 503–504。缺陷级比报告级少 `none`，因为一条被记录的缺陷不可能「无严重度」——§2.3 行 230–231 里被 suppress 或 abstain 的候选标的是 `—`，即根本不进 severity 列。"
+          },
+          "shot_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：§5.2 行 356 / 行 359（示例 `shot_3_2_1` / `shot_3_2_3`）+ §1.3 DDL 行 101（`shot_id text`，**可空**）。**这里收 required 但 DDL 允许 NULL**：缺陷的定位列在 DDL 是二选一（`shot_id` / `scene_id`，行 101–102），而猫在场景级的缺陷（如 `THREAD_ABANDONED`，§2.1 行 201，观察整套剧本）没有单镜头。所以严格说 `shot_id` 与 `scene_id` 应当互斥可选；本 schema 保留 `shot_id` 为必填是因为 §5.2 的两条示例都有它，而把「场景级缺陷」的形态留给 owner——见 x-needs-owner NCO-5。**不要用一个假 shot_id 来满足它**：那会让 S39 按镜头归因到错误的单元（§4.3 行 217 的归因键含 `shot_lineage_id`）。"
+          },
+          "claim_ref": {
+            "type": "object",
+            "description": "来源：§5.2 行 357 / 行 360（示例 `{\"id\":\"claim_chenmo_identity\",\"revision\":3}`，**两个键**）+ §1.3 DDL 行 99（`claim_refs jsonb NOT NULL DEFAULT '[]'`，**数组**）+ §1.4 行 127（`source_claim_ref`「必须带 S16 claim ref + revision + hash」）。**三处三个形状**：§5.2 是单个只有 id+revision 的对象，§1.3 是数组，§1.4 要求带 hash。本 schema 取 §5.2 的单对象形态（事件侧），但把 `service_id` 与 `content_hash` 收成可选——这样一份完整的 S16 四键引用（`context-pack` 里 `claim_refs` 的元素形状）也能通过校验，不必为发事件而丢掉哈希。见 x-conflicts CCT-5。",
+            "properties": {
+              "service_id": {
+                "type": "string",
+                "pattern": "^S[0-9]{2}$",
+                "description": "可选。S16 §3.7 行 515 的 `changed_claim_refs` 元素带这一项；§5.2 的示例不带。收 `^S[0-9]{2}$` 与 `context-pack.v2.schema.json` 的 `claim_refs` 一致。"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "claim 的 id，来源 §5.2 行 357（`claim_chenmo_identity`）。"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "claim 版本，来源 §5.2 行 357（`3`）。`minimum: 1`：S16 §1 行 98 的 `commit_sequence` 从 1 起（genesis 0 是分支头，不是一条 revision）。"
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "可选。S16 §3.7 行 515 每个 ref 都带 `content_hash`；§5.2 的示例省略了（示例用 `\"...\"` 省略风格）。没有它，S39 无法证明「这条缺陷是拿哪个版本的 claim 判出来的」——而 §7.2 行 426 的可测确定性正依赖同输入。"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "additionalProperties": false
+          },
+          "suggested_action": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：§5.2 行 358 / 行 361（示例 `rewrite_dialogue_or_add_reveal` / `regenerate_shot_with_injury_state`）+ §1.3 DDL 行 108（`suggested_action text,  -- repair_hint，S39 决定是否采纳`）+ §5.3 行 380（**「S17 只给 `suggested_action` 提示，不给修复计划……不是可执行指令」**）。**所以它必须是非约束字符串，不能收成 S39 的 `action_enum`**：值是自由描述（两条例子里没有一个是 `action-families.v2.json` 的 14 个动作名），而把它当动作名去路由，会让「S17 的措辞」变成修复路径。S39 必须自己结合尝试上限、预算、`node_epoch` 决定（§5.3 行 380）。"
+          },
+          "fault_hypothesis": {
+            "type": "string",
+            "enum": [
+              "generation",
+              "asset",
+              "script",
+              "memory",
+              "edit",
+              "unknown"
+            ],
+            "description": "**§5.2 的示例没有这个字段，但 §5.3 的路由全靠它**：§5.3 行 369「S39 消费 `continuity.check.completed`，按 `fault_hypothesis` 分派」，行 371–378 的六行分派表就是这个值的六个取值（`script` / `shot` 类走 S06、`asset` 走 S11–S15、`generation` 走 S29–S31、`edit` 走 S41/S42、`unknown` 走人审）。来源：§1.3 DDL 行 106（`fault_hypothesis text,  -- generation|asset|script|memory|edit|unknown`，六值竖线枚举，**可空**）+ §1.3 行 115（「是假设，不是判定」）。**收 optional 而不是 required**：DDL 可空，§5.2 的示例也没有；但**收 enum**，因为 DDL 逐一列举了六个值且 §5.3 的分派表正好六行。见 x-conflicts CCT-2——一条没有这个字段的缺陷，S39 按现行文档无法路由。"
+          },
+          "fault_owner_service": {
+            "type": "string",
+            "minLength": 1,
+            "description": "**§5.2 的示例同样没有，而 §5.3 的分派表左列就是它**（行 373–378：S04 / S06 / S11–S15 / S29–S31 / S41·S42 / unknown）。来源：§1.3 DDL 行 107（`fault_owner_service text,  -- 推测责任方（S29/S31/S11/S04/...），S17 不判定`）。**不收 enum**：DDL 注释自己用 `...` 结尾，明示这个集合是开放的（S11–S15 是区间、还可能新增服务）；而 `unknown` 在 §5.3 表里是一个合法值却不是服务 id，收 `^S[0-9]{2}$` 会把它拒掉。**它是推测，不是归属**（§1.3 行 115）——S39 不得用它当派单依据，只能当排序提示；真正的重活是 §5.3 行 382 的证据要求。"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "description": "**§5.2 的示例没有，但 §5.3 把它写成硬约束**：行 382「若 `fault_hypothesis = script` 且 severity = blocking，S17 必须同时在 `evidence_refs` 里附上剧本 source span，否则 S39 无法定位。缺 span 的阻塞缺陷 → `needs_human`」。来源：§1.3 DDL 行 95–97（`evidence_refs jsonb NOT NULL`，注释里逐一列出 10 个键：`kind, service_id, id, revision, content_hash, shot_id, timecode_start_ms, timecode_end_ms, frame_hash, memory_claim_ref`）。**元素只锁这 10 个键而不锁必填集**：注释是「形状清单」不是「每条必填」，多模态证据有 `frame_hash` 没有 `service_id`（关键帧的归属仍待定），文本证据反之。见 x-conflicts CCT-3。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "证据种类，来源 §1.3 行 95。**不收 enum**：全文没有列举合法值（示例也不带这个字段），而常见值至少横跨 `script_span` / `keyframe` / `video_segment` / `audio_segment` / `claim` 五类，收窄就是替 S17 定闭集。"
+                },
+                "service_id": {
+                  "type": "string",
+                  "pattern": "^S[0-9]{2}$",
+                  "description": "证据的持有服务，来源 §1.3 行 95。收 `^S[0-9]{2}$` 与 `context-pack` / envelope `data_ref` 一致。"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "证据实体 id，来源 §1.3 行 95。"
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "证据版本，来源 §1.3 行 95。"
+                },
+                "content_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "证据内容哈希，来源 §1.3 行 95。收裸 hex 与全仓库一致。"
+                },
+                "shot_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "证据所在镜头，来源 §1.3 行 95。"
+                },
+                "timecode_start_ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "证据起止（毫秒），来源 §1.3 行 96。`minimum: 0`：负时间码没有含义。**与 `timecode_end_ms` 的先后关系不校验**：S39 §4.2 步骤 2g 要求 `time_range.end > start`，但那是 QC 报告的时间窗，S17 未写这条不变量。"
+                },
+                "timecode_end_ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "证据结束时间码，来源 §1.3 行 96。理由同 `timecode_start_ms`。"
+                },
+                "frame_hash": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "关键帧感知哈希，来源 §1.3 行 97。**不收 `^[0-9a-f]{64}$`**：它是感知哈希（§2.2 行 213「关键帧 + 感知 hash」），长度由算法决定，与 sha256 无关；收 64 hex 会把常见的 pHash 值直接拒掉。"
+                },
+                "memory_claim_ref": {
+                  "type": "object",
+                  "description": "关联的 S16 claim 引用，来源 §1.3 行 97（键名 `memory_claim_ref`，单数）。形状按 `claim_ref` 处理：`id` + `revision` 必填，`service_id` + `content_hash` 可选（S16 §3.7 行 515 的四键形态也能通过）。",
+                  "properties": {
+                    "service_id": {
+                      "type": "string",
+                      "pattern": "^S[0-9]{2}$",
+                      "description": "可选，S16 的 claim 引用带它。"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "claim id。"
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "claim 版本。"
+                    },
+                    "content_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "可选，claim 内容哈希。"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revision"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "defect_id",
+          "category",
+          "severity",
+          "shot_id",
+          "claim_ref",
+          "suggested_action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "**只在 `verdict: abstained` 时出现**：§6 行 396（`{ verdict: 'abstained', reason: 'MEMORY_WATERMARK_BEHIND' }`）+ 行 406（`CHECKPOINT_MISMATCH`，「整个 check `abstained`」）。**收 optional 而不做条件必填**：另两条 abstain 路径（§2.3 行 231 的低置信度、§7.1 行 416 的 coverage 不足）都没有说要带 `reason`，如果写成 `if verdict == abstained then required`，这两条路径产出的合法事件就会被拒。**也不收 enum**：目前只有 §6 明写的两个码，其它 abstain 原因要不要编码、编成什么，全文没有闭合集——见 x-needs-owner NCO-2。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "check_id",
+    "report_id",
+    "verdict",
+    "severity_max",
+    "defect_count",
+    "abstain_count",
+    "coverage_ratio",
+    "memory_checkpoint",
+    "manifest_ref",
+    "defect_summary"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`category` 的闭集（§2 的 17 个 + 表外的 `MISSING_EVIDENCE` / `coverage_gap`）",
+      "demanded_by": "plans/S17-continuity.md §2.1 行 195–206、§2.2 行 210–218、§9.4 行 501–506、§7.1 行 416；消费侧 plans/S39-repair-planning.md §3.1 行 82（`registry[defect.check_id]` 的登记项按 `defect_type` 归族）",
+      "s17_status": "§2 的两张表按「文本逻辑池 / 多模态池」各列了一套类别，共 17 个，看起来是完整清单。但 §9.4 的验收表行 506 要求「缺失资产（关键帧/视频/音频）→ 逐项记 `MISSING_EVIDENCE`」，§7.1 行 416 要求「`coverage_ratio < 0.85` → 写 `coverage_gap` 缺陷」——**这两个都不在 17 个里**。可能有两种解释：它们是 `category` 的另外两个值（那就是 19 个），或者它们是另一个维度（「数据不足」而非「内容矛盾」，即 `disposition=needs_human` 的固定搭配）。本 schema 不能替 S17 选，因为选了会影响 S39 的路由：如果 `MISSING_EVIDENCE` 是一个 category，它应该有自己的 defect_type 和动作族；如果它只是「这条没法判」，它根本不该进 `defect_summary` 而应计入 `abstain_count`。要补需要 owner 定：闭集是哪几个值、`MISSING_EVIDENCE` 与 `coverage_gap` 属于哪一边，以及新增类别的登记流程。"
+    },
+    {
+      "field": "`reason` 的闭集，以及哪些 abstain 路径必须带它",
+      "demanded_by": "plans/S17-continuity.md §6 行 396、行 406；§2.3 行 231；§7.1 行 416",
+      "s17_status": "§6 明写两个码（`MEMORY_WATERMARK_BEHIND` / `CHECKPOINT_MISMATCH`），且都出现在「整个 check 转 abstained」的路径上。但 §2.3 行 231 的低置信度 abstain 是**逐条缺陷**级别的 abstain（「abstain 记录仍进报告且计入 `abstain_count`」），§7.1 的 coverage 不足也不是整条 abstain 而是降级到 `pass_with_warnings`。于是 `reason` 到底是「报告级 abstain 的原因」还是「也给缺陷级 abstain 用」没有说清，闭集也没有。本 schema 只收非空字符串且不条件必填，就是不想在语义未定时拒掉 S17 现在能发的形态。要补需要 owner 定：码表、是否闭合、以及 `verdict: abstained` 时 `reason` 是否恒必发。"
+    },
+    {
+      "field": "`fault_owner_service` 的值域，以及 `unknown` 是否合法",
+      "demanded_by": "plans/S17-continuity.md §1.3 行 107、§5.3 行 371–378；消费侧 plans/S39-repair-planning.md §5.3 行 380（S39 结合尝试上限与预算决定）",
+      "s17_status": "DDL 注释是 `S29/S31/S11/S04/...`——以显式省略号结尾，说明作者知道这个集合会增长。§5.3 的分派表左列出现了 `S11–S15`（区间写法）和 `unknown`（不是服务 id）。三件事没定：(1) 是不是只允许 `S` 前缀的服务 id；(2) `unknown` 是合法值还是「空」的另一种写法（DDL 可空，两种写法会并存）；(3) 区间服务（`S11–S15`）实际该填哪一个——填区间是没法做字符串匹配的。本 schema 只收非空字符串。要补需要 owner 定值域与 `unknown` 的规范化写法。"
+    },
+    {
+      "field": "`defect_summary` 是否含被 suppress / abstain 的候选，以及 S39 需要的报告级字段是否要进事件",
+      "demanded_by": "plans/S17-continuity.md §2.3 行 230–240、§1.2 行 65–68、§7.2 行 425；消费侧 plans/S39-repair-planning.md §4.3 行 217（归因键）、§5.2（聚合去重）",
+      "s17_status": "§2.3 行 230 说命中合法例外 → `suppress`，行 231 说低置信度 → `abstain`，行 240 补充「abstain 记录仍进报告且计入 `abstain_count`」。但「进报告」进的是 `continuity.defect` 表还是 `defect_summary` 数组，没说；而被 suppress 的候选若进 `defect_summary`，S39 会把已经判定为「合法」的项当缺陷去修——那是最坏的一类误修（改掉导演刻意安排的闪回）。同时，S39 需要的三个报告级量事件都没带：`supersedes_report_id`（§7.2 行 425 要按它统计 new/resolved/still_present）、`covered_scope`（§1.2 行 67 是覆盖率的证据，「只报 pass 不报覆盖率等于把未知当通过」）、`source_revision`（§1.2 行 69）。要补需要 owner 定：摘要数组的过滤规则，以及这三个字段是补进事件还是强制 S39 回查（回查需要 `report_id`，本 schema 有）。"
+    },
+    {
+      "field": "`shot_id` 必填与场景级缺陷（`scene_id`）的关系，以及计数之间的不变量",
+      "demanded_by": "plans/S17-continuity.md §1.3 行 101–102、§1.2 行 65–66、§2.1 行 201（`THREAD_ABANDONED` 观察整套剧本）",
+      "s17_status": "DDL 里 `shot_id` 与 `scene_id` 都是可空（行 101–102），因为有些缺陷不属于任何单镜头——`THREAD_ABANDONED`（伏笔过了 `due_to_tick` 未推进）与 `COSTUME_SWITCH` 的一部分（同场景内）都是场景级或全剧级。本 schema 因为 §5.2 的两条示例都带 `shot_id` 而把它收成必填，这让场景级缺陷无合法表示。同时报告级三个计数（`defect_count` / `abstain_count` / `defect_summary.length`）之间的相等关系没有定义：`abstain_count` 是否同时计入 `defect_count`？被 suppress 的算哪一个？S39 若用 `defect_count` 预估修复成本，口径不清会系统性高估或低估。要补需要 owner 定定位字段的二选一规则与三个甚至四个计数的包含关系。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "CCT-1",
+      "summary": "严重度两套词表：S17 是 `none|info|low|medium|high|blocking`，S39/S35/S36 是 `blocker|major|minor|info`",
+      "s17_side": "plans/S17-continuity.md §1.2 行 64：`severity_max text NOT NULL,   -- none|info|low|medium|high|blocking`；§1.3 行 88：`severity text NOT NULL,  -- info|low|medium|high|blocking`；§9.4 行 503–504 用 `blocking` / `medium` 断言",
+      "s39_side": "plans/S39-repair-planning.md §3.1.1 行 102：`severity_max`「门禁判定：`blocker` 不可自动接受」；§4.5 行 292：`severity_weight: blocker=1000, major=300, minor=80, info=10`；契约侧 `contracts/quality/check-registry.v2.schema.json` 的 `severity_default`/`severity_max` 收 `blocker|major|minor|info`（行 100、104）",
+      "repo_context": "`blocker|major|minor|info` 是四份 QC 服务（S35 §2.2 行 380、522；S36 §2 行 186 起；S37；S38）与 S39 路由共同使用的词表，`contracts/quality/` 下的注册表 schema 也按它校验。`none|info|low|medium|high|blocking` 只在 S17 出现。",
+      "why_it_matters": "这不是排版差异，是**会静默反转严重度**。`blocking` 与 `blocker` 只差两个字母：S39 若按 `blocker` 匹配，S17 报的 `blocking` 落空——而落空后的常见写法是 `severity_weight.get(s, 0)`，那会把「阻断交付」的知识越界排到权重 0，比 `info`（10）还低，于是最该先修的缺陷排在最后。反过来，若 S39 把 S17 的 `high` 映射成 `major`，那 `medium` 该映射成什么？`minor` 还是 `major`？两套词表的中间档没有对应关系（S17 有 low/medium/high 三档中间层，S39 只有 major/minor 两档）。另外 S39 §4.5 行 293 的 `blocking_weight`（「阻断正式交付 +500」）是与 severity 正交的另一个概念，而 S17 恰好把 `blocking` 用在了 severity 上——同一个词在两侧一个指档位、一个指后果。本 schema 按 S17 自己的 DDL 收 6 值（它是该字段的权威），把跨服务映射留给 owner。要定的是：两张词表间的确定映射（含 `medium` 的去向），以及 S39 侧是否加一列显式的 severity 归一化。"
+    },
+    {
+      "id": "CCT-2",
+      "summary": "S39 按 `fault_hypothesis` 分派缺陷，可 §5.2 的事件示例里根本没有这个字段",
+      "s17_event": "plans/S17-continuity.md §5.2 行 355–362：`defect_summary` 的两条元素只带 `defect_id` / `category` / `severity` / `shot_id` / `claim_ref` / `suggested_action`——六个键，没有 `fault_hypothesis`",
+      "s17_rule": "§5.3 行 369：「S39（`repair-planning`）消费 `continuity.check.completed`，按 `fault_hypothesis` 分派」；行 371–378 的分派表以 `fault_owner_service` 为左列、以 `fault_hypothesis` 为依据",
+      "s17_ddl": "§1.3 行 106–107：`fault_hypothesis text` 与 `fault_owner_service text` **都可空**",
+      "why_it_matters": "路由输入不在路由输入的位置上。S39 拿到一条 `defect_summary` 元素，六个键里没有任何一个能回答「这该给谁修、走哪条路径」：`category` 在 S39 那边没有登记项（见 CCT-4），`suggested_action` 按 §5.3 行 380 明说「不是可执行指令」。于是 S39 只有两条路：回查完整报告（`report_id` 指向的 `continuity.defect` 有这两列，本 schema 带 `report_id`）——但那意味着 S39 为每个缺陷多一次 RPC，而 §4.2 的设计是「事件带摘要、摘要够不够路由一眼」；或者按 category 猜——那正好是 §1.3 行 115 禁止的（「S17 不决定谁来修」，S39 也不该从类别反推）。本 schema 把两个字段收成可选（DDL 可空、示例没有），但**示例文件里补上了它们**，因为不补的例子恰恰演示不了这条事件唯一的用途。要定的是：这两个字段是否进事件摘要（若进，是否改成必填），还是 S39 必须回查。"
+    },
+    {
+      "id": "CCT-3",
+      "summary": "§5.3 把 `evidence_refs` 写成阻塞缺陷的硬要求，可事件里没有这个字段",
+      "s17_rule": "plans/S17-continuity.md §5.3 行 382：「**若 `fault_hypothesis = script` 且 severity = blocking，S17 必须同时在 `evidence_refs` 里附上剧本 source span**，否则 S39 无法定位。缺 span 的阻塞缺陷 → `needs_human`，不阻断生成流程」",
+      "s17_ddl": "§1.3 行 95–97：`evidence_refs jsonb NOT NULL,  -- [{kind, service_id, id, revision, content_hash, shot_id, timecode_start_ms, timecode_end_ms, frame_hash, memory_claim_ref}]`——**列级必填**，十个键逐一列出",
+      "s17_event": "§5.2 行 355–362 的 `defect_summary` 元素**不带** `evidence_refs`",
+      "why_it_matters": "§5.3 自己给出了一条完整的降级路径：缺 span → `needs_human` → 不阻断生成。那条路径只有在 S39 能看见「有没有 span」时才能执行。事件里没有 `evidence_refs`，S39 就永远看不见——它只能选择「假设有」（那缺 span 的阻塞缺陷会被当正常缺陷派单，改错剧本）或「假设没有」（那所有 script+blocking 缺陷都被降级成人审，白丢自动化）。两种都与 §5.3 的意图相反。DDL 说它是 `NOT NULL`，说明 S17 侧一定有这个数据；缺的只是事件有没有把它带出来。本 schema 把它收成可选数组（元素锁 DDL 那十个键名、但不锁必填集），因为注释是形状清单而非逐条必填，且多模态证据与文本证据的必填项不同。要补需要 owner 定：事件是否需要带它（若带，一条缺陷的全部证据可能很长，是否只带 span 子集），以及 §5.3 的「缺 span」判定读哪个字段。"
+    },
+    {
+      "id": "CCT-4",
+      "summary": "S39 的 check-registry 只认得四个质检服务，S17 是第五个生产者却进不去",
+      "s39_ingest": "plans/S39-repair-planning.md §4.2 行 205：`i. check_registry 里该 check_id 存在，且登记项通过族校验`；§3.1 行 82：`entry = registry[defect.check_id]`",
+      "s39_failure_path": "§3.1 行 104：「registry 缺失该 `check_id`，或 `default_action ∉ family` …… → 该缺陷按 `human_review` 处理并告警 `registry_entry_invalid_total{check_id}`」；§4.2 行 208 更狠：ingest 时任一校验失败 → `quarantine`，「不生成计划、不 best-effort 解析」",
+      "registry_constraint": "contracts/quality/check-registry.v2.schema.json `x-cross-checks.rules`：「`owner_service` matches the layer: technical→S35, semantic→S36, alignment→S37, subtitle→S38. A layer served by a different service is a registration error, not a new convention.」与「`check_id` namespace must match the layer: TECH→technical, VIS→semantic, AUD→alignment, SUB→subtitle.」",
+      "why_it_matters": "S17 的 `check_id` 是 `chk_` 前缀（§5.2 行 346），`layer` 只能是 technical/semantic/alignment/subtitle 四选一，`owner_service` 只能是 S35/S36/S37/S38 之一——**S17 不在其中，`chk_` 也不在四个命名空间里**。这不是「登记项写得不好」，是注册表的 schema 在结构上不接受 S17。后果取决于 S39 走哪条路径：按 §3.1 行 104，每条连续性缺陷都降级 `human_review`（自动化全丢）；按 §4.2 行 208，整条事件被 quarantine（比降级更糟——报告进了死信，S39 连人审都排不上）。而 §11 C8（行 923）说这条事件的存在意义正是「否则跨集冲突永远到不了修复决策」——照现状它到了门口也进不去。要定的是：注册表是否新增一个 `continuity` layer（连带 `owner_service: S17`、`chk_` 命名空间、以及 `action-families` 里对应的 defect_type），还是 S17 的缺陷走另一条不进 registry 的通道（那要给 §4.2 加一条分支）。**这一条不解决，本 schema 只是让事件能被校验，仍然不能让它被用。**"
+    },
+    {
+      "id": "CCT-5",
+      "summary": "checkpoint 与 claim 引用的形状在三份文档里三种写法",
+      "s17_ddl": "plans/S17-continuity.md §1.1 行 35：`memory_checkpoint jsonb NOT NULL,  -- {branch_id, commit_sequence, content_hash}`——三键",
+      "s17_event": "§5.2 行 353：`\"memory_checkpoint\": {\"commit_sequence\": 27, \"content_hash\": \"...\"}`——两键，**没有 `branch_id`**",
+      "s16_side": "plans/S16-story-memory.md §3.7 行 512：`\"checkpoint_hash\": \"hex...\"`——同一概念叫 `checkpoint_hash`；§3.7 行 519 的 `source_manifest_ref` 是 `{id, revision, content_hash}` 三键",
+      "claim_ref_side": "S17 §5.2 行 357：`{\"id\":\"claim_chenmo_identity\",\"revision\":3}`——**两键**；S17 §1.3 行 99 的 `claim_refs` 是**数组**；S17 §1.4 行 127 要求 `source_claim_ref`「必须带 S16 claim ref + revision + hash」；S16 §3.7 行 515 的 `changed_claim_refs` 元素是**四键** `{service_id, id, revision, content_hash}`",
+      "why_it_matters": "`branch_id` 缺席不是小事：S16 §1 行 68 的 head 是 `(series_id, branch_id)` 的函数，同一个 `commit_sequence` 在不同分支上是不同的历史点（分支只是插一行 `canon_branch`，不复制 claim——S16 §1 行 77）。一份不带 `branch_id` 的报告，「checkpoint 27」在多分支项目上是歧义的，而 §6 的 `CHECKPOINT_MISMATCH` 判定正要比对这个值——比错分支会报假 mismatch，从而整条 check 白 abstain。名字上的 `checkpoint_hash` vs `content_hash` 同理：若 S17 去 S16 的 `memory.canon.committed` 事件里读 `checkpoint_hash` 来填自己的 `content_hash`，按错键名会读到 undefined，而 undefined 写进 `NOT NULL` 列会失败或写成空串——后者听起来像「哈希不匹配」，实际是键名不对。claim 引用一侧更乱：两键 / 三键 / 四键三种形态都出现了，而 §1.4 行 127 的要求（带 hash）与 §5.2 的示例（无 hash）直接冲突。本 schema 取 S17 事件侧的名字（`content_hash`、两键 claim_ref），把缺失的键收成可选，这样任一侧的完整形态都能通过。要定的是：统一键名（`checkpoint_hash` 还是 `content_hash`）、`branch_id` 是否必发、以及 claim_ref 的规范形态。"
+    },
+    {
+      "id": "CCT-6",
+      "summary": "17 个 category 之外，§9.4 与 §7.1 又要求报两个不在表里的类别",
+      "category_tables": "plans/S17-continuity.md §2.1 行 195–206（10 个文本池类别）+ §2.2 行 210–218（7 个多模态池类别）= 17",
+      "outside": "§9.4 行 506：「缺关键帧 → `MISSING_EVIDENCE` + coverage 下降，不静默通过」；§7.1 行 416：「`coverage_ratio < 0.85` → 报告不能是 `pass`……并写 `coverage_gap` 缺陷」",
+      "why_it_matters": "如果这两个值是 category，那 §2 的两张表就不是完整清单，而 S39 要按 category 归族（§3.1 的 `defect_type`）时就会为它们找不到族；如果它们不属于 category 而属于 disposition（`needs_human` 的固定搭配），那 `defect_summary` 里就不该出现它们，而应体现在 `abstain_count` 与 `coverage_ratio` 上——两种读法对下游完全不同：前者要派单，后者要重跑检查（补资产）。§7.1 行 417 还说「缺失资产 → 逐项记 `MISSING_EVIDENCE`，不是静默 skip」，用的是「记」——记进缺陷表还是记进覆盖率，没说。本 schema 因此不收 enum：收 17 会让 §9.4 的验收用例无法通过，收 19 是替 S17 定闭集。要定的是这两个值的归属。"
+    },
+    {
+      "id": "CCT-7",
+      "summary": "`verdict` 与 S39 的 `decision` 是两套词表，`pass_with_warnings` 在 S39 侧没有落点",
+      "s17_side": "plans/S17-continuity.md §1.2 行 63：`pass|pass_with_warnings|defects|abstained`；§9.4 行 507：「coverage = 0.6 → verdict 最高 `pass_with_warnings`，不能 `pass`」",
+      "s39_side": "contracts/quality/ 下三份 QC payload schema 的 `decision` 都是 `pass|repair|human_review|abstain`（如 contracts/quality.technical-completed.v2.schema.json、quality.semantic-completed.v2.schema.json、quality.alignment-completed.v2.schema.json）",
+      "why_it_matters": "S39 的 ingest 是为 `decision` 那套词表写的（§4.2 步骤 2f「decision 与 defects/abstain 自洽」）。收到 `verdict` 时，四个值里 `pass` 与 `abstained` 能对上，`defects` 大致对 `repair`，但 **`pass_with_warnings` 没有对应值**——它是「有告警但不修」，而 S39 的 `pass` 表示「无缺陷」，`repair` 表示「要修」。选 `pass` 会丢掉告警（而 §7.1 加这个状态的初衷正是「coverage 不足时不许报 pass」，把它当 pass 就抹掉了这个区分）；选 `repair` 会给「只是覆盖率低」的报告生成修复计划——那修不了任何东西，因为缺陷是「没看到」而不是「看到错」。更深一层，`pass_with_warnings` 的存在说明 S17 表达的是「报告质量」，而 S39 的 `decision` 表达的是「下一步动作」，两者不是同一个维度。本 schema 按 S17 自己的 DDL 收四值。要定的是：S39 如何处理 S17 的 `verdict`（新增映射、还是 S17 改发 `decision` 加独立的质量标记）。"
+    }
+  ]
+}

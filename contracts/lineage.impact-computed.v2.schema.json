@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/lineage.impact-computed.v2.schema.json",
+  "title": "lineage.impact.computed payload v2",
+  "description": "event `lineage.impact.computed` 的 data 部分。权威定义在 plans/S09-lineage-impact.md §5.4（行 754–776，12 个字段的示例）、§2.3（行 281–319，`impact_analysis` DDL）、§2.3 行 324–339（`result` 聚合结构，即 `analysis_hash` 的哈希对象）、§2.4（行 346–365，`impact_analysis_node` DDL 与 13 值 `reason_code` 闭集）、§1.1（行 44–46，`execution_fence` / `node_epoch` / `lineage_watermark` 三者的分工）、§1.5（行 120–130，EXACT / CONSERVATIVE 的判定）、§3.1（行 476–506，`impact_analysis` 状态机）。**这是本仓库已登记缺口的直接兑现**：S09 §9 的 C09-3 自己写着「`lineage.impact.computed` 在 `event-topics.v2.json` 注册，但**无 payload schema**；§5.4 的字段只能停留在方案里」。**但它同时是本仓库第一类缺口的反面样本：一条事件注册了、也定了字段，却没有任何服务声明消费它** —— 见 LNI-1。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本。§5.4 的示例未画这一项，按 contracts 既有 payload 约定补。"
+    },
+    "analysis_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：§5.4 行 766（示例 `\"analysis_id\":\"ia_...\"`）+ §2.3 DDL 行 283（`analysis_id text NOT NULL`，主键 `(tenant_id, analysis_id)`）。**与 envelope 的 `aggregate_id` 是同一个值**：§5.4 行 754 写「`aggregate_id = analysis_id`」，`aggregate_sequence = 1`（每次分析只发一次）。所以本字段在 payload 里是冗余的——但它不是可选取舍：`data_ref` 为 `null`（行 775），消费方要从 `data` 里拿 id 才能回查 `GET /impact-analyses/{analysis_id}`（§5.3 行 742）。"
+    },
+    "analysis_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "来源：§2.3 DDL 行 297（`analysis_hash text,  -- sha256(JCS(result))`）+ 行 308–309（`CONSTRAINT ia_computed_has_hash CHECK ((status IN ('COMPUTED','EXPIRED')) = (analysis_hash IS NOT NULL))`）+ §5.4 行 766。**收 64 位小写 hex，照本仓库既有约定**（§2.3 DDL 没有类似 S08 `mr_hash_len` 的正则约束，但 `sha256(JCS(result))` 明写了算法；仓库内所有 `content_hash` 都是裸 hex，见 PDL-5 / PRD-4 那条全局不一致）。**哈希对象是 §2.3 行 324–339 的 `result`，而 `result` 并不原样进事件**：事件把 `result` 的 7 个键摊平到了 data 层（`regenerate_node_ids` / `recheck_node_ids` / `affected_episode_ids` / `superseded_claim_refs` / `lineage_watermark` 直接出现在 data 里），却**丢了 `reuse_artifact_refs` 与 `derived_adjustments`**。所以消费方拿到事件后**无法重算 `analysis_hash`**——见 LNI-2。**`status` 不在事件里**，而 DDL 行 308 把 hash 的非空与 `status ∈ {COMPUTED, EXPIRED}` 绑在一起；事件只在 `COMPUTED` 时发（§3.1 行 500「— → COMPUTED | 闭包完成 | 写 outbox」、行 501「— → INCOMPLETE | 不收费、不发事件」），所以这里恒非空是对的，但那是**推断**而非 payload 明说——见 LNI-5。"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "EXACT",
+        "CONSERVATIVE"
+      ],
+      "description": "来源：§5.4 行 766（示例 `\"mode\":\"EXACT\"`）+ §2.3 DDL 行 291（`mode text NOT NULL,  -- EXACT | CONSERVATIVE`）+ **行 303 的真 `CHECK`：`CONSTRAINT ia_mode_closed CHECK (mode IN ('EXACT','CONSERVATIVE'))`**。**收 `enum` 有 DDL 依据**，这是本仓库里少数几个能这么说的字段之一。注意 `mode_hint` 是**另一个**值集：§5.2 行 715 的请求体是 `EXACT | ALLOW_CONSERVATIVE`（两值，且 `ALLOW_CONSERVATIVE` 不出现在 DDL 里）——请求与响应用同形词根但不同值集，本文件只约束响应侧。**`CONSERVATIVE` 的代价必须可区分**：§1.5 行 128 说保守模式把闭包放大到整个 episode、把所有 `RECHECK` 提为 `REGENERATE`，所以同一个 seed 在两种 mode 下 `regenerate_node_ids` 大小可以差一个数量级，S07 展示的成本区间直接取决于它。"
+    },
+    "base_manifest_ref": {
+      "type": "object",
+      "description": "来源：§5.4 行 767（示例 `\"base_manifest_ref\":{…}`——**省略号，无具体键**）+ §2.3 DDL 行 286（`base_manifest_ref jsonb NOT NULL,  -- {id,revision,content_hash}`）。**三键、无 `service_id`**，DDL 注释直接给出了键集，这是本文件里少数有明确出处的形状之一。**与 S08 `snapshot.manifest.committed` 的 `manifest_ref` 同形**（那边也是三键 `{id, revision, content_hash}`），所以消费方可以互相比对——但**事件里没有任何字段把两者关联起来**：S09 消费 `snapshot.manifest.committed` 推进 `s09.manifest` 水位（§5.4 行 787），`base_manifest_ref` 与那条事件的 `manifest_ref` 是否该相等、若不相等该不该把 analysis 标 stale，全文没写。见 LNI-4。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：§5.4 行 767（示例 `2`）+ §2.3 DDL 行 287（`execution_fence bigint NOT NULL,  -- 快照值，只读`）+ §1.1 行 44 表格（「S09 **只读、只记录**。每个 `impact_analysis` 固定它看到时的 fence；fence 变了，该 analysis 标 `STALE_FENCE`，不能复用。S09 永远不递增 fence」）。**这是 branch 级的**（S08 §1.5 行 156 的 `branch_state` 主键含 `branch_id`），S09 只抄不写。**`minimum: 1` 照 S08 的 DDL**（`CHECK (execution_fence >= 1)`）；S09 自己的 DDL 行 287 没写 CHECK，所以严格说这里的最小值是跨服务推断的——但 `lineage_watermark` 那边 §2.3 行 310 有 `CHECK (lineage_watermark >= 0)`，同一个建表语句里一个给了 CHECK 一个没给，本身也是一处不对称。**`STALE_FENCE` 的通知路径在事件里不存在**：§3.1 行 504 有 `COMPUTED → STALE_FENCE` 这个转换，但它「不带副作用」（不发事件），所以消费方**永远收不到**一条「你手上这份 analysis 已经作废」的事件——只能靠 `expires_at` 到期或被 `GET` 时按当前 fence 比对发现。见 LNI-6。"
+    },
+    "lineage_watermark": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：§5.4 行 768（示例 `220`）+ §2.3 DDL 行 293（`lineage_watermark bigint NOT NULL`）+ **行 310 的真 `CHECK`：`CHECK (lineage_watermark >= 0)`** + §1.1 行 46（「这是 S09 的**唯一**版本坐标，与上面两个无关，不要混称『epoch』」）+ §1.5 行 118（「`analysis.lineage_watermark = min(各必需事件源已应用 sequence)`……它不表示『算得最新的』，只表示『至少基于这一版』」）。**它是下界，不是水位**：名字叫 watermark 但语义是 min，所以一个更大的值**不代表更新**——两个 analysis 的 watermark 不可比大小（不同的必需源集合会给出不同的 min）。§1.5 行 421 还补了一句「**只对本次闭包实际用到的源取 min**，不是全局 min」。**payload 里没有 `watermark_source`**（DDL 行 294 有 `watermark_source jsonb NOT NULL -- {\"S16\":27,...}`，§5.2 行 729 的同步响应也带它），所以消费方拿到一个数却不知道它是哪几个源、各是多少——**无法验证这个下界**，也无法判断它是否被 `degraded` 拉低。见 LNI-2。"
+    },
+    "seed_kind": {
+      "type": "string",
+      "description": "来源：§5.4 行 769（示例 `\"seed_kind\":\"CHANGE_SEED\"`）+ §2.3 DDL 行 288（`seed_kind text NOT NULL,  -- CHANGE_SEED | MEMORY_COMMIT | QUERY`）。**三个值只在行尾注释里，建表语句里没有 `CHECK`**（对照同表行 303 的 `ia_mode_closed` 与行 304 的 `ia_status_closed` 都有真 `CHECK`，唯独 `seed_kind` 没有）。按本仓库既定口径（S26 的 16 状态同理）**不收 `enum`**，留非空字符串。**但它有 DDL 级的用途**：行 314–316 的 `ia_by_plan_idx` 带谓词 `WHERE seed_kind = 'CHANGE_SEED'`，即索引是**按这个字面值分区的**——所以它虽无 CHECK，却是机器可读的（部分索引谓词里出现）。三个值里 `MEMORY_COMMIT` 显然对应 S16 §3.7 的 `memory.canon.committed`，`QUERY` 对应无 seed 的探查；而 `seed_ref` 的形状随 `seed_kind` 变（见下），这在 JSON Schema 里表达不了——见 LNI-7。"
+    },
+    "seed_ref": {
+      "type": "object",
+      "description": "来源：§5.4 行 769（示例 `\"seed_ref\":{\"plan_id\":\"plan_...\"}`）+ §2.3 DDL 行 289（`seed_ref jsonb NOT NULL`——**没有形状注释**，而紧邻的 `base_manifest_ref` 行 286 有）+ §5.3 行 743（列表接口「按 `seed_ref->>'plan_id'`」）+ 行 314–315（`ia_by_plan_idx` 的索引表达式也是 `seed_ref->>'plan_id'`）。**形状随 `seed_kind` 变，而只有一个值有出处**：`CHANGE_SEED` → `{plan_id}`（示例 + 两处索引表达式都只认这一个键）；`MEMORY_COMMIT` → 应该是 S16 的某个 ref（§5.2 行 709–713 的 `seed` 结构里 `refs[]` 是 `{service_id, id, revision, content_hash, fields}`，但那**不是** `seed_ref`——前者是请求里的种子集合、后者是落库的一个对象）；`QUERY` → 不知道。§5.2 的请求体里根本没有 `seed_ref` 这个字段（它有 `seed: {kind, refs}`），所以 `seed_ref` 是 S09 内部**派生**出来的——由谁派生、怎么派生，全文没写。见 LNI-7。本文件收 `object` + 允许任意键（不设 `additionalProperties: false`），因为只有一个键有出处，收紧会把另外两个 `seed_kind` 合法情形判死。"
+    },
+    "regenerate_node_ids": {
+      "type": "array",
+      "description": "来源：§5.4 行 770（示例 `[…]`）+ §2.3 行 324–339 的 `result`（`\"regenerate_node_ids\": [\"shot_3_2.video\",\"shot_3_2.keyframe\",\"ep3.master\"]`）+ `enterprise-change-plan.v2.schema.json` 的 `impact.regenerate_node_ids`（`array` of `string` minLength 1）。**元素是 `node_id` 字符串，不是 ref 对象**——三处一致，这是本文件里少见的完全对齐字段。**注意它叫 id 但内容是 `logical_node` 标识**（`ep3.master` 这种），不是 S08 的 `manifest_id`；S09 §1.1 行 45 明说「S09 只输出 `node_id` 级别的 `REGENERATE/RECHECK/REUSE`，epoch 由 S08 自行决定」。**`mode=CONSERVATIVE` 时这个数组会被放大到整个 episode 的所有 shot 节点**（§1.5 行 128），而 `mode` 在同一 payload 里——消费方能看出「这么多不是因为真的都变了」。但 `impact_analysis_node` 里逐节点的 `reason_code`（13 值闭集，DDL 行 359–364）**不进事件**，所以「为什么这个节点要重做」在事件层完全丢失——见 LNI-2。"
+      ,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "recheck_node_ids": {
+      "type": "array",
+      "description": "来源：§5.4 行 770（示例 `[…]`）+ `result` 行 329（`\"recheck_node_ids\": [\"ep3.continuity_report\"]`）+ `enterprise-change-plan.v2.impact.recheck_node_ids`（同形）。**`RECHECK` 是成本控制的关键**（§1.3 行 98–107：「缩 4 秒」的例子把 `episode_3.continuity_report` 判成 `RECHECK` 而非 `REGENERATE`），而它在 `mode=CONSERVATIVE` 下**一律降级为 `REGENERATE`**（§1.5 行 128「把所有 `RECHECK` 提为 `REGENERATE`」）——所以同一份闭包在 `CONSERVATIVE` 下这个数组会是空的、那些 id 全跑到 `regenerate_node_ids` 里。payload 里没有逐节点 disposition，消费方只能靠这两个数组互斥推断。**两个数组之间没有互斥约束**：JSON Schema 表达不了，DDL 也没有约束（`impact_analysis_node` 的主键是 `(analysis_id, node_id)`，一个节点只能有一个 `disposition`，所以互斥在**源头**成立，但在事件的两个数组上是靠上游正确构造的）。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "affected_episode_ids": {
+      "type": "array",
+      "description": "来源：§5.4 行 771（示例 `[\"ep003\"]`）+ `result` 行 333 + `enterprise-change-plan.v2.impact.affected_episode_ids`（同形）。**元素是 `episode_id` 字符串**。**它可以为空**：一个只影响某一集内部镜头的闭包仍然只影响那一集，所以正常非空；但 §5.2 的 `QUERY` 类 seed 或跨集 EDL 改动可能给出多集。**它没有与 `base_manifest_ref` 交叉校验**：`base_manifest_ref` 是一个 manifest（即一集），而 `affected_episode_ids` 可以是多集——两者在语义上不一致（闭包从一集的 manifest 出发，怎么影响到别的集？）。§4.1 的流程确实第 5 步会「到 EDL / master 为止」，跨越了 episode 边界（`ep3.master`），所以多集是可能的，但 link 没有解释。`minimum` 不设下限（空数组合法）。",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "superseded_claim_refs": {
+      "type": "array",
+      "description": "来源：§5.4 行 772（示例 `[…]`）+ `result` 行 334（示例 `[]`）+ `enterprise-change-plan.v2.impact.superseded_claim_refs`（四键 ref：`service_id` / `id` / `revision` / `content_hash`，`additionalProperties: false`）。**四键完整**，形状有出处（既有契约），这是本文件里第二个完全对齐字段。**`[]` 是常见情形**：§5.4 的示例就是空数组——保守模式或纯镜头几何改动都不会动 memory claim。它与 S16 `memory.canon.committed` 的 `superseded_claim_refs`（MSC 那批里的同名数组）**同名同形**，但两者**不同源**：S16 的是它自己刚 supersede 的，S09 的是它在闭包里**发现已被 supersede 的**。这不是命名冲突（形状与语义一致），但消费方若把两条事件的数组直接合并去重，需要知道 revision 是不同维度的（S16 的是「刚作废的版本」、S09 的是「闭包里引用的已作废版本」）——见 LNI-8。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^S[0-9]{2}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "service_id",
+          "id",
+          "revision",
+          "content_hash"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "来源：§5.4 行 773（示例 `\"expires_at\":\"2026-11-01T09:41:00Z\"`）+ §2.3 DDL 行 298（`expires_at timestamptz NOT NULL`）+ **行 311 的真 `CHECK`：`CHECK (expires_at > created_at)`** + §3.1 行 503（`COMPUTED → EXPIRED` 在 `expires_at` 到期时，默认 30 min）。**这是本事件唯一的时效字段，而它承担了两件事**：一是 DDL 级的 TTL（30 分钟），二是 LNI-6 里说的「`STALE_FENCE` 不发通知」的**唯一兜底**——因为 fence 变了不发事件，消费方只能等到 `expires_at` 过后才知道不能再复用。两件事用同一个字段意味着**一个 fence 从 2 跳到 3 的 analysis 与一个自然到期的 analysis 对消费方完全同形**：都只能通过「现在时间 > expires_at」判断，而真正失效的那一刻（fence 变了）不会提前。**`created_at` 不进 payload**，所以「它是不是刚算的」无法判断——只能看 envelope 的 `time`，而 `time` 是发布时刻、不是计算时刻（DDL 行 300 的 `completed_at` 才是）。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "analysis_id",
+    "analysis_hash",
+    "mode",
+    "base_manifest_ref",
+    "execution_fence",
+    "lineage_watermark",
+    "seed_kind",
+    "seed_ref",
+    "regenerate_node_ids",
+    "recheck_node_ids",
+    "affected_episode_ids",
+    "superseded_claim_refs",
+    "expires_at"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`seed_ref` 在 `seed_kind=MEMORY_COMMIT` 与 `seed_kind=QUERY` 两种情形下的形状",
+      "demanded_by": "plans/S09-lineage-impact.md §2.3 DDL 行 288–289（`seed_kind` 三值注释 + `seed_ref jsonb NOT NULL` 无形状注释）、§5.4 行 769（示例只有 `{\"plan_id\":\"plan_...\"}`）、§5.3 行 743 与 §2.3 行 314–315（两处只认 `seed_ref->>'plan_id'`）",
+      "s09_status": "只有一个键有出处，且只服务 `CHANGE_SEED`——`ia_by_plan_idx` 的部分索引谓词就是 `WHERE seed_kind = 'CHANGE_SEED'`。`MEMORY_COMMIT` 该带什么（S16 的 claim ref？checkpoint sequence？）与 `QUERY` 该带什么，全文没有。另有一步没写：§5.2 的请求体只有 `seed: {kind, refs}`、没有 `seed_ref`，所以 `seed_ref` 是 S09 派生出来的——由谁、按什么规则派生，没有说明。要补需要 owner 定：三种 `seed_kind` 各自的 `seed_ref` 键集，以及派生的来源。"
+    },
+    {
+      "field": "`impact_analysis_node.reason_code` 为什么没有进事件",
+      "demanded_by": "plans/S09-lineage-impact.md §2.4 DDL 行 352 与行 359–364（13 值闭集 `reason_code`）、行 371（「S39 修复计划与 S21 调度都会按 reason 分类……**成本归因不应该靠解析自由文本**」）；plans/S09 §5.4 行 766–773（12 个字段里没有它）",
+      "s09_status": "§2.4 行 371 明说 S39 与 S21 要按 `reason_code` 分类，且「成本归因不应该靠解析自由文本」——但这条事件**不携带它**，而事件的两个消费者（若真有人消费，见 LNI-1）只能看到摊平的 `regenerate_node_ids` / `recheck_node_ids`，无法区分 `DIRECT_FIELD_CHANGED` 与 `CONSERVATIVE_OVERAPPROX`。S39 §5.3 的修复计划路径与 S21 §3.3 的调度路径若从事件取数据，就得逐节点回查 `GET /impact-analyses/{id}`（而该接口在 `openapi.v2.yaml` 里还不存在，见 C09-1）。要补需要 owner 定：`reason_code` 是逐节点随事件发（payload 会变大，20000 节点上限下不可行），还是只在 `data_ref` 里（而 §5.4 行 775 定死 `data_ref: null`），还是明确「S39/S21 必须同步查 S09」。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "LNI-1",
+      "summary": "这条事件的 12 个字段都定了，却没有任何服务声明消费它——文档里点名的两个消费者都明文否认",
+      "announced_consumers": "plans/S09-lineage-impact.md §5.4 行 779：「消费者：S07（组装 ChangePlan，校验 `analysis_hash` 与自己拿到的一致）、S47（影响面板）」",
+      "s07_denial": "plans/S07-change-management.md §5.6 行 914：「**S07 不消费 `lineage.impact.computed`**。影响分析是 S07 自己同步调用的（`POST /impact-queries`），响应直接进 plan。消费事件会导致『用别人算的闭包做自己的计划』，且顺序无法保证。」",
+      "s47_check": "plans/S47-realtime-projection.md §2.1 行 73–86 的订阅表列了 10 条事件（S21 ×2 / S26 / S25 / S27 / S28 / S40 / S43 / S46 / S23），**没有 `lineage.impact.computed`**；全文 grep `lineage` 零命中",
+      "catalog": "contracts/service-catalog.v2.json 里 S09 的 `published_events` 含 `lineage.impact.computed`，但没有任何服务的 `consumes` / `subscribed_events` 列出它",
+      "why_it_matters": "这是本仓库缺口的**第四种形状**，与前面三类都不同：(1) PCM/S42/S43 是「发了一半」——有消费者但字段不全；(2) ATC 是「发了没人收」但至少**文档里还有人说收**；(3) MSC 是「发了一半但有四个真消费者」。这里反过来——**字段是全的，消费者是零**。S09 §5.4 行 779 点名的两个都不认：S07 说它走同步 `POST /impact-queries`（这也解释了为什么 §5.2 的响应与 §5.4 的 payload **字段几乎完全重叠**：`analysis_hash` / `mode` / `lineage_watermark` / `impact` 三处都有，`expires_at` 也有），S47 的订阅表压根没有它。于是这条事件**唯一的实际用途是「留个记录」**——它 `replay_side_effects: false`、`aggregate_sequence` 恒为 1、字段与同步响应重复，加进 catalog 的成本是真实的（topic 保留 14 天、S09 要维护 outbox、schema 要版本化），收益是零。**但这不能靠删掉解决**：`service.yaml` 已声明它是 S09 的产出（行 22），`scaffold` 会重新生成，删它要改 catalog。要定的是：这条事件到底要不要（若不要，改 catalog 与 S09 §5.4；若要，哪个服务订阅它、为什么同步响应不够）。注意不要把「S09 §9 的 C09-3 说要补 schema」当成「有人要消费」的证据——C09-3 只说补 schema，没说补消费者。"
+    },
+    {
+      "id": "LNI-2",
+      "summary": "`analysis_hash` 哈希的是 `result` 的 7 个键，而事件只带其中 5 个、还摊平了——消费方无法重算哈希；DDL 的 `watermark_source` 也没进 payload",
+      "hash_object": "plans/S09-lineage-impact.md §2.3 DDL 行 297：`analysis_hash text,  -- sha256(JCS(result))`；行 324–339 给出 `result` 的 7 个键：`regenerate_node_ids` / `recheck_node_ids` / `reuse_artifact_refs` / `affected_episode_ids` / `superseded_claim_refs` / `lineage_watermark` / `derived_adjustments`",
+      "event_fields": "§5.4 行 766–773 的 12 个字段里，与 `result` 重叠的是 `regenerate_node_ids` / `recheck_node_ids` / `affected_episode_ids` / `superseded_claim_refs` / `lineage_watermark`（5 个）；**缺 `reuse_artifact_refs` 与 `derived_adjustments`**（2 个）",
+      "why_hash_matters": "plans/S07-change-management.md §5.6 之前（行 880 附近）与 S09 §5.4 行 779 都把「校验 `analysis_hash` 与自己拿到的一致」当成 S07 的职责；S09 §6.2 行 838 更进一步：「命令幂等保证『同一次重试不重复计费』；查询幂等保证『两个不同 command_id 的等价查询得到同一个 `analysis_hash`』。后者是 S07 能在 `apply` 时校验 `plan_hash` 的前提」",
+      "why_it_matters": "`analysis_hash` 的用途是「证明你手上这份影响分析与计算时的那份逐字节相同」。要完成这个证明，消费方必须能**从手里有的数据重算出同一个哈希**——而事件不给 `reuse_artifact_refs` 与 `derived_adjustments`，所以重算出来的哈希必然不同（JCS 序列化的对象少了两个键）。于是 `analysis_hash` 在事件这一侧**退化成不透明的令牌**：消费方只能拿去和「另一次 `GET /impact-analyses` 返回的 hash」比对，不能与自己的数据比对。而两条路径又不总是都可用——`data_ref: null`（行 775）意味着没有外置载荷，而 `GET /impact-analyses/{analysis_id}` 在 `openapi.v2.yaml` 里**还不存在**（C09-1）。**两个被丢掉的键都不是无所谓**：`reuse_artifact_refs` 是「哪些产物可以零成本复用」——它决定了实际要花多少钱，是 `impact` 里唯一带 `content_hash` 的数组，S07 的 `enterprise-change-plan.v2.impact.reuse_artifact_refs` 明确要求它（且是 `required`）；`derived_adjustments` 是「由时长推导出的调参」（`SHOT_3_2/end_pause: 0.6s → 0.2s`），S07 的 schema 把它放在**顶层**而不是 `impact` 里（那是既有的定位，见 LNI-3 的第二段），所以它「不在 impact 里」可以解释，但「事件里完全没有」不能。要定的是：`reuse_artifact_refs` 与 `derived_adjustments` 是否补进 payload；若不补，`analysis_hash` 就不该被描述成「消费方可校验」的东西。另有一个同类的丢字段：DDL 行 294 的 `watermark_source`（`{\"S16\":27,\"S18\":31,\"S08\":13,\"S06\":44}`）不在 payload 里，而 `lineage_watermark` 的定义就是「这些源各自 applied_sequence 的 min」（§1.5 行 118）——**不给组成，这个 min 无法验证**，也无法看出哪一路 `degraded`（§1.5 行 125 说保守模式下要在 `watermark_source` 里标 `degraded:true`）。`watermark_source` 不在 `result` 里（§2.3 行 324–339 的 7 键没有它），所以它不是哈希口径问题，而是「下界不可复核」问题。"
+    },
+    {
+      "id": "LNI-3",
+      "summary": "§2.3 行 342 声称 `result` 与 ChangePlan 的 `impact`「逐字对齐」「不需要二次映射」，而实际既有契约只收 6 键且 `additionalProperties: false`，第 7 键在顶层",
+      "claim": "plans/S09-lineage-impact.md §2.3 行 342：「字段名与 [enterprise-change-plan.v2](../contracts/enterprise-change-plan.v2.schema.json) 的 `impact` 子对象**逐字对齐**。S07 可以直接把 `result` 塞进 ChangePlan 的 `impact`，不需要二次映射。这是刻意的：两份结构一旦分叉，『计划里的影响』和『分析算出的影响』就会开始不一致。」",
+      "actual_impact": "contracts/enterprise-change-plan.v2.schema.json 的 `impact` 只有 6 个属性：`regenerate_node_ids` / `recheck_node_ids` / `reuse_artifact_refs` / `affected_episode_ids` / `superseded_claim_refs` / `lineage_watermark`，**`additionalProperties: false`**，6 个全部 `required`",
+      "derived_adjustments_location": "同一 schema 的 `derived_adjustments` 在**顶层**（`properties.derived_adjustments`，`array` of `string` minLength 1），且是顶层 `required` 之一——不在 `impact` 内",
+      "why_it_matters": "按 §2.3 的做法字面执行，把一个 7 键的 `result` 直接赋给 `impact`，**校验会失败**：`derived_adjustments` 不在 `impact.properties` 里，而 `additionalProperties: false` 会拒掉它。这不是措辞不精确——§2.3 行 342 明说「不需要二次映射」，所以实现者会真的去这么写，然后在第一个集成测试（或更糟，第一次真改稿）时撞 422。**两个 schema 里没有一处能提示这件事**：`enterprise-change-plan.v2` 早在 S09 §2.3 写出来之前就存在，它是「既有企业契约」，而 S09 的 `result` 是照它抄的——抄的时候把顶层的 `derived_adjustments` 也搬进了 `result`，于是两个对象长得像但键集不同。S09 §9 的 C09-5 记录了这个方向但结论不同：C09-5 说的是「`impact` 没有 `disposition` 三档、只有三个数组……**节点级 reason 无处安放**，映射为三数组（可表达）；reason 留在 `impact_analysis_node`」——它讨论的是 disposition/reason，**没提 `derived_adjustments` 的键位错配**。所以 C09-5 与 §2.3 行 342 的「不需要二次映射」互相矛盾，而两者都在同一份方案里。要定的是：`result` 去掉 `derived_adjustments`（那 S09 的哈希对象就与 ChangePlan 的 impact 真正同形），还是承认需要一次映射（那 §2.3 行 342 要改口）。**本条只记录、不选边** —— 但注意 LNI-2 里的事件已经因为这个错配而没有带 `derived_adjustments`，若最后选「不需要映射」，事件就得补上它。"
+    },
+    {
+      "id": "LNI-4",
+      "summary": "S09 拿 `snapshot.manifest.committed` 判 stale（fence 变了），但本事件的 `base_manifest_ref` 与那条事件的 `manifest_ref` 之间没有任何可校验的关系",
+      "s09_consumption": "plans/S09-lineage-impact.md §5.4 行 787：「`snapshot.manifest.committed` | S08 | 推进 `s09.manifest` 水位；把 `execution_fence` 变更记录下来（使在算的 analysis 变 stale） | inbox」",
+      "state_transition": "§3.1 行 504：`COMPUTED → STALE_FENCE`，触发条件「S09 消费到 manifest 事件，fence 已前进」，副作用「不带副作用；S07 看到的 `impact` 作废」",
+      "event_side": "§5.4 行 767 的 `base_manifest_ref` 是 `{id, revision, content_hash}`（三键，与 S08 的 `manifest_ref` 同形）；`execution_fence` 是快照值",
+      "s08_side": "plans/S08-revision-snapshot.md §6.1 行 655 的 `manifest_ref` 也是 `{id, revision, content_hash}`，但那条事件的 `execution_fence` 在 `trigger=FENCE_VOID` 时**必然与 `manifest_ref` 不自洽**（SMC-2）",
+      "why_it_matters": "S09 的 stale 判定要靠「这个 analysis 的 `base_manifest_ref` 是否等于/落后于事件里的 `manifest_ref`」，以及「fence 是否真的前进了」。两件事都缺依据。(1) **没有相等判定**：`base_manifest_ref` 是个三键对象，事件里没有 `analysis_id` 挂在 manifest 上，也没有「我基于哪一版」的反向索引；S09 只能维护「每个 `(manifest_id, revision)` 上的 analysis 集合」，而 DDL 里 `impact_analysis` 有 `base_manifest_ref jsonb` 但**没有按它建的索引**（行 314–319 只有 `ia_by_plan_idx` 与 `ia_by_branch_idx`），所以反向找要全表扫 jsonb。(2) **fence 的「前进」无法判定**：S08 的 `FENCE_VOID` 事件带一个 `execution_fence` 数值（新值）却没有旧值（SMC-2），S09 要判断「fence 是否前进」必须本地记住旧值——而 S09 的 `impact_analysis.execution_fence` 是**每条 analysis 各自的快照**，不是分支级水位；同一个分支上 N 条 analysis 各有不同的快照值，S09 得逐条比对。(3) **`STALE_FENCE` 不发事件**（行 504 明说「不带副作用」），所以 S07 在一份 analysis 变成 `STALE_FENCE` 之后**不会收到任何通知**——它只会在下一次 `GET` 时才发现（而那个接口还不存在，C09-1）。S08 那边的 SMC-5 已经记录了「S08 的 `changed_node_epochs` 允许 `from == to`」；这条 LNI-4 是它在**消费方**的对应风险。要定的是：S09 要不要按 `base_manifest_ref` 建索引、`STALE_FENCE` 要不要发通知事件（若发，就要新增一条 catalog topic 并让 S07 订阅）。"
+    },
+    {
+      "id": "LNI-5",
+      "summary": "`status` 不在事件里，而 DDL 用 `status ∈ {COMPUTED, EXPIRED}` 约束 `analysis_hash` 非空——「只在 COMPUTED 时发」是推断",
+      "ddl": "plans/S09-lineage-impact.md §2.3 行 292（`status text NOT NULL`，五值注释）+ 行 304–305（`ia_status_closed CHECK (status IN ('COMPUTED','INCOMPLETE','FAILED','STALE_FENCE','EXPIRED'))`）+ 行 308–309（`ia_computed_has_hash CHECK ((status IN ('COMPUTED','EXPIRED')) = (analysis_hash IS NOT NULL))`）",
+      "event": "§5.4 行 766 的示例带 `analysis_hash` 却不带 `status`；§5.2 行 727 的**同步响应**带 `\"status\":\"COMPUTED\"`",
+      "state_machine": "§3.1 行 500–504：只有 `— → COMPUTED` 那一行写「写 outbox `lineage.impact.computed`」；`INCOMPLETE` 明写「不收费、不发事件」；`FAILED` 明写发 `DEGRADED` 告警、返回 500；`EXPIRED` 与 `STALE_FENCE` 都明写「不带副作用」",
+      "why_it_matters": "结论是**对的**——只有 `COMPUTED` 会发这一条，所以 `analysis_hash` 恒非空、`status` 恒为 `COMPUTED`、payload 里省略它是合理的。但它是**从状态机推断**出来的，不是 payload 说的：本 schema 把 `analysis_hash` 收成必填，依据是 §3.1 行 500 的「只有 COMPUTED 发」；而 §5.4 的示例没写 `status` 也没解释为什么。这与 PCM 那边「示例只画一种终态」的形态相同但**后果相反**：那边是示例掩掉了合法情形，这边是状态机挡住了非法情形，示例的省略恰好正确。所以本条是**记录推断链**而不是缺陷——但要注意一处不对称：§5.2 的同步响应**带 `status`**，`POST /impact-queries` 在 `INCOMPLETE` 时返回 409 但 `FAILED` 时返回 500 且**可能带 body**（行 502），所以同一条分析在同步路径上可能看到 `status != COMPUTED`，而在事件路径上永远看不到。若将来把 `EXPIRED` 也做成事件（`COMPUTED → EXPIRED` 在行 503 有定义），这条 payload 就得加 `status`，而它是 `additionalProperties: false` 的——那是必须发包才能改的。"
+    },
+    {
+      "id": "LNI-6",
+      "summary": "`expires_at` 是这条事件唯一的时效信号，而它同时承担 TTL 与「fence 已变」的兜底——两种失效对消费方同形",
+      "field": "plans/S09-lineage-impact.md §2.3 DDL 行 298（`expires_at timestamptz NOT NULL`）+ 行 311（`CHECK (expires_at > created_at)`）+ §5.4 行 773",
+      "ttl": "§3.1 行 503：`COMPUTED → EXPIRED` 在 `expires_at` 到期（默认 30 min），副作用「不带副作用；S07 用它时必须重算」",
+      "stale_path": "§3.1 行 504：`COMPUTED → STALE_FENCE`，触发「S09 消费到 manifest 事件，fence 已前进」，副作用「不带副作用；S07 看到的 `impact` 作废」",
+      "why_it_matters": "两个失效原因产生的**可观测信号完全相同**：一条都不发事件、都只是把本地行改个状态。所以消费方（S07 或 S47，若真有人消费，见 LNI-1）手上的一 fresh 事件无法区分三种处境：(a) 这份分析还新鲜；(b) 它在 `expires_at` 之前就因为 fence 变了而作废；(c) 它自然到期。判断只能靠「现在时间 vs `expires_at`」，而 (b) 恰恰是**提前失效**——`expires_at` 可能还剩 25 分钟，分析却已经不能用。这不是理论风险：S08 的 `:fence` 是故障切换与 `RUN_CANCELED` 的正常路径（S08 §2.4 行 315），一次故障切换就能让分支上所有 in-flight analysis 全部变 stale，而每一个的 `expires_at` 都还在未来。**生产上最坏的情形是 S07 拿一份 fence 已前进的 analysis 去组装 ChangePlan**：`apply` 时会 409 `STALE_EXECUTION_FENCE`（S09 §5.5 行 806 有这个错误码，但那是 S09 的读端，「fence 在计算期间前进」），于是错误出现在 `apply` 而不是 `prepare`，用户已经看过的成本区间是错的。要定的是：`STALE_FENCE` 是否该发一条通知事件（需要新 topic + S07 订阅），或 `expires_at` 是否该在 fence 前进时被改写成过去（那与 `CHECK (expires_at > created_at)` 不冲突，但会让「到期」与「作废」仍然同形，只是提前了）。"
+    },
+    {
+      "id": "LNI-7",
+      "summary": "`seed_kind` 三值无 `CHECK` 却是部分索引的谓词值，而 `seed_ref` 的形状随它变——这一对是「无闭集但机器依赖」的组合",
+      "seed_kind": "plans/S09-lineage-impact.md §2.3 DDL 行 288：`seed_kind text NOT NULL,  -- CHANGE_SEED | MEMORY_COMMIT | QUERY`——**注释，无 `CHECK`**（对照同表行 303 的 `ia_mode_closed`、行 304 的 `ia_status_closed`，两者都有真 `CHECK`）",
+      "machine_dependency": "§2.3 行 314–316：`CREATE INDEX ia_by_plan_idx ... WHERE seed_kind = 'CHANGE_SEED'`——**谓词里出现字面值**，所以这个值集虽无 CHECK，PostgreSQL 的部分索引已经把它钉死了",
+      "seed_ref_absence": "§2.3 行 289：`seed_ref jsonb NOT NULL,`——**无形状注释**，而紧邻的 `base_manifest_ref`（行 286）有 `-- {id,revision,content_hash}`",
+      "why_it_matters": "按本仓库口径（S26 的 16 状态同理），注释里的值集**不收 `enum`**——本文件照办。但这个字段与 S26 那个不同：`provider_job.state` 的 16 值没有任何机器可读形态，而 `seed_kind` **出现在部分索引谓词里**，所以 `'CHANGE_SEED'` 这个字面值是有约束力的（写成 `change_seed` 会让索引静默失效——不报错，只是永远用不上）。同一份 DDL 里对 `mode` 与 `status` 用了 `CHECK`、对 `seed_kind` 没用，这个不一致本身像遗漏而非刻意（对比 S26 那边是刻意留开放集——它的注释有 16 值且明说「供应商新增状态不阻塞」；S09 这里只有三个值、且是两个真实业务分支加一个兜底，不像要开放）。`seed_ref` 的无形状则与 `accepted_pointers_delta`（SMC-3）是同一类问题：字段在、用途在（`ia_by_plan_idx` 按 `seed_ref->>'plan_id'` 建索引）、形状不在。**两者叠加的后果**：`seed_kind=MEMORY_COMMIT` 时 `seed_ref` 里不会 `plan_id`，那个部分索引对这类行不适用（正确），但 `GET /impact-analyses?plan_id=` 的列表接口（§5.3 行 743）也按 `seed_ref->>'plan_id'` 过滤——它**没有 `seed_kind` 谓词**，所以对 `MEMORY_COMMIT` 的行，`->>'plan_id'` 返回 NULL、被排除，行为碰巧正确；但若将来按别的键过滤就会撞同一个问题。"
+    },
+    {
+      "id": "LNI-8",
+      "summary": "`superseded_claim_refs` 与 S16 同名数组形状相同但语义不同，合并时会重复计算",
+      "s09_version": "plans/S09-lineage-impact.md §5.4 行 772 + §2.3 行 334（示例 `[]`）：S09 在闭包里**发现已被 supersede 的** claim 引用，四键 `{service_id, id, revision, content_hash}`",
+      "s16_version": "plans/S16-story-memory.md §3.7 行 518（`superseded_claim_refs`）+ contracts/memory.canon-committed.v2.schema.json：S16 **刚 supersede 的** claim 引用，同四键",
+      "why_it_matters": "两者**同名字、同形状、同 `content_hash` 语义**，所以一份代码可以同时处理两条事件的这个数组——这是好的复用。但 revision 的所指不同：S16 的 `superseded_claim_refs` 里的 revision 是**被作废的那一版**（新版本在 `changed_claim_refs` 里）；S09 的 revision 是**闭包引用到的那一版，它已被别人作废**。若消费方把两条事件的数组合并去重（按 `(service_id, id, revision)`），得到的是「所有这些 claim 版本都被作废过」——这个结论在两条路径上都成立，所以去重是安全的。**真正的问题在时间**：S09 的 analysis 是个 30 分钟有效的快照，它的 `superseded_claim_refs` 反映的是**计算那一刻**的作废状态；而 S16 的事件是**实时**的作废通知。一个消费方（例如 S39 的修复计划）若只看 S09 的事件，可能在 analysis 计算之后又发生了新的 supersede 而不知道——而 S09 **不会**重发这条事件（`aggregate_sequence = 1`，行 754「每次分析只发一次」）。要定的是：S39/S21 若要用 claim 作废信息，是用 S16 的实时流还是 S09 的快照；若用快照，就得接受它最多滞后 30 分钟。"
+    }
+  ]
+}

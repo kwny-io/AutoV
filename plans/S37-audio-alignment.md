@@ -206,10 +206,56 @@ CREATE TABLE audio_alignment.speaker_segment (
   PRIMARY KEY (report_id, segment_index)
 );
 
-CREATE TABLE audio_alignment.evaluator_call (...同 S36 结构...);
-CREATE TABLE audio_alignment.outbox (...);
-CREATE TABLE audio_alignment.inbox (...);
+CREATE TABLE audio_alignment.evaluator_call (
+  call_id        uuid PRIMARY KEY,
+  report_id      text NOT NULL,
+  check_id       text NOT NULL,
+  window_index   integer,
+  model_snapshot text NOT NULL,
+  prompt_hash    char(64) NOT NULL,
+  tokens_in      integer NOT NULL,
+  tokens_out     integer NOT NULL,
+  latency_ms     integer NOT NULL,
+  outcome        text NOT NULL CHECK (outcome IN ('OK', 'ERROR', 'TIMEOUT')),
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE audio_alignment.idempotency_record (
+  tenant_id    text NOT NULL,
+  command_id   text NOT NULL,
+  request_hash char(64) NOT NULL,
+  command_type text NOT NULL,
+  state        text NOT NULL CHECK (state IN ('IN_PROGRESS', 'DONE')),
+  response_code integer,
+  response_body jsonb,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, command_id)
+);
+
+CREATE TABLE audio_alignment.outbox (
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id          text NOT NULL,
+  aggregate_id       text NOT NULL,             -- report_id
+  aggregate_sequence bigint NOT NULL,
+  event_type         text NOT NULL,
+  partition_key      text NOT NULL,          -- tenant_id || ':' || aggregate_id
+  payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  published_at       timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON audio_alignment.outbox (id) WHERE published_at IS NULL;
+
+CREATE TABLE audio_alignment.inbox (
+  consumer    text NOT NULL,
+  event_id    text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
+
+`aggregate_id = report_id`，`aggregate_sequence = report_revision`。
 
 `alignment_unit` 单独的表的理由：字幕作业要按频繁的时间区间查询，塞在 `payload` JSON 里既慢又难保证精度约束。且这些数据会被 S38 引用——**通过契约读取，不是跨库 JOIN**（S38 调 `GET /alignment-reports/{id}/units?start=…&end=…`）。
 

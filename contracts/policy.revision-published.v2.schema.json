@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/policy.revision-published.v2.schema.json",
+  "title": "policy.revision.published payload v2",
+  "description": "S02 一版自动化策略 revision 发布时的事件载荷。\n\n**方案里没有载荷。** 本事件的完整规格是 §10.2 行 718 的一行：「发布：`policy.revision.published`（topic `drama.governance-policy.v2`，partition key `tenant_id:aggregate_id`），与 DB 提交同事务写 Outbox。」加上行 713 的「`aggregate_id = policy_revision_id`，`aggregate_sequence = revision`」。`plans/S02-governance-policy.md`（824 行）全文对 `specversion`、`\"data\"`、`data_ref` 的命中均为 **0**——它没有示例事件、没有键表、没有 `data` 块。这与资产族五篇（每篇 §5.3 都有一份 JSON 示例）完全不同，所以下面每一个键都是**新增的判断**，不是抄下来的；每条的 description 写明它挂在哪一句上。\n\n**只收四个键，因为方案只说得出这四件。** `policy_ref` 是「哪一版」（形状取自 §5 的 `EffectivePolicy` 响应，与 `episode-manifest.policy_ref` / `execution-context.policy_ref` / `generation-command.route_policy_ref` 三处契约完全同形）；`effective_at` 与 `created_by` 是 `automation_policy_revision` 的两个非主键列（行 649）；`schema_version` 是全仓统一约定。**没有 `document`**：`data_ref` 在 S02 零命中，没有任何一处说这个事件内嵌 `automation-policy.v2` 文档，收进来就是替生产者决定载荷大小；消费方要正文就按 `policy_ref` 回源（§5.1 行 382 的 revision 文档缓存键 `(tenant_id, policy_id, revision, content_hash)` 正好是这四个数）。**没有 `scope_binding`**：它是发布指针的缓存键（行 384），方案三处提到、零处定义、也没有任何代码路径写它（见 POL-3），做成必填等于要求生产者发一个不存在的值。**没有决策与 gate 状态**：§11 G6（行 743）自己记着「事件只有 `policy.revision.published`」，UI 与下游拿不到决策结果。\n\n**这个事件的核心问题不是键太少，而是它在最该精确的两个位置上用了没有定义的名字。** `aggregate_id = policy_revision_id` 里的 `policy_revision_id` 全仓只出现 2 次，且都不是定义（见 POL-1）；`aggregate_sequence = revision` 里的 `revision` 是 per-`policy_id` 的（`policy_publish_pointer` 主键 `(tenant_id, policy_id)`，行 655），而事件原本一个 `policy_id` 都不发（见 POL-2）。本 schema 用 `policy_ref.id` 把 `policy_id` 补上，正是为了让 E12-06 的「指针单调（不回退）」（行 812）在订阅方有聚合可依——但这层因果方案没有写，所以它是一条 `x-needs-owner` 而不是抄来的事实。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "载荷版本，与 envelope 的 `schema_version` 分开。全仓库统一为 `2.0`。\n\n**这是补进去的必填键，不是从 S02 抄来的**：方案没有事件示例，所以没有任何一行写它会带这个键。收它的理由是全仓每一份载荷 schema 都把它列进 `required`（47 份 topic 载荷无一例外），属于既定约定而非对 S02 的推断。与 `asset.costume-revision-accepted` 的处理一致——那边也是「方案示例里没有、按全仓约定补上」。"
+    },
+    "policy_ref": {
+      "type": "object",
+      "properties": {
+        "service_id": {
+          "type": "string",
+          "pattern": "^S[0-9]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "service_id",
+        "id",
+        "revision",
+        "content_hash"
+      ],
+      "additionalProperties": false,
+      "description": "四键引用：这是哪一版策略。出处：§5 行 326 的 `EffectivePolicy` 请求形状 `{\"policy_ref\": {\"service_id\":\"S02\",\"id\":\"policy_p1\",\"revision\":3,\"content_hash\":\"...\"}}`，行 338 的输出形状同；§9.1 行 601「`episode-manifest.policy_ref` + `execution-context.policy_ref` 双处 pin（id + revision + content_hash）」。\n\n**形状不是我挑的，是契约里已经钉死的那个。** `episode-manifest.v2.schema.json` 的 `policy_ref`、`execution-context.v2.schema.json` 的 `policy_ref`、`generation-command.v2.schema.json` 的 `route_policy_ref` 三处逐键逐约束相同：`service_id` 收 `^S[0-9]{2}$`、`content_hash` 收 `^[0-9a-f]{64}$`、四键全必填、`additionalProperties: false`。`review.decision-recorded.v2.schema.json` 的 `decided_against.policy_ref` 也是同一形状，并在 `service_id` 上留了一句「S02 是策略权威……这里不 const，因为 `policy_ref` 的形状是通用的、由 S02 产生」。所以本事件用它，与全仓对「一份策略版本」的表达方式一致。\n\n**`id` 就是 `policy_id`，这一点方案没有写。** `policy_id` 全篇出现 9 次（行 139、208、355、382、648、650、654、655、659），其中 6 次在 §10.1 的 DDL（`automation_policy_revision` 行 648/650、`policy_publish_pointer` 行 654/655、`policy_scope_binding` 行 659），3 次在散文与示例（行 139 的「多个 `policy_id`」、行 208 的 `load_revision(layer.policy_id, …)`、行 355 的 `EffectivePolicy` 示例值）——**没有一次在事件语境里**，而事件该发它哪个从来没人说。§5 的响应给的是 `\"id\":\"policy_p1\"`，`contracts/examples/automation-policy.json` 的 `policy_id` 是 `policy_demo`——两处都指策略身份而非 revision 身份。本 schema 据此把 `id` 读作 `policy_id`，并因此**把 `revision` 变成「该策略的第几版」而不是「某条 revision 行的 id」**，这正是 E12-06 需要的聚合。代价是：`aggregate_id = policy_revision_id`（行 713）与这里的 `policy_ref.id = policy_id` 是**两个不同的东西**，而方案只定义了一个（见 POL-1、POL-2）。\n\n**`content_hash` 必须是裸 64 位小写十六进制。** 行 338 把它写成 `\"sha256:...\"`，而行 326（同一个对象、同一段代码、往上 12 行）写成裸值；全仓 `^[0-9a-f]{64}$` 在 `contracts/*.schema.json` 里出现 167 次、分布在 47 份文件（含本文件），而 `sha256:` **没有一次**出现在任何 `pattern` 的值里（13 份 schema 提到 `sha256:`，逐份查其 `pattern` 字段后命中 0）。见 POL-10。\n\n**`service_id` 不收 const `\"S02\"`**：本事件由 S02 发出，但 `policy_ref` 的形状是通用的（同 `review.decision-recorded` 的处理），且 envelope 的 `source` 已经说了发送方是谁。"
+    },
+    "effective_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "这一版策略的生效时间点。出处：§10.1 行 649 的 `effective_at timestamptz`（`automation_policy_revision` 的列）；`automation-policy.v2.schema.json` 的同名字段为 `{\"type\":\"string\",\"format\":\"date-time\"}` 且是 `required` 之一。\n\n**它不 gate 任何东西，方案从未说未来时间会延迟生效。** `effective_at` 在 S02 出现 2 次（行 649 的 DDL、`automation-policy.v2` 的 schema），两次都只是存着。真正被判的是 `effective_window`：§5 行 376「`effective_window` 与当前时间不交 → 409 `POLICY_EXPIRED`（不是回落到更松的版本）」、§8 行 566 派单检查第 2 条「策略 `effective_window` 未过期」。但 `effective_window` **只在 `EffectivePolicy` 响应里出现一次**（行 351 的示例），它的 `until` 没有任何来源字段——`automation-policy.v2.schema.json` 里没有 `expiry`、没有 `expires_at`、没有 `effective_window`，这正是 §11 G2（行 739）自己列的缺口。于是「未来 `effective_at` 是否延迟生效」「`until` 从哪来」两个问题都没有答案，见 POL-4 与 `x-needs-owner`。\n\n**同一个坑在资产族已经踩过一次**：S15 的 `effective_at` 只作审计，消费方若按另一头猜（「没到时间就等于没变」），撤销期间已付费任务会继续跑。本 schema 收下这个键，因为它是 DDL 的列且文档必填；但**不**给它加「必须 ≤ 现在」之类的约束——那会把一条没人裁过的语义变成契约。"
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "创建这一版策略的主体标识。出处：§10.1 行 649 的 `created_by`（`automation_policy_revision` 的列，与 `effective_at` 同一行）；`automation-policy.v2.schema.json` 的 `created_by` 同为 `{\"type\":\"string\",\"minLength\":1}`。\n\n**收这个键的理由是治理事件的第一问**：谁把策略收紧了。§9.2 行 622–628 规定了策略变更的生效范围，§10.1 行 651 规定这张表「只 INSERT，永不 UPDATE/DELETE」，所以 revision 的创建者一旦发布就不可改写——它是唯一能回答「这条收紧是谁下的」的字段。相比之下 `policy_decision` 有 `granted_by`（`policy_exception` 行 680），决策路径有主体，发布路径原本没有。\n\n**它是身份不是凭据，但仍要过 `OUTBOUND_SECRET_SCAN`。** `contracts/redaction-policy.v2.json` 的 `applies_to` 把 `any producer` 的「任何从本服务复制进事件的字段」都列进扫描面（`pii_payload: references_only_by_default`，见 `event-topics.v2.json` 本 topic 项）。`not_secrets` 白名单里明写 `principal_id`「是标识符不是凭据」，所以正常取值无须替换；但 `created_by` 的类型是开放字符串，谁都能填任意内容——若有人在里面塞了一个 `sk-…` 形状的 key，`api_key` 类的通用分支会命中它。**本 schema 不收 pattern**（DDL 无 CHECK，方案无取值域），所以这条防线只能在脱敏层，不在 schema 层。\n\n**它是否该出租户，方案没有裁。** 见 `x-needs-owner`。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "policy_ref",
+    "effective_at",
+    "created_by"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "本事件的载荷键集本身——方案一行都没写，本 schema 的四个键全部是判断",
+      "demanded_by": "所有订阅方（S07 / S08 / S29 / S33 / S34 / S40 六篇方案的消费表都写了这个 topic）、E12-06（行 812）、E12-07（行 813）",
+      "s02_status": "未决。`plans/S02-governance-policy.md` 全文 `specversion` 0 次、`\"data\"` 0 次、`data_ref` 0 次。事件的全部规格是行 718 那一行加行 713 的 aggregate 规则。**这不是「抄漏了」，是源文档没有**：资产族五篇每篇都有 §5.3 的 JSON 示例，S02 没有。所以 `policy_ref` / `effective_at` / `created_by` 三条虽各有出处（§5 行 326、DDL 行 649 ×2），但它们「该不该进这个事件」是没人裁过的。"
+    },
+    {
+      "field": "`policy_revision_id` 是什么、怎么生成、有没有前缀（它被声明为 `aggregate_id`）",
+      "demanded_by": "envelope 的 `aggregate_id` 与 `aggregate_sequence`（行 713）、E12-06 的乱序判定、任何按 `partition_key = tenant_id:aggregate_id` 做分区有序消费的一方",
+      "s02_status": "未决，且名字无定义。全仓命中 **2 次**：行 699 的 SQL 列注释 `aggregate_id text NOT NULL  /* policy_revision_id */`、行 713 的赋值句。`automation_policy_revision`（行 647–651）的 8 个列里没有它，主键是 `(tenant_id, policy_id, revision)`。它是全仓 26 个 `aggregate_id` 目标里**唯一带 `revision` 字样的那个**（其余 25 个指向稳定聚合身份：`manifest_id` / `run_id` / `shot_id` / `budget_id` …）。见 POL-1。"
+    },
+    {
+      "field": "`aggregate_sequence = revision` 的分母是 `policy_id` 还是 revision id；以及发布指针的单调性按哪个键判",
+      "demanded_by": "E12-06「`policy.revision.published` 重复投递 / 乱序 → 指针单调（不回退）」（行 812）、§5.1 行 384 的发布指针缓存、行 297 的 CAS（`expected_revision` 与 `policy_publish_pointer` 不等 → 409 `REVISION_CONFLICT`）",
+      "s02_status": "未决，且两个定义互斥。`policy_publish_pointer` 的主键是 `(tenant_id, policy_id)`、列是 `current_revision`（行 653–656），所以「单调」只能按 `policy_id` 判；而 `aggregate_id = policy_revision_id` 让每个 revision 成为独立聚合，序列号在聚合内恒为 1，没有可比的两条。本 schema 用 `policy_ref.id`（= `policy_id`）补上了订阅方缺的那个分母，但那是本 schema 的补，不是方案的规定。见 POL-2。"
+    },
+    {
+      "field": "`scope_binding` 的定义、由谁写、以及发布指针为什么要靠一个 5 秒 TTL 的缓存加事件失效",
+      "demanded_by": "§5.1 行 384 的发布指针缓存键 `(tenant_id, scope_binding)`、行 147 的 `LayersFor` 步骤 A、本 topic 在 `event-topics.v2.json` 里的存在理由（`policy.revision.published` 的全部文档化用途就是「失效本地 policy 缓存」）",
+      "s02_status": "未决，且没有写路径。`scope_binding` 全仓命中 **3 次、全在 S02**：行 147（`LayersFor` 里「scope_binding 命中 level」）、行 384（缓存键）、行 658（表名 `policy_scope_binding`）。零处定义它的键集。`policy_scope_binding` 表（行 658–661）声明了 `PRIMARY KEY (tenant_id, scope_type, scope_id)`，但**方案里没有任何一处写这张表**：`current_revision` 全篇 1 次（行 654 的列名）、`INSERT` 全篇 1 次（行 651 的 `-- 只 INSERT` 注释，说的是另一张表）。见 POL-3。"
+    },
+    {
+      "field": "未来时间的 `effective_at` 是否延迟生效；`effective_window.until` 的来源字段是什么",
+      "demanded_by": "§5 行 376 的 `POLICY_EXPIRED`、§8 行 566 派单检查第 2 条、§9.2 行 622–628 的生效范围表、§11 G2（行 739）",
+      "s02_status": "未决，且 G2 已经自己承认一半。`automation-policy.v2.schema.json` 里**没有** `expiry` / `expires_at` / `effective_window`——行 739（G2）把「根级无 `expiry`」列成缺口。而 §5 的响应（行 351）却给出 `\"effective_window\": {\"from\":…,\"until\":…}`，`until` 无源。另一半没人记：`effective_at` 是必填且可未来时，方案从未说「未到 `effective_at` 时旧 revision 仍然有效」。见 POL-4。"
+    },
+    {
+      "field": "本 topic 的订阅方名单——`consumers` 键在 55 个 topic 里一个都没有，名单只活在六篇方案的散文里，且与本服务 `depends_on` 不一致",
+      "demanded_by": "`contracts/event-topics.v2.json` 的注册项、`tools/check_all.py` 的 `check_catalog`（有校验 `consumers` 的分支，因该键恒缺而从未执行过）、docs/02 的消费关系图",
+      "s02_status": "未决，且两边都对不上。`event-topics.v2.json` 全部 55 个 topic **0 个**声明 `consumers`。散文侧：提到本 topic 的有 6 篇（S07 L911、S08 L679、S29 L818、S33 L1135、S34 L1270、S40 L653）。`service-catalog.v2.json` 里 `depends_on` 含 S02 的有 7 个服务（S07 / S19 / S21 / S25 / S39 / S40 / S46），其中**只有 S07 与 S40 提到本 topic**，S19 / S21 / S25 / S39 / S46 零命中；反过来 **S08（`depends_on=['S03']`）/ S29（`['S26','S28','S10']`）/ S33（`['S26','S28']`）/ S34（`['S26','S28']`）四个消费方都没有声明 S02 依赖**。见 POL-5。"
+    },
+    {
+      "field": "`created_by` 是否允许出租户、是否需要脱敏，以及它是否该进 `pii_payload` 之外的显式规则",
+      "demanded_by": "`contracts/redaction-policy.v2.json` 的 `applies_to`（`any producer` 面）、S45 的审计链、E39（可追溯）",
+      "s02_status": "未决。`redaction-policy.v2.json` 的 `not_secrets.entries` 明写 `principal_id`「是标识符不是凭据」所以不脱敏，`created_by` 在语义上属于这一类；但它的类型是开放字符串（DDL 行 649 无类型无约束、schema 行无 pattern），所以人为塞入的凭据形状内容会落到 `api_key` 类的通用分支上。S02 没有任何一处提到脱敏，`redact` 在本篇命中 0。本 schema 不设 pattern——防线只能在脱敏层。"
+    },
+    {
+      "field": "§11 G6 的处置：只有 `policy.revision.published` 一个事件，决策结果与 gate 状态对下游不可见",
+      "demanded_by": "§10.2 行 719 自己列的「建议补充」三项（`policy.decision.recorded` / `policy.safety_tightened` / `policy.gate.state_changed`）、§11 G6（行 743）、任何要做「为什么这单被拦」UI 的一方",
+      "s02_status": "未决，方案自己记着。行 743（G6）：「事件只有 `policy.revision.published` | UI/下游无法感知决策与 gate 状态 | 内部投影 + 轮询 | 补 `policy.decision.recorded` 等」。行 719 把三个候选事件列成「建议补充（当前 catalog 未声明）」。`service-catalog.v2.json` 里 S02 的 `published_events` 只有一条，与事件表一致。所以本 schema 覆盖的是 S02 全部对外事件的三分之一不到——它的名字里的 `published` 容易被读成「策略体系的事件」，实际只是「有一版新文档」."
+    },
+    {
+      "field": "§10.1 里 7 张表的 DDL 只有列名、没有类型与约束，其中包含本事件的主表 `automation_policy_revision`",
+      "demanded_by": "实现方建表、E28（跨租户拒绝）、E12-04（`REVISION_CONFLICT`）、任何要判断「这一列是否可空」的读写路径",
+      "s02_status": "未决。§10.1 的 sql 块（行 646–711）共 **10** 张表，其中 **7** 张是裸列清单（`automation_policy_revision` / `policy_publish_pointer` / `policy_scope_binding` / `gate_instance` / `policy_decision` / `policy_exception` / `safety_tightening`），只有 3 张是真正的 `CREATE TABLE`（`idempotency_record` / `outbox` / `inbox`）。全块 8 处 `NOT NULL`、1 处 `CHECK` **全部**落在那 3 张里。于是 `automation_policy_revision` 的 8 个列（含本事件的两个来源列 `effective_at` / `created_by`）没有一个字说它们可不可空。见 POL-8。"
+    },
+    {
+      "field": "catalog 声明的 `query_api` `POST /policy-decisions:evaluate` 在 OpenAPI 里没有路径；`GET /projects/{project_id}/effective-policy` 返回的是存储文档而不是 §5 的 `EffectivePolicy`",
+      "demanded_by": "`contracts/service-catalog.v2.json` 的 S02 条目、`contracts/openapi.v2.yaml`、§5 行 315–369、§11 G6 的「UI 无法感知」",
+      "s02_status": "未决。`openapi.v2.yaml` 共 21 个路径，S02 的只有两个：`/projects/{project_id}/effective-policy`（L233）与 `/policies/{policy_id}/revisions`（L255）。catalog 的 `query_api` 写的是 `POST /policy-decisions:evaluate`——**没有这个路径**。§5 行 317 说「`GET /projects/{project_id}/effective-policy`（OpenAPI 已定义）」，但该路径的 200 响应是 `$ref: automation-policy.v2.schema.json`（L243），即**存下来的那份策略文档**；而 §5 真正描述的输出（行 336–368）是 `EffectivePolicy`，含 `evaluated_for` / `effective` / `provenance` / `explain` / `normalized` / `gate_plan` / `source_revision` / `computed_at`，其中 `effective.reviewer_roles` / `allowed_actions` / `locked` / `effective_window` 四项在 `automation-policy.v2` 根级**根本不存在**（G2 行 739 记的就是这件事）。§5 行 320 的 `POST /policy-decisions:resolve-effective` 同样无路径。见 POL-7。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "POL-1",
+      "summary": "`aggregate_id = policy_revision_id` 里的 `policy_revision_id` 全仓只出现 2 次，两次都不是定义；它是 26 个 `aggregate_id` 目标里唯一带 `revision` 字样的那个，而其余 25 个都指向稳定聚合身份",
+      "the_two_hits": "① §10.1 行 699 的列注释：`tenant_id text NOT NULL, aggregate_id text NOT NULL  /* policy_revision_id */, aggregate_sequence bigint NOT NULL,`——它说明 outbox 的 `aggregate_id` 该填什么，但没说那个值长什么样。② §10.2 行 713：`` `aggregate_id = policy_revision_id`，`aggregate_sequence = revision`。``——赋值，不是定义。除这两处外全仓（`.md` / `.json` / `.yaml` / `.py`，排除 `docs/design-package/`）零命中。",
+      "no_such_column": "`automation_policy_revision`（行 647–651）的 8 个列是 `tenant_id` / `policy_id` / `revision` / `content_hash` / `document` / `effective_at` / `created_by` / `created_at`，主键 `(tenant_id, policy_id, revision)`。没有 `policy_revision_id`，也没有任何列能唯一标识「一条 revision 行」以外的含义。若它指的是三列主键拼出来的字符串，拼接规则（分隔符、顺序、是否带租户）从未给出。",
+      "only_revision_shaped_aggregate": "逐一扫 35 处 `aggregate_id = X` 语句（覆盖 28 篇方案，26 个不同目标）：`grant_id` / `episode_id` / `script_id` / `breakdown_id` / `storyboard_id` / `shot_id` / `plan_id` / `manifest_id` / `analysis_id` / `voice_id` / `task_id` / `run_id` / `permit_id` / `budget_id` / `route_id` / `provider_job_id` / `report_id` / `track_id` / `repair_plan_id` / `review_task_id` / `timeline_id` / `export_id` / `operation_id` / `subscription_id` / `job_id` / `policy_revision_id`。**只有最后一个带 `revision`。** 资产族即便事件以 revision 为单位（`asset.costume.revision.accepted`），`aggregate_id` 也是 `costume_id` 这类稳定身份——它们的计划里都有一句 `aggregate_id = costume_id` 之类的赋值。S02 是唯一把「某一次修订」当成聚合的地方。",
+      "why_it_matters": "envelope 的 `partition_key` 55 个 topic 统一是 `tenant_id:aggregate_id`（`event-topics.v2.json` 计数：55/55）。所以这个未定义的值直接决定 Kafka 分区：同一个 `policy_id` 的两个 revision 若各自成一个聚合，它们可能落到不同分区、失去顺序保证；而按 `policy_publish_pointer` 的语义（`(tenant_id, policy_id)` → `current_revision`，行 653–656），顺序恰恰是该有的。一个字段的命名方式在这里决定了另一个服务的正确性，而它没有定义。",
+      "consequence": "实现方只有两条路：(a) 把 `policy_revision_id` 实现成 `policy_id + ':' + revision` 之类的派生串——那么每次 revision 都是新聚合，`aggregate_sequence = revision` 在聚合内恒为 1，E12-06 的乱序判定无从下手（见 POL-2）；(b) 把它实现成 `policy_id`——那么它名不副实，且行 713 那句赋值是假的。两条都能过任何现有校验：`aggregate_id` 在 envelope 里只收 `string, minLength 1`。",
+      "fix_shape": "需 owner 定：(1) `aggregate_id` 到底该是 `policy_id`（推荐，与 `policy_publish_pointer` 一致、与其余 25 个 `aggregate_id` 的「稳定身份」约定一致）还是某个 revision 级标识；(2) 若后者，给出它的构造规则并写进 §10.1——outbox 那一列现在只有注释；(3) 行 713 的赋值句要跟着改，它是全仓唯一把这条规则写成文字的地方。**本 schema 不碰 envelope**，只在 `policy_ref.id` 里给出了泄漏 `policy_id` 的那条路。"
+    },
+    {
+      "id": "POL-2",
+      "summary": "`aggregate_sequence = revision` 的分母是 `policy_id`，而事件的原始规格一个 `policy_id` 都不发——于是 E12-06 的「指针单调（不回退）」在订阅方没有可比的聚合",
+      "the_spec": "行 713：`aggregate_sequence = revision`。`revision` 在 `automation_policy_revision` 里是 `(tenant_id, policy_id, revision)` 主键的第三段（行 650），在 `automation-policy.v2.schema.json` 里是 `{\"type\":\"integer\",\"minimum\":1}` 且与 `policy_id` 同级。所以「第 3 版」只在「某条策略」内部有意义——跨策略比较两个 revision 数没有意义。",
+      "monotonic_target": "E12-06（行 812）：「`policy.revision.published` 重复投递 / 乱序 → 指针单调（不回退），缓存最终一致」。要被判「不回退」的指针是 `policy_publish_pointer.current_revision`（行 654），键是 `(tenant_id, policy_id)`。§4.5 行 297 的 CAS 也按这个键：`expected_revision` 与 `policy_publish_pointer` 不等 → 409 `REVISION_CONFLICT`。所以单调性天然是 per-`policy_id` 的。",
+      "but_the_event_hides_it": "本事件的原始规格（行 718 + 行 713）说出发 `policy_revision_id` 与 `revision`，**没有一个字说发 `policy_id`**。方案全文 `policy_id` 出现 9 次（6 次在 §10.1 的 DDL、3 次在散文与示例），没有一次在事件语境里。于是订阅方拿到 `aggregate_sequence=3` 却不知道这 3 属于谁：若 `aggregate_id` 按 POL-1 的 (a) 路实现成 revision 派生串，每个聚合只有一条事件，单调性恒真也恒无用；若按 (b) 路实现成 `policy_id`，那么 `aggregate_id` 已经带了它、`revision` 也能比——但那时 `policy_ref.id` 是冗余的，而方案没说过 `aggregate_id = policy_id`。",
+      "why_it_matters": "这不是「少个字段」的洁癖问题。S07 / S08 的消费行都写着要「失效本地 policy 缓存」（S07 L911 / S08 L679），而失效的对象是 `(tenant_id, policy_id, revision, content_hash)` 这一整个键（§5.1 行 382）。一个不知道 `policy_id` 的订阅方只能把整个租户的缓存全清——那是在用一个全表失效去补一个缺失的键。E12-06 若按字面实现，测试代码必须先假设 `aggregate_id` 的语义，而那个语义没有定义。",
+      "consequence": "本 schema 用 `policy_ref.id`（= `policy_id`）把分母补上，使 E12-06 可写：`(tenant_id, policy_ref.id)` 做聚合，`policy_ref.revision` 做序列。但这层因果是**我加的**，不是方案的。如果 owner 决定 `aggregate_id = policy_id`，那么 `policy_ref.id` 与 `aggregate_id` 重复，可以保留（事件自足）也可以删；如果 owner 决定 `aggregate_id` 是 revision 级，则 E12-06 的断言要重写成「按 `policy_ref.id` 分组比较 `revision`」，与 envelope 的 `aggregate_sequence` 脱钩。两种改法都要动行 812 的验收文字。",
+      "fix_shape": "需 owner 定：(1) `aggregate_id` = `policy_id` 还是 revision 级（与 POL-1 同一裁决）；(2) E12-06 的「指针」是指 `policy_publish_pointer.current_revision` 还是「消费方本地副本」——两者判法不同；(3) 本事件的载荷是否必须自足到能独立算出 `(policy_id, revision)`，还是允许订阅方从 envelope 的 `aggregate_id` 反解。本 schema 选了「自足」（`policy_ref` 四键），代价是与 `aggregate_id` 可能重复。"
+    },
+    {
+      "id": "POL-3",
+      "summary": "`scope_binding` 是发布指针缓存的键、也是本 topic 存在的全部理由，但它全仓只出现 3 次、全部在 S02、零处定义；而没有任何代码路径写 `policy_scope_binding` 表，发布指针的 TTL 又是 5 秒",
+      "three_hits": "① 行 147：`A) 绑定在本层的策略文档的顶层字段（scope_binding 命中 level）`——`LayersFor` 的第一步，读方向。② 行 384：`| 发布指针 | (tenant_id, scope_binding) | 5s + policy.revision.published 事件主动失效 | 事件驱动 |`——缓存键。③ 行 658：`policy_scope_binding(`——表名。除这三处外全仓零命中，包括 `docs/`（`docs/design-package/` 亦为零）。",
+      "no_writer": "`policy_scope_binding`（行 658–661）声明了 7 个列 `tenant_id, scope_type, scope_id, policy_id, revision, content_hash, updated_at` 与 `PRIMARY KEY (tenant_id, scope_type, scope_id)`。但方案全文：`current_revision` 1 次（行 654，`policy_publish_pointer` 的列名）、`INSERT` 1 次（行 651，`-- 只 INSERT，永不 UPDATE/DELETE`，说的是 `automation_policy_revision`）、`UPDATE` 0 次（除 L651 那个注释里的否定式）。**没有任何一处描述写入 `policy_scope_binding` 或推进 `policy_publish_pointer` 的代码路径。** §4.5 只描述发布校验（`expected_revision` CAS → 409 `REVISION_CONFLICT`），§10.1 只给列。于是「一条 revision 发布后，哪个 scope 的指针指向它」这件事没有实施描述。",
+      "ttl_makes_the_event_marginal": "行 384 的发布指针缓存 TTL 是 **5 秒**。也就是说即使完全没有这个事件，任何订阅方最多落后 5 秒——前提是它知道该查哪个键。而本 topic 在全部六篇消费方方案里的用途都是「失效本地 policy 缓存」（S07 L911「失效本地 policy 缓存；不主动重建任何 plan」、S08 L679「失效本地政策缓存；已在使用旧版本的接受提交保持有效（证据固定）」、S29 L818「刷新 `route_policy_ref` 可用性（只读）」）。**一个 5 秒就会自己过期的缓存键，配一个 at-least-once、保留 14 天的事件做失效**——事件的价值不在于快，而在于「不知道键也能知道有变化」。但那要求载荷里带得出 `scope_binding`，而它没有定义。",
+      "why_it_matters": "本 topic 的 `partition_key` 是 `tenant_id:aggregate_id`，`aggregate_id` 是 revision 级（POL-1），所以事件天然只说得清「哪一版发布了」，说不清「哪些 scope 受影响」。§9.2 行 622–628 的生效范围表逐类说明了「已提交供应商的任务继续结算」「已授权未提交的复查」「已产出的不追溯重判」，这些判断全部需要知道 scope——而订阅方只能自己按 `policy_ref` 回源重算整个 `LayersFor` 链。这就是 POL-5 里 S08/S29/S33/S34 四个消费方要做的事，也正是它们没有声明 `depends_on: S02` 时所缺的能力。",
+      "consequence": "实现方会做一件事：把 `policy_scope_binding` 建出来但从不写入，于是发布指针永远解析到空、缓存永远 miss、每次决策都回源（§5.1 行 391 的 fail-closed 因此变成常态而不是降级）。或者把 `scope_binding` 实现成 `(scope_type, scope_id)` 的拼接串——那是本 schema 的猜测，方案没有。",
+      "fix_shape": "需 owner 定：(1) `scope_binding` 的键集与取值（是否就是 `policy_scope_binding` 的 `(scope_type, scope_id)` 二元组）；(2) 发布事务写 `policy_scope_binding` 与 `policy_publish_pointer` 的步骤——它们属于 §4.5 的发布伪代码还是 §10.1 的触发器；(3) 若发布指针的 5 秒 TTL 已经够用，本 topic 的载荷是否需要带 scope 信息，还是纯粹作「有新版本，去回源」的信号（后者更简单，但要在 `contracts/event-topics.v2.json` 的描述里说清）。本 schema 不含 `scope_binding`。"
+    },
+    {
+      "id": "POL-4",
+      "summary": "`effective_at` 必填且可未来时，方案从未说未来时间会延迟生效；而真正被判的 `effective_window.until` 没有任何来源字段",
+      "effective_at_bare": "`automation_policy_revision` 行 649：`effective_at timestamptz,`——无类型之外的任何约束（这张表是 7 张裸列清单之一，见 POL-8）。`automation-policy.v2.schema.json` 的同名字段：`{\"type\":\"string\",\"format\":\"date-time\"}`，**无 description**、无 `minimum`、无 `if/then`。它是 `required` 14 项之一。`contracts/examples/automation-policy.json` 的取值是 `\"2026-10-29T20:00:00+08:00\"`——一个过去时间，所以示例也提供不了线索。",
+      "what_actually_gates": "§5 行 376：「`effective_window` 与当前时间不交 → 409 `POLICY_EXPIRED`（不是回落到更松的版本）」；§8 行 566 派单检查第 2 条：「策略 `effective_window` 未过期 | S02 | — | `deny` `POLICY_EXPIRED`」。两处判的都是 `effective_window`，不是 `effective_at`。",
+      "effective_window_has_no_source": "`effective_window` 在 S02 全文命中 4 次：行 235（`intersect_windows`）、行 351（`EffectivePolicy` 响应的示例值 `{\"from\":\"2026-10-29T20:00:00+08:00\",\"until\":\"2026-12-31T00:00:00+08:00\"}`）、行 376（`POLICY_EXPIRED`）、行 566（派单检查）。四次都是**读/判**，没有一次说这个值从哪个存储字段来。`automation-policy.v2.schema.json` 里没有 `expiry`、没有 `expires_at`、没有 `effective_window`——**这是 §11 G2（行 739）自己列的缺口**：「根级无 `reviewer_roles`、`locked`、`allowed_actions`、`expiry`、`quorum`」。所以 `until` 无源、`from` 只能来自 `effective_at`（猜测）。",
+      "future_dating_unruled": "方案从未出现「未到 `effective_at` 时旧 revision 仍然有效」或任何等价句。`POLICY_EXPIRED` 只管「过期」，不管「未生效」。于是把 `effective_at` 填成明天的发布行为完全未定：是立刻取代当前指针（无视时间），还是排队等到明天？`policy_publish_pointer` 只有一个 `current_revision`（行 654），结构上不支持「排队」——那要靠调度器，而调度器不在 §10.1。",
+      "why_it_matters": "这是资产族已经踩过的坑的同构体：S15 的 `effective_at` 只作审计字段，若消费方按「没到时间等于没变」来猜，撤销期间的在途付费任务会继续跑。S02 这边方向相反但同样危险——如果实现按「发布即生效」处理，一个填错日期（或故意填未来）的**放宽**版本会立刻生效；而 §4.5 的整套发布校验（`LOOSENING_NOT_ALLOWED` / `REVIEWER_ROLE_ESCAPE` / `BUDGET_SCOPE_ESCAPE` / `HARD_RULE_IMMUTABLE`，行 274–291）保证的是「不比祖先松」，不是「这个时间点该不该生效」。",
+      "consequence": "两种实现都能通过本 schema 与 §4.5 的全部门：(a) 发布即生效，`effective_at` 纯展示——那么 E12-06 的「指针单调」与时间无关，而任何未来时取值都是一个沉默的错误；(b) 等到 `effective_at` 才推进指针——那么 `policy_publish_pointer` 需要一个「待生效」状态，而它没有；且「等到」意味着必须有一个定时器，方案没有。",
+      "fix_shape": "需 owner 定：(1) `effective_at` 是「生效时刻」还是「记录时刻」（前者需要一条生效规则 + 指针结构改动；后者应改名，如 `authored_at`，并让 `POLICY_EXPIRED` 另找依据）；(2) `effective_window.until` 的来源字段（G2 已列，需与 `expiry` 的加字段方案一并裁）；(3) 若允许未来时，是拒绝（422，最省事）还是排队（需要状态机）——本 schema 不替它选，只收 `format: date-time`。"
+    },
+    {
+      "id": "POL-5",
+      "summary": "55 个 topic 一个都没声明 `consumers`，本 topic 的消费方名单只活在六篇散文里；而 `depends_on: S02` 与「提到这个 topic」两边互不覆盖——5 个声明依赖的零命中，4 个消费的没声明依赖",
+      "no_consumers_key": "`contracts/event-topics.v2.json` 全部 55 个 topic 的键集是 `event_type` / `topic` / `producer` / `schema_ref` / (可选 `data_schema_ref`) / `partition_key` / `delivery` / `normal_retention_days` / `replay_side_effects` / `pii_payload`。**`consumers` 出现 0 次。** 消费关系只存在于 `docs/02` 的散文与各篇方案的消费表里。",
+      "dead_check": "`tools/check_all.py` 的 `check_catalog` 里有：`consumers = t.get(\"consumers\")` / `if consumers:` / `for c in consumers: if c not in known: r.fail(...)`。因为这个键恒缺，这个分支从未进入过一次——`catalog` 检查现在把这些话说在 note 里（`[producer-only: no topic declares consumers]`），但在那之前它只报「48 service(s), 55 topic(s)」，其中「消费方是合法 service_id」这一半是空转的。这不是本事件独有的问题，但本事件正好是那个本该最需要它的 topic（它的六个消费方横跨生产、审核、快照、授权四条线）。",
+      "mentions": "提到 `policy.revision.published` 的六篇：S07（L911，消费表）、S08（L679，消费表）、S29（L818，消费表）、S33（L1135 消费表 + L507 散文）、S34（L1270，消费表）、S40（L653，消费表一行并入三个 topic）。S02 自己 5 次（行 607 / 718 / 812 及散文）。",
+      "declares_depends_on_S02": "`service-catalog.v2.json` 里 `depends_on` 含 `S02` 的 7 个：S07 `['S08','S09','S18','S02']`、S19 `['S02','S26']`、S21 `['S08','S02','S22','S23']`、S25 `['S24','S20','S02']`、S39 `['S35','S36','S37','S09','S02']`、S40 `['S01','S02','S08']`、S46 `['S01','S02','S07','S21']`。**其中提到本 topic 的只有 S07 与 S40；S19 / S21 / S25 / S39 / S46 零命中**——它们依赖 S02 是为了 `evaluate` 决策（同步 API），不是为了这个事件，这本身没错，但说明「depends_on 含 S02」不能推出「消费本 topic」。",
+      "consumes_without_depends_on": "反过来，四个消费方没有声明 S02 依赖：S08 `['S03']`、S29 `['S26','S28','S10']`、S33 `['S26','S28']`、S34 `['S26','S28']`。其中 **S08 是最重的一个**——它的消费行（L679）写「失效本地政策缓存；已在使用旧版本的接受提交保持有效（证据固定）」，即它要在本地维护一份 policy 副本并处理「旧版本仍然有效」这条语义，而它连 `depends_on: S02` 都没有。这与 POL-3 的 `scope_binding` 缺口叠加：它既没有依赖声明，也没有可用的 scope 键。",
+      "why_it_matters": "`check_all.py` 的 `catalog` 检查曾声称「服务 id / topic 生产消费方 / `docs/02` 三方一致」，实际只校验了 `producer`；README 里 `check_all` 那一节已改成「topic `producer`」并注明消费方一侧从未执行。消费方名单不落到机器可读的位置，就意味着：新增一个消费方不需要改契约、删掉一个消费方也没人知道、而 `depends_on` 与本 topic 的关系没有任何一致性约束。这类缺口在单服务里只是文档不齐，在 48 服务里是「谁该在 S02 挂掉时降级」这个问题的答案不存在。",
+      "consequence": "实现方按 `depends_on` 编排启动顺序时，S08 / S29 / S33 / S34 不会等 S02，它们启动时若缓存 miss 且回源失败就撞上 §5.1 行 391 的 fail-closed——即拒绝新增付费动作。而它们的方案里没有一句说「S02 不可达时怎么办」（S08 的消费行只写「重试；政策缓存 miss 时回源」）。反过来 S19 / S21 / S25 / S39 / S46 声明了依赖却不用事件，可能被误排进本 topic 的消费组。",
+      "fix_shape": "需 owner 定：(1) 是否给 `event-topics.v2.json` 的 topic 加 `consumers` 键（一次全仓变更，`check_all.py` 已有校验分支在等）；(2) 若加，本 topic 的名单是 S07 / S08 / S29 / S33 / S34 / S40 六篇里的哪几个——S33 / S34 的消费行与 S02 §9.2 行 627 冲突（见 POL-6）；(3) S08 / S29 / S33 / S34 是否该补 `depends_on: S02`。本 schema 不涉及 `event-topics.v2.json` 的消费方字段（本仓 schema 层无此表达）。"
+    },
+    {
+      "id": "POL-6",
+      "summary": "S33 与 S34 的消费行都写这个事件「可能导致 take 变 void」，而 S33 自己在上文说这个事件「说的是策略，不是『这个素材已经不可用』」，S02 §9.2 又明写已产出的 artifact 不追溯重判",
+      "the_rows": "S33 `plans/S33-sound-effects.md:1135`：`| S02 | \\`policy.revision.published\\` | 重新解析许可；**可能导致 take 变 void** |`。S34 `plans/S34-music.md:1270`：`| S02 | \\`policy.revision.published\\` | 重新解析许可；可能使 take 变 void |`。两行几乎逐字相同。",
+      "s33_disagrees_with_itself": "S33 同一篇 L507：「这些都不改变 bytes，也不产生 S33 能感知的事件——除了 S02 的 `policy.revision.published`，而那个事件说的是策略，不是『这个素材已经不可用』。」这句与 L1135 是同一位作者在同一条论证链上的两处结论，方向相反：L507 用「它不构成素材失效信号」来论证某个设计（素材不可用需要另一条路径），L1135 又把它列成会使 take 变 void 的信号。",
+      "s02_says_it_cannot": "§9.2 行 627：「已产出的 artifact 与已接受的指针 | **不追溯重判**。已接受的在旧策略下合法，保留并在证据包记录当时的 `policy_version`」。行 630：「**『历史产物是否重做』：默认不重做。**」所以按 S02 的生效范围表，一个已经产出的 take 不会因为策略变更而变 void。",
+      "why_it_matters": "这行的方向如果被实现，S33 / S34 会在每次策略发布时对全部 take 重跑一遍许可解析——§9.2 行 624 明写「策略变严不能让在途任务停付」，而 take 已经是已产出物，重判会让已结算的音频被标成无效。方向如果按 S02 的生效范围表实现（不追溯），那么 S33 / S34 的这行消费说明是错的，而它旁边的「重新解析许可」这个动作仍然要做——但不是为了作废，而是为了标记「下一次使用前需要复查」。两种语义差一个词（`void` vs `recheck_required`），后果差一整批已交付内容。",
+      "consequence": "消费方实现「变 void」时，需要一个权威来回答「这个 take 现在还能不能用」——而本事件不带任何素材级信息（它连 `scope_binding` 都没有，见 POL-3），所以 S33 / S34 必须回源问 S02 或问权利方。若实现「不变 void」，则这两篇的消费表要与 L507 对齐，并说明「重新解析许可」的结果存在哪里。两条都需要 S02 或权利权威的一个明确回答，而当前文本给不出。",
+      "fix_shape": "需 owner 定：(1) 已产出的 take 在策略收紧后是 `void` 还是 `recheck_required`（建议后者，与 §9.2 行 627 一致）；(2) 若为后者，S33 / S34 的消费行改成「标记待复查，不改 take 状态」，并补一句「何时复查」（下次使用前？下次导出前？）；(3) S33 L507 与 L1135 必须统一——L507 那句本身是对的，L1135 是它要否定的东西。本 schema 不含任何素材级字段，因此不加剧也不缓解这一条。"
+    },
+    {
+      "id": "POL-7",
+      "summary": "catalog 声明的 `query_api` `POST /policy-decisions:evaluate` 在 OpenAPI 里没有路径；已有的 `GET .../effective-policy` 返回存储文档而不是 §5 的 `EffectivePolicy`，两者字段集差四项",
+      "paths": "`contracts/openapi.v2.yaml` 共 21 个路径。S02 的只有两个：`/projects/{project_id}/effective-policy`（L233，`get`，`operationId: getEffectivePolicy`）与 `/policies/{policy_id}/revisions`（L255，`post`，`operationId: createPolicyRevision`）。其余 19 个属于 S03 / S07 / S08 / S09 / S10 / S21 / S22 / S23 / S25 / S26 / S40 / S43 / S44 等。",
+      "catalog_says_otherwise": "`service-catalog.v2.json` 的 S02 条目：`\"command_api\": \"POST /policies/{id}/revisions\"`（与 OpenAPI 的 `/policies/{policy_id}/revisions` 只差参数名写法，可接受）、`\"query_api\": \"POST /policy-decisions:evaluate\"`——**该路径不在 OpenAPI 里**。§5 行 320 的 `POST /policy-decisions:resolve-effective` 也不在。于是目录里声明的查询入口，契约层一个都没有；而 §8 行 561 的 `dispatch_admission` 与 §10.3 行 728 的 `evaluate` 幂等规则（同 `command_id` 返回同一 `decision_id`）描述的就是这个不存在的路径。",
+      "response_is_the_wrong_schema": "`/projects/{project_id}/effective-policy` 的 200 响应是 `$ref: automation-policy.v2.schema.json`（L243）——即**存下来的那份策略文档**。而 §5 行 336–368 描述的输出是 `EffectivePolicy`：`schema_version` / `policy_ref` / `evaluated_for` / `effective` / `provenance` / `explain` / `normalized` / `gate_plan` / `source_revision` / `computed_at`。两者只有 `schema_version` 与 `policy_ref` 两个共同键。",
+      "four_fields_that_do_not_exist": "`effective` 块（行 340–352）里的 `reviewer_roles` / `allowed_actions` / `locked` / `effective_window` 四项，在 `automation-policy.v2.schema.json` 的根级**都不存在**——那 14 个属性是 `schema_version` / `policy_id` / `revision` / `tenant_id` / `mode` / `generation_mode` / `acceptance_mode` / `overrides` / `repair_limits` / `exception_behavior` / `required_gates` / `hard_rules` / `effective_at` / `created_by`。§11 G2（行 739）自己记着这件事：「根级无 `reviewer_roles`、`locked`、`allowed_actions`、`expiry`、`quorum`」。`reviewer_roles` 在 `overrides[]` 的元素里有（那是 per-scope 覆盖），根级没有；`allowed_actions` / `locked` 完全不在 schema 里；`effective_window` 见 POL-4。",
+      "why_it_matters": "§5 行 317 写「`GET /projects/{project_id}/effective-policy`（OpenAPI 已定义）」。这句话是真的（路径在），但它暗示「OpenAPI 已定义了我要的东西」——而实际定义的响应形状与本节描述的 `EffectivePolicy` 是两份不同的东西。实现方按 OpenAPI 生成客户端，会拿到一份 `automation-policy` 文档，然后发现 §4.4 的 join 结果（`provenance` / `explain` / `gate_plan`）无处安放。§11 G6 说「UI/下游无法感知决策」，这里更进一步：连「当前有效策略」的响应形状都不对。",
+      "consequence": "三种实现都会通过现有校验（OpenAPI 是 YAML，没有工具在 CI 里比对 catalog 的 `query_api` 与 paths）：(a) 实现 `GET .../effective-policy` 返回存储文档——与 OpenAPI 一致，与 §5 不一致，`provenance` 无处放；(b) 返回 `EffectivePolicy`——与 §5 一致，与 OpenAPI 的 `$ref` 不一致，生成的客户端解析失败；(c) 实现 `POST /policy-decisions:evaluate` 但不在 OpenAPI 里描述——catalog 与路径都对上了，契约层缺失。",
+      "fix_shape": "需 owner 定：(1) `EffectivePolicy` 是否补一份 schema 并在 OpenAPI 里换掉那个 `$ref`（它现在借用存储文档的 schema 描述一个派生结果）；(2) `POST /policy-decisions:evaluate` 与 `/policy-decisions:resolve-effective` 是否进 OpenAPI——catalog 已经把前者写成 `query_api`；(3) G2 的四个字段（`reviewer_roles` / `locked` / `allowed_actions` / `expiry`）若加进 `automation-policy.v2` 根级，`EffectivePolicy.effective` 与文档根级的关系才能说清。本 schema 与 OpenAPI 无关，只记录。"
+    },
+    {
+      "id": "POL-8",
+      "summary": "§10.1 的 10 张表里有 7 张只有列名、没有类型没有约束，其中包含本事件的主表 `automation_policy_revision`；全块 8 行共 16 个列带 `NOT NULL`，与唯一 1 处 `CHECK`，都落在另外 3 张里",
+      "the_block": "§10.1（行 646–711）一个 ```` ```sql ```` 块，共 10 个表的声明。**7 张是裸列清单**：`automation_policy_revision`（行 647）、`policy_publish_pointer`（行 653）、`policy_scope_binding`（行 658）、`gate_instance`（行 663）、`policy_decision`（行 670）、`policy_exception`（行 678）、`safety_tightening`（行 683）——写法是 `table_name(\n  col1, col2, ... ,\n  PRIMARY KEY (...)\n)`，列名之间没有类型。**3 张是真 DDL**：`governance_policy.idempotency_record`（行 688）、`governance_policy.outbox`（行 697）、`governance_policy.inbox`（行 706），带 `CREATE TABLE`、`text` / `char(64)` / `jsonb` / `timestamptz` 类型与 `DEFAULT now()`。",
+      "constraints_all_elsewhere": "全块 `NOT NULL` 共 **8 处**：行 689 ×3（`tenant_id` / `command_id` / `request_hash`）、行 690 ×2（`command_type` / `state`）、行 692（`created_at`）、行 699 ×2（`tenant_id` / `aggregate_id`）、行 700 ×3（`event_type` / `partition_key` / `payload`）、行 701 ×2（`headers` / `created_at`）、行 707 ×2（`consumer` / `event_id`）、行 708（`received_at`）——按表归属**全部**落在 `idempotency_record` / `outbox` / `inbox` 三张里。`CHECK` 共 **1 处**：行 690 的 `state IN ('IN_PROGRESS','DONE')`，同样在那个三张里。于是 7 张业务表没有任何可空性说明、没有任何取值约束。",
+      "this_events_table": "`automation_policy_revision`（行 647–651）——本事件宣告的就是它的一行——8 个列 `tenant_id` / `policy_id` / `revision` / `content_hash` / `document` / `effective_at` / `created_by` / `created_at`，只有主键 `(tenant_id, policy_id, revision)` 与一句 `-- 只 INSERT，永不 UPDATE/DELETE` 注释。本 schema 的两个来源列（`effective_at` 行 649、`created_by` 行 649）在这里没有类型，`content_hash` 也没有 `char(64)` 之类——所以「`content_hash` 是 64 位十六进制」这条约束在 S02 自己的 DDL 里**不存在**，只借自全仓的 `policy_ref` 形状（见 `policy_ref` 的 description）。",
+      "why_it_matters": "这不是风格问题：`automation_policy_revision` 声称「只 INSERT 永不 UPDATE」（行 651），而不可变性在两个地方被依赖——§5.1 行 382 的缓存键含 `content_hash`（「内容寻址，revision 不可变」）、行 389「解析结果是 `content_hash + scope_path` 的纯函数，所以不存在失效问题」。这两条论断的前提是「同一个 `(policy_id, revision)` 永远对应同一份 `document` 与同一个 `content_hash`」。裸列清单里没有任何东西承载它：没有 `UNIQUE`、没有 `CHECK`、没有不可变触发器。**约束没写，规则就只活在那行注释里。**",
+      "consequence": "实现方建表时会自己补齐类型（不可避免），于是每份实现补出来的 S02 schema 都不一样；而这些表之间还有外键式的语义（`policy_scope_binding.revision` 指向 `automation_policy_revision.revision`、`gate_instance.policy_ref_revision` 亦然），没有类型就无法判断它们是否同名同域。更实际的风险：`policy_decision`（行 670–676）有 `UNIQUE (tenant_id, command_id)` 支撑 §10.3 的幂等，`policy_exception` 有 `max_uses` / `used_count` 支撑例外次数，`safety_tightening` 的 `effective_from` / `expires_at` 支撑行 723 的旁路——这些都是**行 723 与行 728 明写的正确性规则**，而承载它们的列一个类型都没有。",
+      "fix_shape": "需 owner 定：§10.1 是否补齐这 7 张表的类型与约束（参照 `outbox` / `inbox` 的写法）。至少要补的是：`content_hash char(64)`（对齐全仓 160 处 `^[0-9a-f]{64}$`）、`effective_at` / `created_at` / `updated_at` 的 `NOT NULL`、`revision integer CHECK (revision >= 1)`、`policy_scope_binding.revision` 与 `gate_instance.policy_ref_revision` 的域、以及行 651「只 INSERT 永不 UPDATE」靠什么强制（权限？触发器？）。本 schema 无从表达这些，只按 DDL 的列名收键。"
+    },
+    {
+      "id": "POL-9",
+      "summary": "`policy_switch_request` 只出现在 §9.2 的一条箭头里：不是任何表的列、不在 §10.1 的 DDL 里、也不在 §11 的缺口表里——而它被写成「运行中改模式」的关键一步",
+      "the_only_hit": "行 608（§9.2 的运行中改模式流程）：`→  S02 写 policy_switch_request(run_id, new_revision, requested_checkpoint)`。全篇仅此 1 次。",
+      "not_in_ddl": "§10.1 的 10 张表里没有 `policy_switch_request`，也没有任何列名为 `run_id`——`automation_policy_revision` / `policy_publish_pointer` / `policy_scope_binding` / `gate_instance` / `policy_decision` / `policy_exception` / `safety_tightening` / `idempotency_record` / `outbox` / `inbox` 的列逐一查过，没有 `run_id`、没有 `requested_checkpoint`。所以这句「写」没有落点。",
+      "not_in_gap_table": "§11 的 G1–G7（行 738–744）没有一条提它。G1 讲 `scope_type` 缺 `run`、G6 讲事件太少，但「运行中切换的请求本身没有存储」不是被记下的缺口。",
+      "why_it_matters": "§9.2 是 S02 与 S21 / S08 的接口：策略变更后，S02 记一个「这个 run 想换到 new_revision」，然后在下一个安全 checkpoint 由 S21 来取。§9.2 行 613–618 把那四个 checkpoint 条件写得非常具体（无 `SUBMITTING`/`SUBMISSION_UNKNOWN`、`input_fingerprint` 未变、无未结算 reservation、节点边界），这正说明它是认真设计的一步——但它要写的那张表不存在。而 `SCOPE_CHAIN`（行 144）也不含 run，`overrides[].scope_type` 只有 project/episode/stage/node（G1），所以「按 run 维度等待切换」在整个 §10.1 里没有任何存储。",
+      "consequence": "实现「运行中改模式」时，要么把 `policy_switch_request` 当成一个隐式的、靠 `policy_publish_pointer` 与 manifest `policy_ref` 差集推出来的状态（那需要每次读 manifest 并比较，与行 613「下一安全 checkpoint」的判法无关），要么新增一张表——而新增表意味着 §10.1 与 E12 的验收清单都要动。两种做法都不违反任何现有约束，因为这条链路当前只有一句话。",
+      "fix_shape": "需 owner 定：(1) `policy_switch_request` 是否要成为一张真表（列：`tenant_id` / `run_id` / `new_revision` / `requested_checkpoint` / `state` / `created_at`？），若要是，§10.1 与 §11 各补一行；(2) 若不建表，行 608 那句「写」要改成实际动作（例如写进 `policy_publish_pointer` 的一个待生效字段，或触发 S21 的一次命令）；(3) 与 POL-4 的「未来 `effective_at` 排队」是同一类问题——两者都需要一个「待生效状态」的存储，建议合并裁。本 schema 不涉及。"
+    },
+    {
+      "id": "POL-10",
+      "summary": "S02 在四个 JSON 示例里把 hash 写成 `\"sha256:...\"`，而全仓 47 份 schema 用 167 处 `^[0-9a-f]{64}$` 表达同一个东西；同一段代码里上下相隔 12 行的两处自相矛盾",
+      "the_four": "§5 行 338：`\"policy_ref\": {\"service_id\":\"S02\",\"id\":\"policy_p1\",\"revision\":3,\"content_hash\":\"sha256:...\"}`；§7 行 480：`\"request_hash\": \"sha256:...\"`；§7 行 484：`\"artifact\": {\"id\":\"...\",\"revision\":3,\"content_hash\":\"sha256:...\"}`；§7 行 520：`\"decision_hash\": \"sha256:...\"`。全篇 `sha256:` 命中 4 次，全部在示例 JSON 里；散文与 DDL 都不用这个前缀。",
+      "self_contradiction": "行 326（`EffectivePolicy` 的**请求**形状）写 `\"content_hash\":\"...\"`，行 338（同一对象的**响应**形状，往下 12 行）写 `\"sha256:...\"`。同一个键、同一份文档、同一节，两种写法。行 355 的 `provenance.source.content_hash` 又是裸 `\"...\"`。",
+      "repo_wide_form": "`^[0-9a-f]{64}$` 在 `contracts/*.schema.json` 46 份文件里共出现 **160 处**；`contracts/*.schema.json` 里含子串 `sha256:` 的有 12 份，逐份检查其 `pattern` 字段——**12 份的 `sha256:` 全部在 `description` 散文里，没有一处出现在任何 `pattern` 中**。也就是说全仓没有任何一份 schema 接受带前缀的 hash。`contracts/examples/` 里的 hash 一律是裸 64 位小写十六进制（如 `asset-costume-revision-accepted.json` 的 `\"cd05d50a…\"`，`len == 64`）。",
+      "why_it_matters": "`policy_ref` 是本事件的核心键，它的 `content_hash` 要与 `episode-manifest.policy_ref`、`execution-context.policy_ref`、`policy_decision` 的 `subject_hash` 与 `policy_ref_revision` 一起做绑定检查（§6 行 456「SATISFIED 的三个绑定缺一不可：`artifact_content_hash` + `node_epoch` + `policy_ref`」）。如果 S02 的写路径真按行 338 存 `\"sha256:…\"`，那么它与那三处契约里的裸 hex 永远不相等——`HASH_MISMATCH`（行 541 的 `ABSTAIN(\"HASH_MISMATCH\")`）会变成常态，而原因是一个前缀。这类错误在字符串比较里不报错，只表现为「明明同一条策略却绑不上」。",
+      "consequence": "本 schema 按裸 hex 收（`pattern: ^[0-9a-f]{64}$`），与全仓一致。若 S02 的实现照行 338 / 480 / 484 / 520 走，本事件会直接校验失败——这是**有意为之**：让错误在生产者侧暴露，而不是让消费方在跨服务比较里静默失败。但这也意味着行 338 那四处必须改（或明确「示例里的 `sha256:` 只是省略号的一部分，真实值带前缀」——那样行 326 就写错了）。方案没有任何一处讨论过这个前缀。",
+      "fix_shape": "需 owner 定：(1) 行 338 / 480 / 484 / 520 是否去掉 `sha256:` 前缀（建议去掉，与全仓 160 处一致）；(2) 若某种 hash 确实需要算法标识（未来迁移到 sha3 / blake3），应加一个独立的 `hash_algorithm` 字段而不是塞进值里——这会是一次全仓契约变更，需要单独立项；(3) `decision_hash`（行 520）与 `request_hash`（行 480）是否要与 `content_hash` 同形（现在也是带前缀的）。本 schema 只对 `content_hash` 表态。"
+    }
+  ]
+}

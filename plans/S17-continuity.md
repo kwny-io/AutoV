@@ -1,6 +1,6 @@
 # S17 · 连续性校验 — 实现方案
 
-状态：`design_only`。SLO 未验证。本文是实现方案，不是已实现的服务。
+状态：`implemented`（内核）—— 33 条测试全绿，未部署，SLO 未验证。实现过程中的方向复查结论与契约缺口见 §11。
 
 上游约束：[docs/05](../docs/05-cross-episode-memory.md)、[docs/11](../docs/11-quality-repair.md)、[S17 规格](../docs/design-package/services/S17-continuity.md)、[S16 实现方案](./S16-story-memory.md)。
 
@@ -179,9 +179,35 @@ CREATE TABLE continuity.episode_baseline (
 ### 1.7 基础设施表
 
 ```sql
-continuity.idempotency_key (tenant_id, command_id, request_hash, response_body, ...);
-continuity.outbox_event    (tenant_id, event_id, aggregate_id, aggregate_sequence, payload, ...);
-continuity.inbox_consume   (tenant_id, consumer, event_id, applied_at, ...);
+CREATE TABLE continuity.idempotency_key (
+  tenant_id       text NOT NULL, command_id text NOT NULL, request_hash char(64) NOT NULL,
+  command_type    text NOT NULL, state text NOT NULL CHECK (state IN ('IN_PROGRESS','DONE')),
+  response_code   integer, response_body jsonb,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at      timestamptz NOT NULL DEFAULT now() + interval '30 days',
+  PRIMARY KEY (tenant_id, command_id)
+);  -- 同键同 hash 返回缓存；同键不同 hash → 409
+
+CREATE TABLE continuity.outbox_event (
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id          text NOT NULL,
+  aggregate_id       text NOT NULL,              -- check_run_id
+  aggregate_sequence bigint NOT NULL,
+  event_type         text NOT NULL,
+  partition_key      text NOT NULL,              -- tenant_id || ':' || aggregate_id
+  payload            jsonb NOT NULL,
+  headers            jsonb NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  published_at       timestamptz,
+  UNIQUE (aggregate_id, aggregate_sequence, event_type)
+);
+CREATE INDEX outbox_unpublished_idx ON continuity.outbox_event (id) WHERE published_at IS NULL;
+
+CREATE TABLE continuity.inbox_consume (
+  consumer    text NOT NULL, event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, event_id)
+);
 ```
 
 ---
@@ -530,3 +556,48 @@ runbook：
 7. ❌ 用"全局关闭某类检查"代替豁免 → 豁免必须有作用域、理由、批准人、有效期。
 8. ❌ 把 suppress 的缺陷从报告里删掉 → 必须保留 disposition + reason 作为审计证据。
 9. ❌ S17 自己写一份 `prohibited_assumptions` → 那是 S18 的产出，S17 只核对其被覆盖情况。
+
+---
+
+## 11. 实现后复查：结论与契约缺口
+
+### 11.1 方向复查四条
+
+| 项 | 结论 |
+|---|---|
+| (a) 方案承诺的入口/错误码 | 对上。`POST /continuity-checks`、`GET /continuity-reports/{id}` 都在；错误码 `MALFORMED_REQUEST` / `TENANT_MISMATCH` / `MEMORY_WATERMARK_BEHIND` / `CHECKPOINT_MISMATCH` / `REPORT_REVISION_CONFLICT` / `REPORT_NOT_FOUND` 都有代码路径。详见 §11.3 的 openapi 缺口。 |
+| (b) 第二权威 | 否。库里没有 `claim`/`held_by`/`current_state`；`expected_state` 强制 `source_claim_ref`；唯一事实入口是注入的 `memory_query`。与 [docs/01:52](../docs/01-enterprise-architecture.md) 一致。 |
+| (c) AGENTS.md 红线 | 无违反。跨租户靠 `X-Tenant-Id` + body `tenant_id` 双重比对（403 `TENANT_MISMATCH`）；不直连模型（§4.2 经 S26）；不付费；不写别库。 |
+| (d) 版本语义 | 无 `execution_fence` 使用。S17 不是发布者，不持有接受指针，`node_epoch` 也不应出现在这里 —— 它只给 S39 报缺陷，重生成受 `node_epoch` 约束是 S26/S29–S31 的事（§5.3）。 |
+
+### 11.2 复查中发现并修掉的实质缺陷
+
+`_world_rule_allows`（§3 第 4 步）原本只问「这个主体上有没有一条 `world_rule`」，而 docstring 声称要求规则点名同一个动作。探针复现了两个后果：
+
+1. 一条「林岚会飞」的规则把同一角色上的 `INJURY_REGRESSION` 压成 `suppress / WORLD_RULE_ALLOWS`，报告 `verdict: pass`。
+2. 一条「每晚可瞬移一次」的规则把真正的越界（`teleported_twice`）也压掉 —— `§2.3` 的 `WORLD_RULE_BREACH + conf≥0.80 → blocking` 成了死码。
+
+修法：不再按类别猜，改按声明判。观测必须带
+`{"kind": "world_rule_ref", "id": R, "within_exception": true}`，且 R 在本次 checkpoint 可见、R 是 `world_rule`。S17 不解析 `rule_statement`（反模式 5）。同一 `WORLD_RULE_BREACH` 既可能是合法特效（断言 `true`），也可能是真越界（断言 `false`）—— 类别分不开这两种，声明能。
+
+三条回归用例锁住：`test_any_world_rule_does_not_blanket_excuse_the_entity`、`test_citing_a_rule_without_claiming_the_exception_is_not_legal`、`test_world_rule_breach_is_not_excused_by_the_same_rule`。
+
+### 11.3 契约缺口（需 owner 裁定，**不要代填**）
+
+| 编号 | 缺口 | 影响 |
+|---|---|---|
+| CCT-1 | `severity` 词表：本仓用 `none/info/low/medium/high/blocking`，规格未给穷举。 | 跨服务对 `severity_max` 的取值可能不一致。 |
+| CCT-2 | `defect` 缺 `timecode_*` 的结构约束（是否允许 null、与 `shot_id` 的关系）。 | 定位证据的可选性未定。 |
+| CCT-3 | 事件里 `defect_summary.evidence_refs` 只保留 `kind`、丢掉内容。 | S39 只能回查库，不能凭事件定位。 |
+| CCT-4 | 17 类 category 的正则/枚举未在 openapi 落成 schema。 | 新增类别时无校验点。 |
+| CCT-6 | `MISSING_EVIDENCE`、`COVERAGE_GAP` 不在 §2.3 的 17 类里。 | 它们是「查了但证不够」，不是内容缺陷；已在代码里按 `NEEDS_HUMAN` / 不进内容路径处理，但表上没有。 |
+| CCT-7 | `pass_with_warnings` 的触发条件未定义（本实现取「覆盖率 < 0.85 且无内容缺陷」）。 | 与 S02/S08 的交付门语义要对齐。 |
+| CCT-8 | `contracts/openapi.v2.yaml` 没有 S17 的 paths。 | 前端/网关按 openapi 生成时会漏。 |
+| CCT-9 | `THREAD_DOUBLE_PAYOFF` 的「正史内部重复支付」形态不可达 —— S16 的 `UNIQUE (tenant_id, series_id, kind, subject_id, predicate)` 保证每条伏笔只有一条 `resolved_by_event` lineage。 | 本实现只能检出「剧本 vs 正史」的那一半；另一半要么改 S16 的唯一约束，要么删掉这一行的宣称。**这是 S16 与 S17 的契约冲突，按 AGENTS.md 不自行选边。** |
+| CCT-10 | **（新）** `world_rule` 的 `rule_statement` 是 `value_kind: text` 的自由文本，没有结构化的 `exceptions`。§3 第 4 步要判「在例外内」，但正史里没有可判的东西。 | 本实现用 `world_rule_ref.within_exception` 让抽取侧按 §7.3 只回答封闭问题来绕开。**这等于新增了一条观测契约，需要 owner 签字。** |
+
+### 11.4 未覆盖
+
+- §4.3 的 `_coverage_gap_from_pack` 有实现，**没有测试**。
+- §9.2 E10-2 的「报告带 `candidate` 标记」**未实现**，也没有契约字段。
+- SLO、并发、重启恢复只在本机 SQLite 上跑过，未做压测。

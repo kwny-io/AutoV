@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/narrative.script-revision-created.v2.schema.json",
+  "title": "narrative.script.revision.created payload v2",
+  "description": "event `narrative.script.revision.created` 的 data 部分。定义在 plans/S04-narrative.md §5.3 行 694–711（计划给了完整示例，十二个键全部有值），DDL 在 §2.2 行 188–214（`narrative.script_revision`）与 §2.2 行 164–184（`narrative.script`），topic 是 `drama.narrative.v2`，`partition_key = tenant_id:aggregate_id`，`aggregate_id = script_id`（§5.3 行 711）。\n\n**这条事件只在 seal 时发**（§4.3 行 552「写 outbox：`narrative.script.revision.created`（**只有 seal 才发事件**）」、§5.3 行 686、行 690）。DRAFT 不发，理由是 §5.3 行 690：「如果 DRAFT 就发 `revision.created`，S05 会去分解一个还在改的剧本，S09 会建边，S16 的抽取会跑在一个不存在的版本上」。所以本文件描述的是**一个已经不可变的版本**——`data_ref` 分块取到的正文，从此不会再变（§4.4 行 574「seal 后正文不可改」）。\n\n**本文件里最要紧的一件事：这条事件自称携带了核验所需的 hash，但它携带的字段不足以复算其中任何一个。**\n（一）`content_hash` 的算式是 `sha256( JCS( {script_id, revision, title, language, structure, parent_revision} ) || \"\\n\" || line_set_hash )`（§2.2 行 218）——六个输入，本事件只给了其中两个（`script_id` / `revision`），`title` 与 `parent_revision` 根本没进 payload，`structure` 被换成了一个无定义的 `structure_hash`，`language` 则**不在 `script_revision` 表里，而在 `narrative.script` 表**（行 171）且没有任何接口能读到（§5.2 行 669–676 的查询全都不返回它，§5.1 行 648–659 的命令里没有能改它的）。§4.4 行 573 把「`content_hash` 必须与 manifest 里写的完全一致」定为 S16 R1 的输入，下游拿到本事件后没有办法做这个校验。见 NAR-3。\n（二）`line_set_hash` 的算式是 `sha256( join(\"\\n\", sorted([line_id, line_revision, text_hash] for each row)) )`（§2.3 行 284）——它需要**每一行**的三元组，本事件只给了汇总值。见 NAR-4。\n（三）`structure_hash` 在整个 S04 方案里**只出现一次**，就是 §5.3 行 702 这个示例值；DDL 的 `script_revision` 没有这一列（行 189–211），`content_hash` 的算式里也没有它（行 218）。它既不是 `structure` 的 hash（没有定义 hash 哪个算法、是否 JCS），也不能替代 `structure` 本身。见 NAR-2。\n\n**`produced_by` 这一项在方案里有三个互不相同的定义，无法同时满足**：§2.2 行 201 的列注释是 `{task_id, agent_task_ref, context_pack_ref}`，§2.4 行 298 的另一张表注释是 `{task_id, definition_revision, context_pack_ref, model_ref}`，§4.2 行 533 的散文说「必填（`task_id / definition_revision / context_pack_ref`）」。§5.3 行 704 的示例给的是 `null`。本 schema 收三者的**并集键名**且不要求任何一个，因为把任何一个定成必需项等于替 owner 在三种写法里选了一种。见 NAR-1 与 NAR-6。\n\n**`episode_id` 在这里是必需项，而它在 DDL 里可空。** 行 169 `episode_id text, -- 可为空：系列级总纲剧本`；事件示例（行 698）给了 `\"ep_...\"`。同一张 `script` 表还有 `script_kind IN ('episode_script','series_outline','scene_sheet')`（行 170、行 178），而**本事件不携带 `script_kind`**——于是收到一条 `episode_id` 的事件，下游无法知道这个剧本是大纲还是分集正文。见 NAR-5。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "信封与 payload 各有一份 `schema_version`，两者都是 `\"2.0\"`（与 `contracts/examples/` 下既有示例一致）。这里是 payload 那份。"
+    },
+    "script_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "剧本文档 id，`scr_01J...` 形态。出处：§5.3 行 698。DDL §2.2 行 167 `script_id text NOT NULL`，主键 `(tenant_id, script_id)`（行 176）。**它同时是信封的 `aggregate_id`**（§5.3 行 711「`aggregate_id = script_id`」），所以发了两遍——顶层 `aggregate_id` 与 `data.script_id` 恒等，与 S46 的 `operation_id`、S47 的 `subscription_id` 是同一类冗余，照示例收、不消除。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "剧本版本号，同一 `script_id` 内单调。出处：§5.3 行 698（示例值 `7`）。DDL §2.2 行 192 `revision integer NOT NULL`，主键 `(tenant_id, script_id, revision)`（行 205）。**下界 `1` 不是来自本表的 CHECK**（`script_revision` 对 `revision` 没有约束），而是两处旁证：`narrative.script.head_revision integer NOT NULL DEFAULT 0`（行 172）——0 表示「还没有任何版本」，第一版即 1；仓里既有契约 `episode-manifest.v2.schema.json` 的 `source_revisions[].revision` 也是 `{\"type\":\"integer\",\"minimum\":1}`，而 S08 正是用 `source_revisions[]` 引用本服务的 `(script_id, revision, content_hash)`（§4.4 行 573）。"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "所属剧集 id，`ep_01J...` 形态。出处：§5.3 行 698。**本字段是必需项，而它在 DDL 里可空**：§2.2 行 169 `episode_id text,  -- 可为空：系列级总纲剧本`。两张表同时存在、且 `script_kind` 有三个值（行 170 / 行 178：`episode_script` / `series_outline` / `scene_sheet`），系列级大纲剧本的 `episode_id` 就是 `NULL`。本 schema 照事件示例收成必需，因此它只能描述**有剧集的剧本**；大纲与场次单若也 seal，本 payload 形状装不下。见 NAR-5。"
+    },
+    "series_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "所属剧集系列。出处：§5.3 行 699。DDL §2.2 行 168 `series_id text NOT NULL`。注意行 186：「一个 `(series, episode)` 可以有**多个** `script_kind='episode_script'` 的 script（分支试写、翻拍、不同编剧的版本）」——所以 `(series_id, episode_id)` 不是唯一的，本事件的 `script_id` 才是。§3.1 的 `script_reference_projection`（行 437–446）也证明「同一剧本版本可以被多个 manifest 引用」。"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "整版内容 hash，小写 hex 64 位。出处：§5.3 行 700；DDL §2.2 行 199 `content_hash char(64) NOT NULL`，并有 `UNIQUE (tenant_id, script_id, content_hash)`（行 206）。**算式**（§2.2 行 218）：`sha256( JCS( {script_id, revision, title, language, structure, parent_revision} ) || \"\\n\" || line_set_hash )`，明确不含 `author` / `created_at` / `state`（行 218 末句与 §10 行 930「❌ `content_hash` 里含 `author`/`created_at`/`state`」）。**本事件给的字段不足以复算它**：六个输入里 `title`、`parent_revision` 不在 payload，`structure` 被换成无定义的 `structure_hash`，`language` 在另一张表且无接口可读——见 NAR-3。`pattern` 收 `^[0-9a-f]{64}$` 的依据是 DDL 的 `char(64)` 与仓里既有契约 `episode-manifest.v2.schema.json` 的同一 pattern（S08 拿它做 R1 比对，两侧必须同形）。"
+    },
+    "line_set_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "本版**对白行集合**的 hash，小写 hex 64 位。出处：§5.3 行 700；DDL §2.2 行 198 `line_set_hash char(64) NOT NULL`。**算式**（§2.3 行 284）：`sha256( join(\"\\n\", sorted([line_id, line_revision, text_hash] for each row)) )`。它是对**行**的汇总，所以：本事件不带任何行身份（`line_id` / `line_revision` / `text_hash` 一个都没有，行级事件 `narrative.line.revision.created` 尚未登记——§5.3 行 687、§10 C04-2 行 943），下游拿到这个 hash 后既不能复算、也不能定位是哪些行构成的。seal 事务第 3 步会「重新核算 `line_set_hash`」（§4.3 行 549），说明它覆盖的是 seal 那一刻的实际行集合。见 NAR-4。"
+    },
+    "line_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "本版对白行数。出处：§5.3 行 701（示例值 `42`）。来源是 `structure` 这个 jsonb 的键之一（§2.2 行 197 `structure jsonb NOT NULL, -- {scene_markers:[...], characters:[...], line_count, word_count}`），不是独立列，所以没有 CHECK 约束。**下界 `1` 的依据是 seal 守卫**：§3.1 行 417 `DRAFT→SEALED` 的守卫写「正文完整、行集合已物化、`line_set_hash` 已算；`structure.line_count > 0`」——本事件只在 seal 之后发，所以 `0` 行不可能通过守卫。这与 DDL 的缺失是一回事：`line_count` 埋在 jsonb 里，`CHECK` 写不进去，而业务不变量只在守卫里。"
+    },
+    "scene_markers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "本版的场次**文本标记**列表，不是 `scene_id`。出处：§5.3 行 701（示例值 `[\"1\",\"2\",\"3\"]`）；同样是 `structure` jsonb 的键（§2.2 行 197）。**§2.2 行 216 专门警告过这个字段的误用**：「`structure` 里的 `scene_markers` 是文本标记，不是 `scene_id`。字段注释必须写清楚，否则实现者会拿它当场景列表。它只用于 UI 跳转与 S05 的参考（S05 可以看，但自己切场）」——所以本数组的 `length` **不是**场次数，§10 C04-5（行 946）记录了这一点：S09 的字段依赖注册表里登记了 `('S04','/scene_count','number')`，而 S04 只知道自己这个标记数，两者不一定相等。本 schema 收 `string` 而非 `integer`，正是因为它们是标记而非序号。"
+    },
+    "structure_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "结构 hash。出处：§5.3 行 702（示例值 `\"…\"`）。**这是全篇唯一一次出现 `structure_hash`**：DDL 的 `script_revision`（§2.2 行 189–211）没有这一列，`content_hash` 的算式（行 218）也没有它，§2.3 与 §4 都没有再提。它既不能替代 `structure`（无语义、无算法），也不能用 `content_hash` 的算法反推（那要先有 `structure`）。**因此本字段只收 `string, minLength: 1`，不收 `^[0-9a-f]{64}$`**——收成 hex 64 位等于替计划编造了一个算法与长度。计划没写它是什么，本 schema 就不假装知道。见 NAR-2。"
+    },
+    "author": {
+      "type": "object",
+      "properties": {
+        "principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "写出这一版的主体 id。出处：DDL §2.2 行 200 `author jsonb NOT NULL, -- {principal_id, principal_type:human|agent, definition_revision?}`。id 空间未在 S04 方案里点名（人来自 S01 的主体表，Agent 来自 S19 的 definition）——行 200 的注释只给了键名。"
+        },
+        "principal_type": {
+          "enum": [
+            "human",
+            "agent"
+          ],
+          "description": "主体类型。出处：DDL §2.2 行 200 的列注释 `principal_type:human|agent`——**两个值照抄，一个不删**（house style：DDL 写了取值集合才收 enum）。注意它与仓里其它 `principal_type` 枚举**不是同一个闭集**：`access.grant-changed.v2.schema.json` 与 `execution-context.v2.schema.json` 收的是 `human|service|api_client|mcp_client`。S04 这里没有 `service` 也没有 `api_client`，因为「谁写了这句台词」只有人和 Agent 两种（§4.2 行 536「人写的」和「Agent 写的」在数据模型上只有 `author.principal_type` 一个差异）。"
+        },
+        "definition_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "可选。出处：DDL §2.2 行 200 的 `definition_revision?`——**带问号，所以是可选**。语义与 `produced_by.definition_revision` 同名（见本文件 NAR-1：那个键在三处定义里有、两处没有），按 DDL 注释理解为「这个 Agent 用的是哪一版 definition」。`principal_type = \"human\"` 时无意义。"
+        }
+      },
+      "required": [
+        "principal_id",
+        "principal_type"
+      ],
+      "additionalProperties": false,
+      "description": "这一版的作者。出处：§5.3 行 703（示例 `{\"principal_id\":\"…\",\"principal_type\":\"human\"}`）；DDL §2.2 行 200 `author jsonb NOT NULL`。**键集固定**：行 200 的注释以花括号列出了全部三个键（第三个带 `?`），所以 `additionalProperties: false` 是照 DDL 收的，不是本 schema 收紧的。**`author` 不进 `content_hash`**（行 218「不含 `author`、`created_at`」），所以改作者不改变内容身份——这是刻意的。"
+    },
+    "produced_by": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "S19 的 AgentTask id。三处定义里**都有**这个键，且 §4.2 行 533 把它列为必填；写库前必须回查 S19 确认任务存在且属于本租户（§5.4 行 640「S04 不能信任客户端自报的 `task_id`」，失败码 `UNKNOWN_AGENT_TASK`，行 634、行 744）。"
+            },
+            "agent_task_ref": {
+              "type": "string",
+              "minLength": 1,
+              "description": "**只出现在 §2.2 行 201 这一处定义里**，§2.4 行 298 与 §4.2 行 533 都没有它。它与 `task_id` 是不是同一件事（一个是引用串、一个是 id）方案没说。"
+            },
+            "definition_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Agent definition 版本。出现在 §2.4 行 298 与 §4.2 行 533 两处，**§2.2 行 201 没有它**（那一处用的是 `agent_task_ref`）。E39 审计要回答「这句话是谁写的、依据什么上下文」（行 533），而 definition 版本是其中一半。"
+            },
+            "context_pack_ref": {
+              "type": "string",
+              "minLength": 1,
+              "description": "S18 的 ContextPack 引用。三处定义里**都有**它。它是 `SCRIPT_DERIVED_FROM_PACK` 这条血缘边的唯一依据：S09 的边表（S09 §1.2 行 71）写明这条边的「产生方式」是「S04 事件自报」，而本事件里能表达 pack 的地方只有这个键。见 NAR-6。"
+            },
+            "model_ref": {
+              "type": "string",
+              "minLength": 1,
+              "description": "**只出现在 §2.4 行 298 这一处定义里**（那是 `story_arc_proposal` 表，不是 `script_revision`），§2.2 行 201 与 §4.2 行 533 都没有它。本事件是 `script_revision` 的，所以这个键在本 payload 上是跨表借来的。"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "Agent 产出时的来源三元组；人写的版本为 `null`。出处：§5.3 行 704（示例值 `null`）；DDL §2.2 行 201 `produced_by jsonb,`——**列可空**。\n\n**本 schema 收并集键名且不要求任何一个，因为方案给了三个互不相同的定义**：（a）§2.2 行 201 列注释 `{task_id, agent_task_ref, context_pack_ref}`；（b）§2.4 行 298 另一张表的列注释 `{task_id, definition_revision, context_pack_ref, model_ref}`；（c）§4.2 行 533 散文「**`produced_by` 必填**（`task_id / definition_revision / context_pack_ref`）」。三者只在 `task_id` 与 `context_pack_ref` 上一致；`agent_task_ref` 与 `model_ref` 各只出现在一处，`definition_revision` 缺于第一处。把任何一组定成 `required` 都等于替 owner 选了边，所以这里五个键全部列出、全部可选，`additionalProperties: false` 兜住键名之外的东西。见 NAR-1。\n\n**`null` 与「必填」的冲突**见 NAR-6：行 533 说必填，行 201 的 DDL 说可空，行 704 的示例给 `null`；而 E39 审计（行 897 T04-31「任意 revision 能追溯到作者/Actor/上下文」）要求有值。人写的版本天然没有 AgentTask，所以「必填」大概是针对 Agent 路径说的，但方案没有把它写成条件必填。"
+    },
+    "parent_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ],
+      "description": "派生自哪一版（改写 / 续写）；首版为 `null`。出处：§5.3 行 705（示例值 `6`，本版 `revision` 是 `7`）；DDL §2.2 行 202 `parent_revision integer,`——**可空**。\n\n两个注意点：（一）**它是 `content_hash` 的一个输入**（行 218 的 `{script_id, revision, title, language, structure, parent_revision}`），所以父版本一变内容身份就变——这让 SP05 的「同一内容」判断天然带了血缘。（二）**DDL 没有为它建外键**：`script_revision` 唯一的 FK 是 `FOREIGN KEY (tenant_id, script_id) REFERENCES narrative.script`（行 207），没有 `parent_revision → (tenant_id, script_id, revision)`。所以一个指向不存在版本的 `parent_revision` 能写进库（`parent_revision` 也在 hash 里，写了就锁死在 hash 里）。本 schema 只能收形状，不能收「它一定存在」这条不变量。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "script_id",
+    "revision",
+    "episode_id",
+    "series_id",
+    "content_hash",
+    "line_set_hash",
+    "line_count",
+    "scene_markers",
+    "structure_hash",
+    "author",
+    "produced_by",
+    "parent_revision"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`produced_by` 的键集：`{task_id, agent_task_ref, context_pack_ref}`（§2.2 行 201）还是 `{task_id, definition_revision, context_pack_ref, model_ref}`（§2.4 行 298）还是 `{task_id, definition_revision, context_pack_ref}`（§4.2 行 533）",
+      "demanded_by": "S19（回查 `task_id` 与 definition 版本）、S09（靠 `context_pack_ref` 建 `SCRIPT_DERIVED_FROM_PACK` 边，S09 §1.2 行 71「S04 事件自报」）、S45（E39 审计：任意 revision 能追溯到作者/Actor/上下文，S04 §8 行 897 T04-31）",
+      "s04_status": "未决。三处定义互不相同，本 schema 收并集、全可选，不替 owner 选。见 NAR-1。"
+    },
+    {
+      "field": "`structure_hash` 的算法与被 hash 的键集",
+      "demanded_by": "S16（R1 来源核验，§4.4 行 573）、S08（`source_revisions[].content_hash` 的比对）——若 `structure_hash` 想承担其中任何一部分核验，就必须有定义",
+      "s04_status": "未决。§5.3 行 702 是它唯一的出现处，没有算法、没有输入键集、DDL 里也没有这一列。本 schema 只收 `string`。见 NAR-2。"
+    },
+    {
+      "field": "`episode_id` 可空（系列级大纲剧本，§2.2 行 169）而本事件要求有值；且本事件不携带 `script_kind`",
+      "demanded_by": "任何按 `script_kind` 分流的下游：S05 分解（只该对 `episode_script` 做）、S18 检索、S16 抽取交接；以及 S03 的剧集目录",
+      "s04_status": "未决。`script_kind` 在 `narrative.script` 表里（§2.2 行 170 / 行 178）但没进 payload。要么本事件补 `script_kind`（并让 `episode_id` 按 kind 条件必填），要么限定本事件只对 `episode_script` 发——两者都需要 owner 定。见 NAR-5。"
+    },
+    {
+      "field": "下游是否可以「收到本事件 = 这一版是 SEALED」",
+      "demanded_by": "S05（只有 seal 才该分解）、S09（只有 seal 才建边）、S47（UI 上「剧本是否可引用」）",
+      "s04_status": "未决。本事件不含 `state` 字段，而它只在 seal 时发（§4.3 行 552）。同时 `SEALED→SUPERSEDED`（§3.1 行 419）与 `SEALED→WITHDRAWN`（行 420）**都不发事件**——§5.3 行 687–688 只登记了行级与 script 级「withdrawn」两个待新增事件，没有 superseded。所以「这一版还是最新的吗」在本 topic 上无解，下游必须另找信号。见 NAR-7。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "NAR-1",
+      "summary": "`produced_by` 的键集在方案里有三个互不相同的定义，三者不可能同时成立，而这个 JSON 要按一个键集写库",
+      "s04_revision_ddl": "§2.2 行 201：`produced_by jsonb,  -- Agent 产出时的 {task_id, agent_task_ref, context_pack_ref}`",
+      "s04_arc_ddl": "§2.4 行 298：`produced_by jsonb NOT NULL,  -- {task_id, definition_revision, context_pack_ref, model_ref}`（这是 `narrative.story_arc_proposal` 表的列，不是 `script_revision` 的）",
+      "s04_prose": "§4.2 行 533：「4. **`produced_by` 必填**（`task_id / definition_revision / context_pack_ref`），否则无法回答\"这句话是谁写的、依据什么上下文\"（E39 审计）」。",
+      "why_it_matters": "三处只有 `task_id` 与 `context_pack_ref` 是共有的。`agent_task_ref` 只在行 201 有，`model_ref` 只在行 298 有，`definition_revision` 在行 201 没有、行 298 与行 533 都有。而 §4.2 行 533 又把这组键说成「必填」。如果实现者照行 201 写，审计问「用的是哪一版 Agent definition」时答不出来；照行 298 写，`script_revision.produced_by` 就混进了只属于 `story_arc_proposal` 的 `model_ref`；照行 533 写，则 `agent_task_ref` 这个键永远没人写，行 201 的注释成为死键。三选一都会让另外两处文档变成错的。",
+      "consequence": "最可能的结局是实现者照**最靠近命令**的那处写（行 533，因为它在 §4.2 命令流程里），于是 `script_revision` 里永远没有 `model_ref` 与 `agent_task_ref`——而 E39 的审计要求（行 897 T04-31）只检查「`author` + `produced_by` 齐全」，齐全的标准又是行 533 那一组，所以测试会通过，缺口不会被发现。",
+      "fix_shape": "需 owner 在 S04 方案里定一处：`script_revision.produced_by` 的键集**与**必填性各是什么。若 `model_ref` 确实需要（审计要回答「哪个模型写的」），把它加进行 201；若 `agent_task_ref` 是 S19 的引用串而非 id，说明它与 `task_id` 的关系。本 schema 收五个键名的并集、全不设为 `required`，`additionalProperties: false` 兜住键名之外的键——这是不选边的代价，也是唯一能同时通过三处文档的收法。"
+    },
+    {
+      "id": "NAR-2",
+      "summary": "`structure_hash` 全篇只出现在事件示例里一次；DDL 没有这一列，`content_hash` 的算式也没有它——它是个没有定义、没有来源、也没有消费者的字段",
+      "s04_event": "§5.3 行 702：`\"structure_hash\": \"…\",`。这是 `structure_hash` 在 plans/S04-narrative.md 里**唯一一次出现**。",
+      "s04_ddl": "§2.2 行 189–211 的 `narrative.script_revision` 全部列：`tenant_id` / `script_id` / `revision` / `state` / `title` / `body_ref` / `body_bytes` / `structure` / `line_set_hash` / `content_hash` / `author` / `produced_by` / `parent_revision` / `sealed_at` / `created_at`。**没有 `structure_hash`**；结构本身是 `structure jsonb NOT NULL`（行 197）。",
+      "s04_hash": "§2.2 行 218 的 `content_hash` 算式把 `structure` **整个对象**放进 JCS，不是先 hash 再放：`sha256( JCS( {script_id, revision, title, language, structure, parent_revision} ) || \"\\n\" || line_set_hash )`。所以 `structure_hash` 既不是它的中间量，也不是它的替代品。",
+      "why_it_matters": "本事件**没有** `structure`（§5.3 行 709「**不含正文，不含任何台词文本**」——结构也不是正文，但确实没给），于是下游需要知道的「这场戏有几个标记、多少行、哪些角色」只剩 `line_count` 与 `scene_markers` 两个键，`structure.characters` 与 `structure.word_count` 完全不可得。计划用 `structure_hash` 大概是想表达「结构没变就别重算」，但：它没有算法，所以没人能算；没有输入键集的定义，所以没人知道 `characters` 顺序变一下算不算变；DDL 里没有它，所以没人能存。而它**进了 payload**，所以每个消费者都得为它写一个 `string` 字段。",
+      "consequence": "实现者会二选一：(a) 把 `JCS(structure)` 的 sha256 填进去——这是**发明**一个计划没写的算法，且一旦有人按另一种 JCS 实现（例如不排序键），两侧 hash 就永不对上，而比对方也拿不到 `structure` 来复算；(b) 留空串或占位——那 `minLength: 1` 就形同虚设，且消费者会得到一个恒定的假值。两种都会让这个字段在线上存在但在语义上不存在。",
+      "fix_shape": "需 owner 定：(1) 删掉它，让下游按 `line_count`/`scene_markers` 判断结构变化；(2) 或给它定义（hash 哪些键、用什么 JCS、`characters` 是否排序）**并且**同时在 `script_revision` 加一列，否则它算出来也没地方存、更没法在 `GET /scripts/{id}/revisions/{rev}`（§5.2 行 669）上被对方读到。本 schema 只收 `string, minLength: 1`，**故意不收 `^[0-9a-f]{64}$`**——收成 hex 就等于替计划编造了算法与长度。"
+    },
+    {
+      "id": "NAR-3",
+      "summary": "本事件自称携带核验用的 `content_hash`，但它给的字段不足以复算——六个输入里两个不在 payload、一个被换成无定义的 hash、一个在另一张表且没有接口可读",
+      "s04_hash_inputs": "§2.2 行 218：`content_hash = sha256( JCS( {script_id, revision, title, language, structure, parent_revision} ) || \"\\n\" || line_set_hash )` —— 六个输入。",
+      "s04_event_fields": "§5.3 行 697–706 的 payload 有：`script_id` / `revision` / `episode_id` / `series_id` / `content_hash` / `line_set_hash` / `line_count` / `scene_markers` / `structure_hash` / `author` / `produced_by` / `parent_revision`。与六个输入对比：`script_id` ✔、`revision` ✔、`parent_revision` ✔（本事件有）、`title` ✘（不在 payload）、`language` ✘（不在 payload）、`structure` ✘（只有无定义的 `structure_hash`）。",
+      "s04_requirement": "§4.4 行 573：「1. **`content_hash` 必须与 manifest 里写的完全一致。** 这是 S16 R1 的输入。任何对 `content_hash` 计算规则的改动（例如加了 `language` 字段）都必须版本化，否则已提交 manifest 的引用会失效。」§4.4 行 567：「S16 核验来源（R1：`source_refs` 必须出现在 `manifest.source_revisions` 且 hash 一致）」。",
+      "s04_language": "`language` 在 **`narrative.script` 表**（§2.2 行 171 `language text NOT NULL DEFAULT 'zh-CN'`），**不在 `script_revision` 表**，所以它不随版本变化——可它偏偏是 `content_hash` 的一个输入。而读路径里没有任何一处能拿到它：§5.2 行 669 `GET /scripts/{script_id}/revisions/{revision}` 是「单版元数据」（即 `script_revision` 的行），行 675 `GET /scripts?series_id=&episode_id=&state=` 返回列表，两处都没说带 `language`；§5.1 行 648–659 的十条命令里也没有任何一条能读或改 `script.language`。",
+      "why_it_matters": "把三处合起来看：S16 要拿 `content_hash` 做 R1 核验，而 R1 的实质是「我按规则自己算一遍，和 manifest 里写的一致」。用本事件做这件事**做不到**：`title`、`language`、`structure` 三个输入拿不到。于是 S16 只有两条路：(a) 无条件信任事件里的 `content_hash`——那 R1 就退化成「双方字段相等」，而 hash 的全部意义就是**不**依赖信任；(b) 回源 `GET /scripts/{id}/revisions/{rev}` 拿 `title`/`structure`，再想办法拿 `language`——而 `language` 那个接口不返回。§4.4 行 576 已经预告了这条链的脆弱性，但它处理的是另一个问题（别把投影读成接受状态）。",
+      "consequence": "实现者基本一定会选 (a)，因为 (b) 走不通。于是「hash 一致」变成「两个字符串相等」，而任何能改写事件流的主体都能同时改 `content_hash` 与其余字段，核验照样通过。这不是本 schema 能修的（缺的字段在 DDL 与接口上），但本 schema 是第一个把「payload 里有什么」写成契约的地方，必须说清它不足以复算。",
+      "fix_shape": "三条，需 owner 定其一：(1) 本事件补 `title` / `language`（`structure` 仍可只给 hash，但那时 `structure_hash` 必须有定义，见 NAR-2）；(2) `GET /scripts/{id}/revisions/{rev}` 明确返回 `title` 与 `structure`，并新增 `script.language` 的读路径（或在 `script_revision` 里冗余一列 `language`，让它随版本固定）；(3) 承认 R1 只做字段比对、不做复算，并把这句写进 §4.4——那就等于放弃 hash 的核验语义，需要 S16 知情。本 schema 只收形状，同时在 NAR-2/NAR-4 登记缺失的另外两处。"
+    },
+    {
+      "id": "NAR-4",
+      "summary": "`line_set_hash` 是对「每一行的三元组」做的汇总，本事件不带任何行身份，下游既不能复算也不能定位；而 seal 之后的单行变更不发 script 级事件",
+      "s04_formula": "§2.3 行 284：`line_set_hash = sha256( join(\"\\n\", sorted([line_id, line_revision, text_hash] for each row)) )` —— 每个 `narrative.script_revision_line` 行贡献三元组 `(line_id, line_revision, text_hash)`，排序后拼接再 hash。",
+      "s04_event": "§5.3 行 700：`\"line_set_hash\": \"…\"` 只给汇总值。本 payload 里 `line_id` / `line_revision` / `text_hash` **一个都没有**（`line_count` 是计数，`scene_markers` 是文本标记，都不是行身份）。行级事件 `narrative.line.revision.created` 在 §5.3 行 687 与 §10 C04-2（行 943）里都标着「**新增，待登记**」——即**尚未存在**。",
+      "s04_seal": "§4.3 行 549 是 seal 事务的第 3 步：「重新核算 `line_set_hash`（防提交后行被别的事务改过 —— 理论上不会，但不能假设）」。这说明 seal 那一刻的行集合会被重算覆盖。",
+      "s04_line_mutation": "§4.5 行 581 的 `PATCH line 原文`（改一句台词）走 `POST /lines/{line_id}/revisions`（§5.1 行 653），产生新的 `line_revision`，**不产生新的 script revision、也就不会再发本事件**（seal 才发，行 552）。而 §5.3 行 692 自己说：「改一句台词（§4.5）不产生新 seal。如果只有 script 级事件，S38 与 S09 只能靠轮询发现行变了。」",
+      "why_it_matters": "两件事叠在一起，让本事件的 `line_set_hash` 有一个限时有效的含义：它描述**seal 那一刻**的行集合。此后任何一次 `POST /lines/{line_id}/revisions` 都会让库里的行集合与这个 hash 脱钩，而**没有任何事件通知**。一个在 seal 时收到本事件、并缓存了 `line_set_hash` 的下游（这是唯一能得到它的方式），过一段时间再拿 `GET /scripts/{id}/revisions/{rev}/lines` 重新算，会算出不同的值——而它无法判断是「有人合法地改了台词并且确实产生了新行版本」还是「hash 本来就对不上」。注意 `script_revision_line` 表里有 `(tenant_id, script_id, revision, line_id)`（§2.3 行 269–279），所以**行与「剧本版本」是绑定的**：改一句台词要不要改动已 seal 版本的 `line_set_hash`，方案没有正面回答——§4.5 的流程里没有重算这一步，而 §4.4 行 574 只保证「正文不可改」。",
+      "consequence": "实现者会碰上一个二选一：(a) 认为 seald 版本的 `script_revision_line` 不可变，那么改一句台词必须写进**新**的 script revision（那就要重新 seal，`revision` 单调 +1——但 §4.5 的流程没说要 seal，也没说 `script.head_revision` 怎么动）；(b) 认为行变更原地追加到旧版本，那么 `line_set_hash` 与 `content_hash` 在 seal 之后都会变成谎言，而 manifest 里引用的是 seal 时那个值。这就是 §4.4 行 574「seal 后正文不可改」想防的「manifest 引用了一个后来变了的对象」，只是它只管了正文（`body_ref`），没管行集合。",
+      "fix_shape": "需 owner 定：**改一句台词之后 `script_revision` 与 `line_set_hash` 各自怎么变**。(a) 若必须产生新 script revision → §4.5 要补 seal 与 `revision +1` 的步骤，本事件的 `revision` 才是「内容身份」；(b) 若原地追加 → `line_set_hash` 必须随行变更更新，而那样它就不再是 seal 时的值，本事件发出的 `content_hash`/`line_set_hash` 对已 seal 版本失效，需要另一个事件（C04-2 的行级事件）来纠正。本 schema 只收 `^[0-9a-f]{64}$`，并对「它代表哪一刻的行集合」不作承诺。"
+    },
+    {
+      "id": "NAR-5",
+      "summary": "`episode_id` 在 DDL 里可空（系列级大纲剧本），本事件却把它收成必需；且本事件不携带 `script_kind`，下游无法判断这是大纲还是分集正文",
+      "s04_ddl_script": "§2.2 行 165–181 的 `narrative.script`：行 168 `series_id text NOT NULL`、行 169 `episode_id text,  -- 可为空：系列级总纲剧本`、行 170 `script_kind text NOT NULL,  -- episode_script|series_outline|scene_sheet`，行 177–178 `CONSTRAINT script_kind_chk CHECK (script_kind IN ('episode_script','series_outline','scene_sheet'))`。",
+      "s04_event": "§5.3 行 698：`\"script_id\": \"scr_...\", \"revision\": 7, \"episode_id\": \"ep_...\",`——示例给了值，且 §5.3 的 payload 里**没有 `script_kind`**。",
+      "why_it_matters": "`script_kind` 有三个值，只有 `episode_script` 一定有 `episode_id`。`series_outline` 是「系列级总纲剧本」，按行 169 的注释它的 `episode_id` 就是 `NULL`；`scene_sheet` 是否也允许 `episode_id` 为空，DDL 没约束（它只约束了 `series_id`）。本 schema 照示例把 `episode_id` 收成必需项，于是**大纲剧本 seal 时发不出合规的事件**——不是「值不好看」，是 `minLength: 1` 直接拒绝 `null`，而 DDL 明确允许 `NULL`。另一面：本事件不带 `script_kind`，所以收到 `episode_id = \"ep_...\"` 的一方无从知道这个剧本是不是 `episode_script`；S05 要按集分解、S16 要做抽取，二者都只对分集正文有意义（§1 行 15「从大纲到成片之间有一段纯文字的生产过程」——大纲本身不是被分解的对象）。",
+      "consequence": "实现者有两条坏路：(a) 大纲剧本 seal 时也发本事件、`episode_id` 填空串或哨兵 → `minLength: 1` 只挡住了 `null` 不挡空串语义，下游按 `episode_id` 分组时会多出一个假剧集；(b) 大纲剧本 seal 时**不发**本事件 → 那 §5.3 行 686「seal 时发」对三个 `script_kind` 只对了一个，而计划没写这个例外。无论哪条，S05 都会拿到不该分解的对象，或该拿到的拿不到。",
+      "fix_shape": "需 owner 定：(1) 本事件补 `script_kind` 并让 `episode_id` 按 kind **条件必填**（`script_kind = \"episode_script\"` 时必需，否则可为 `null`）——这是 JSON Schema 里能用 `if/then` 表达的形状，但需要先有 `script_kind`；(2) 或明确本事件只对 `episode_script` 发，另登记大纲/场次单的事件。本 schema 照示例收成必需，并在 `x-needs-owner` 里登记；这不是本 schema 能独自修正的，因为它要么加一个计划没给的字段，要么改一个照示例收的必填性。"
+    },
+    {
+      "id": "NAR-6",
+      "summary": "`produced_by` 在示例里是 `null`、DDL 里可空、散文里「必填」；而 S09 建 `SCRIPT_DERIVED_FROM_PACK` 边唯一依据就是它——人写的剧本在这条血线上没有上游",
+      "s04_prose": "§4.2 行 533：「4. **`produced_by` 必填**（`task_id / definition_revision / context_pack_ref`），否则无法回答\"这句话是谁写的、依据什么上下文\"（E39 审计）。」",
+      "s04_ddl": "§2.2 行 201：`produced_by jsonb,`——**没有 `NOT NULL`**。（对照 §2.4 行 298 的 `narrative.story_arc_proposal.produced_by jsonb NOT NULL`，那张表是必填的。）",
+      "s04_example": "§5.3 行 704：`\"produced_by\": null,`——示例本身给的就是空。",
+      "s09_edge": "S09 §1.2 行 71：`| SCRIPT_DERIVED_FROM_PACK | S18 pack | S04 script revision | null | S04 事件自报 |`——这条边的「产生方式」被写成「S04 事件自报」，而本事件里唯一能表达 pack 的键是 `produced_by.context_pack_ref`。S09 §5.4 行 789 又把这个消费行为写成「`script.revision.created` | S04 | 写 `SCRIPT_DERIVED_FROM_PACK`」。",
+      "why_it_matters": "三处口径不同，但真正的后果在 S09 那一侧：如果 `produced_by` 是 `null`（示例就是），那么**没有任何 `context_pack_ref`**，S09 收到本事件后无法写 `SCRIPT_DERIVED_FROM_PACK` 边。而这条边是 S09 血缘图的**根**——§1 的边方向是 producer → consumer，脚本是第一个「由 pack 派生」的产物。人写的剧本（`author.principal_type = \"human\"`，示例正是这个）本来就没有 AgentTask、没有 ContextPack，所以它天然没有上游可报。S09 的边表把这件事写成「S04 事件自报」，等于假设每个剧本都有 pack——这个假设只对 Agent 路径成立。",
+      "consequence": "两条路都坏：(a) S09 照行 789 无条件写边 → 人写的剧本会写出一条 `source_ref = null` 的边，血缘图出现一个无上游的悬空节点，而 `lineage_gap`（S09 §1.1 行 61「已知『这里应该有一条边但没有』的记录」）本来是专门记这种事的，现在会被静默填成假边；(b) S09 判空跳过 → 人写的剧本在血缘图上完全不在，S07 做影响分析时从 pack 往下走的那条链（S09 §5 行 616）在人写剧本处断开。",
+      "fix_shape": "需 owner 在 S04 与 S09 之间定一件事：**人写的剧本算不算「派生自某个 pack」**。若算（例如「人也是在一个 brief/大纲上下文里写的」），本事件的 `produced_by` 需要一个人写路径也有值的形状（例如 `context_pack_ref` 可为 `null` 但 `brief_ref` 之类必须有）——那就要改行 201 的键集；若不算，S09 §1.2 行 71 的「产生方式」要改成「仅 Agent 路径自报，人写路径无边」，并说明 S07 的影响分析在人写剧本处如何终止。本 schema 收 `null | object`，两种都放行，不选边。"
+    },
+    {
+      "id": "NAR-7",
+      "summary": "本事件不含 `state`，而它只在 seal 时发；`SUPERSEDED` 与 `WITHDRAWN` 都不发事件——下游收到事件后无法判断这一版是否仍是最新",
+      "s04_payload": "§5.3 行 697–706 的 payload 键：`script_id` / `revision` / `episode_id` / `series_id` / `content_hash` / `line_set_hash` / `line_count` / `scene_markers` / `structure_hash` / `author` / `produced_by` / `parent_revision`。**没有 `state`**，尽管 `script_revision.state` 是 DDL 的一个 NOT NULL 列（§2.2 行 193）且带四个值的 CHECK（行 208–209：`DRAFT|SEALED|SUPERSEDED|WITHDRAWN`）。",
+      "s04_emit_rule": "§4.3 行 552：「6. 写 outbox：`narrative.script.revision.created`（**只有 seal 才发事件**）」；§5.3 行 686 同一条。所以发出时 `state` 恒为 `SEALED`——但事件里没这个字段，接收方只能靠「本 topic 只在 seal 时发」这条**文档约定**推出来。",
+      "s04_no_reverse_events": "§5.3 行 684–688 的事件表只有三行：`narrative.script.revision.created`（已登记）、`narrative.line.revision.created`（新增待登记，C04-2）、`narrative.script.withdrawn`（新增待登记）。**没有 superseded 事件**。而状态机 §3.1 行 419 有 `SEALED→SUPERSEDED`（触发：「同 script 有新 revision seal」），行 420 有 `SEALED→WITHDRAWN`（触发：「作者撤回（发现严重错误）」，守卫：必须没有任何 manifest 引用它）。",
+      "why_it_matters": "`SEALED→SUPERSEDED` 的触发恰恰是**另一个 revision seal**——而那时会发一条新的 `narrative.script.revision.created`。所以下游若只按「收到的最大 revision」判断最新，是对的；但若它缓存了 revision 7 的 `content_hash` 并把它当作「当前版本」，它无法区分「7 仍是最新」与「8 已经 seal、7 已 SUPERSEDED」——除非它自己也订阅了本 topic 并维护了每个 `script_id` 的最大 revision。这在**单消费者**下能work，但 S08 的 manifest 引用的是**特定** `(script_id, revision, content_hash)`（§4.4 行 573），被引用的往往不是最新版；S07 做影响分析时问「这版还被引用吗」需要的是引用关系而不是最新性。更硬的一处是 `SEALED→WITHDRAWN`：它**完全不发事件**（事件表里那行是「新增待登记」，即还没登记），所以一个已经撤回的版本，在已经收到过 `created` 的下游那里**永远是 SEALED**。",
+      "consequence": "实现者会假设「收到 `created` 就等于 SEALED 且仍有效」——对一个刚 seal 的版本，这句话在收到事件的那一刹那成立；但在撤回之后就不成立了，而**没有任何东西会纠正它**。S16 的 R1 核验、S05 的分解、S47 的面板都会拿着一个已撤回的版本继续工作。§3.1 行 434 的撤回守卫只保护了「有 manifest 引用就不能撤回」，所以真正危险的是「没有 manifest 引用、但被下游缓存着」的那些——守卫恰好放过它们。",
+      "fix_shape": "需 owner 定两件事：(1) 本事件是否补 `state`（补了至少能自证 `SEALED`，且为未来加其他状态留位）；(2) `SEALED→SUPERSEDED` 与 `SEALED→WITHDRAWN` 是否各发一条事件——§5.3 行 688 的 `narrative.script.withdrawn` 已经打算补，但 **superseded 连打算都没有**，而它每个新 revision seal 都会发生一次。本 schema 照示例不含 `state`（加一个计划没给的必填字段会拒绝所有照文档实现的事件），只把这个缺口登记在这里。"
+    }
+  ]
+}

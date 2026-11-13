@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/orchestration.run-state-changed.v2.schema.json",
+  "title": "orchestration.run.state-changed payload v2",
+  "description": "event `orchestration.run.state-changed` 的 data 部分。权威定义在 plans/S21-orchestration.md §5.5（行 839–880）。**每次状态变更都发，不只是终态**（行 869）——所以消费方不能假设「收到就结束了」，必须看 `terminal`。四个消费者各有各的用法：S47 实时面板/SSE、S39 判断修复计划能否下发、S44 返工分析（只用终态）、S03 项目进度（只用终态）。**`aggregate_sequence` 用 `projection_watermark` 而不是「第 n 次状态变更」**（行 878–879）：投影每次写都 +1（包括非状态变化的计数更新），所以 sequence 稠密无缺口，S47 的缺口检测才有意义——若用「第 n 次变更」，计数更新造成的跳号会被误判为丢事件。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身版本，与 envelope 的 schema_version 独立。来源：S21 §5.5 的示例没有画它（示例只画 data 内部），此处按 contracts 既有 payload 约定补。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S21 §5.5 行 851。与 envelope 的 `aggregate_id` 同值（行 841：`aggregate_id = run_id`）。"
+    },
+    "previous_state": {
+      "type": "string",
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "WAITING_INPUT",
+        "WAITING_REVIEW",
+        "WAITING_MEMORY",
+        "WAITING_BUDGET",
+        "PAUSED",
+        "SUCCEEDED",
+        "INCOMPLETE",
+        "FAILED",
+        "CANCELED"
+      ],
+      "description": "来源：S21 §4 DDL 行 152–154（`CONSTRAINT rp_state_closed CHECK (state IN ('QUEUED','RUNNING','WAITING_INPUT','WAITING_REVIEW','WAITING_MEMORY','WAITING_BUDGET','PAUSED','SUCCEEDED','INCOMPLETE','FAILED','CANCELED'))`）。11 个值照 DDL 收。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "WAITING_INPUT",
+        "WAITING_REVIEW",
+        "WAITING_MEMORY",
+        "WAITING_BUDGET",
+        "PAUSED",
+        "SUCCEEDED",
+        "INCOMPLETE",
+        "FAILED",
+        "CANCELED"
+      ],
+      "description": "来源：同 `previous_state`，S21 §4 DDL 行 152–154。**`WAITING_*` 四个值必须有 `waiting_reason`**（DDL 行 158–160 的 `rp_waiting_has_reason`：`(state IN ('WAITING_INPUT','WAITING_REVIEW','WAITING_MEMORY','WAITING_BUDGET')) = (waiting_reason IS NOT NULL)`）。这个跨字段等式 JSON Schema 表达不了——本 schema 只能让 `waiting_reason` 可 null，**相等性由 S21 在发布时保证**。消费方若要依赖它，必须自己检查。见 x-conflicts POR-1。"
+    },
+    "manifest_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S21 §5.5 行 854。本条消息依据的 manifest 版本。S39 用它判断修复计划是否还对得上（同一个 run 在修复期间 manifest 可能已推进）。"
+    },
+    "execution_fence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S21 §5.5 行 855。**这是 run/branch 级的取消与故障切换栅栏**（AGENTS.md「版本与一致性速查」：`execution_fence` 作用域是 run / branch，与 `node_epoch` 分工不同）。旧 fence 的事件到达时，消费方应当丢弃而不是当新状态——`aggregate_sequence` 保证同一 run 内有序，但**跨 fence 的乱序要靠 fence 值判**。"
+    },
+    "completed_nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S21 §5.5 行 856 + DDL 行 161–162（`rp_counts_nonneg CHECK (completed_nodes >= 0 AND blocked_nodes >= 0 AND failed_nodes >= 0)`）。**它是计数快照，不是增量**——消费方要替换而不是累加。这一点值得写下来：三个计数字段的名字像计数器，但语义是当次投影的绝对值。"
+    },
+    "blocked_nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S21 §5.5 行 857 + DDL 行 161–162。快照语义，同上。"
+    },
+    "failed_nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S21 §5.5 行 858 + DDL 行 161–162。快照语义，同上。S39 用它判断这个 run 是否值得规划修复。"
+    },
+    "waiting_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S21 §5.5 行 859（示例 `QC_REQUIRES_HUMAN`）+ DDL 行 144（`waiting_reason text`，可空）+ 行 158–160 的跨字段 CHECK。**不收窄为 enum**：DDL 没有 CHECK 列值，且 S21 正文里出现过的值（`GENERATION_MODE_MANUAL` 行 510、`SUBMISSION_UNKNOWN` 行 568）是**举例不是闭集**。见 x-needs-owner。"
+    },
+    "blocked_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "来源：S21 §5.5 行 860（示例 `null`）。**DDL 里没有这一列**——`run_projection`（行 130–166）只有 `waiting_reason`。所以它是事件层的字段，不在投影表里。S21 没有说明它与 `waiting_reason` 的关系（何时有、何时没），见 x-needs-owner。"
+    },
+    "current_stage": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S21 §5.5 行 861（示例 `SHOT_QC`）。**DDL 里也没有这一列**。S39 用它决定修复计划能否下发（行 870：「知道 Run 到了哪个 stage，决定修复计划是否可以下发」），但 stage 的取值集合在 S21 全文没有枚举，也不是 DDL CHECK。不收窄，见 x-needs-owner。"
+    },
+    "terminal": {
+      "type": "boolean",
+      "description": "来源：S21 §5.5 行 862。**与 `state` 有跨字段约束**：DDL 行 155–157 的 `rp_terminal_has_ts` 说 `(state IN ('SUCCEEDED','INCOMPLETE','FAILED','CANCELED')) = (terminal_at IS NOT NULL)`，即 terminal 为真**当且仅当** state 是那四个之一。本 schema 让它是独立 boolean 是因为它在示例里就是这样——但**两者不一致的事件是有 bug 的事件**。JSON Schema 无法表达「`terminal == (state in [...])`」，由 S21 保证。见 x-conflicts POR-2。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "previous_state",
+    "state",
+    "manifest_revision",
+    "execution_fence",
+    "completed_nodes",
+    "blocked_nodes",
+    "failed_nodes",
+    "waiting_reason",
+    "blocked_reason",
+    "current_stage",
+    "terminal"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "waiting_reason 的取值集合",
+      "demanded_by": "plans/S21-orchestration.md §5.5 行 859 + §4 DDL 行 144",
+      "s21_status": "DDL 是裸 `text`，无 CHECK；正文出现过 `QC_REQUIRES_HUMAN`（行 859 示例）、`GENERATION_MODE_MANUAL`（行 510）、`SUBMISSION_UNKNOWN`（行 568），但都是举例。**这个字段的值集合实际上是 S21 与 S39/S47 之间的隐式约定**：S39 要按它决定是否等待，S47 要显示给人看。本 schema 只收 `[string, null]`。若要收窄，先由 S21 定义一个闭集——注意新增一个 waiting_reason 值会是一次契约变更。"
+    },
+    {
+      "field": "blocked_reason",
+      "demanded_by": "plans/S21-orchestration.md §5.5 行 860",
+      "s21_status": "**DDL 的 `run_projection` 表里没有这一列**（行 130–166 只有 `waiting_reason`）。它是事件层独有的字段，S21 没有说明它与 `waiting_reason` 的分工：两者同时非空合法吗？`blocked_nodes > 0` 时它必须非空吗？本 schema 只收 `[string, null]` 且不作关联约束。"
+    },
+    {
+      "field": "current_stage 的取值集合",
+      "demanded_by": "plans/S21-orchestration.md §5.5 行 861（示例 `SHOT_QC`）+ 行 870（S39 依赖它）",
+      "s21_status": "S21 全文没有 stage 枚举，DDL 也没有这一列。**而 S39 是根据它决定「修复计划是否可以下发」的**——一个没有闭集、没有持久化、只靠约定传递的字段决定了一条业务路径。示例值是 `SHOT_QC`（全大写下划线），但音效/音乐场次大概率是 `AUDIO_QC` 之类，未在任何地方定义。本 schema 只收非空字符串。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "POR-1",
+      "summary": "waiting_reason 与 state 的跨字段约束只在 DDL 里有，事件消费方看不到",
+      "s21_ddl": "§4 行 158–160：`CONSTRAINT rp_waiting_has_reason CHECK ((state IN ('WAITING_INPUT','WAITING_REVIEW','WAITING_MEMORY','WAITING_BUDGET')) = (waiting_reason IS NOT NULL))`",
+      "why_it_matters": "这条 CHECK 是**双向等式**，不是单向蕴含：非 WAITING 状态下 `waiting_reason` 也必须为 null。消费方（S47 面板、S39）通常只关心「是 WAITING 就该有原因」，所以单向实现能跑通日常用例，但**从 WAITING 回到 RUNNING 时若忘了清空 `waiting_reason`，事件会发出一个违反自家 DDL 的 payload**——而投影表因为这条 CHECK 会在 S21 自己的写库时就报错。也就是说：这条 CHECK 保护了 S21 不写出坏行，但**保护不了 S21 在事件里发出与库不一致的样子**（如果 outbox 是从 db 之外的路径构造的）。本 schema 让 waiting_reason 可 null，不表达等式，由 S21 保证。"
+    },
+    {
+      "id": "POR-2",
+      "summary": "terminal 是布尔字段，但它与 state 的对应关系只在 DDL 里",
+      "s21_ddl": "§4 行 155–157：`CONSTRAINT rp_terminal_has_ts CHECK ((state IN ('SUCCEEDED','INCOMPLETE','FAILED','CANCELED')) = (terminal_at IS NOT NULL))`",
+      "why_it_matters": "DDL 约束的是 `state` 与 `terminal_at`，而事件里发的是 `state` 与 `terminal`（布尔）。两者应当是同一个判断的两种表示，但**契约层没有任何东西保证 `terminal` 与 `state` 一致**：一个把 `terminal` 算错的事件会让 S44/S03 提前停止统计或提前显示「完成」。这是「同一事实两个字段」的典型代价——本 schema 无法在 JSON Schema 里表达 `terminal == (state in [...])`，只能靠 S21 的实现。若改成消费方从 `state` 自己算 `terminal`，这个字段就没有存在的必要。"
+    },
+    {
+      "id": "POR-3",
+      "summary": "blocked_reason 与 current_stage 在事件里有，在 DDL 里没有",
+      "s21_event": "§5.5 行 860–861：`blocked_reason` 与 `current_stage` 都在 data 里",
+      "s21_ddl": "§4 的 `run_projection`（行 130–166）没有这两个列",
+      "why_it_matters": "两个字段只能从「当前执行上下文」现算，而不是从投影表里读。这意味着**投影重建（replay）后发出的历史事件里，这两个字段的值与当初不一致是可能的**——投影里没存的东西没法重放。S39 依赖 `current_stage` 做决策，S47 可能展示 `blocked_reason`，两者在 replay 场景下都拿不到原值。要么把这两列加进投影表（那样 replay 才能一致），要么明确它们是「仅实时事件有意义、replay 时不可信」的字段。事件里没有标记能区分这两种情况。"
+    }
+  ]
+}

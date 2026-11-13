@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/production.music-ready.v2.schema.json",
+  "title": "production.music.ready payload v2",
+  "description": "event `production.music.ready` 的 data 部分。权威定义在 plans/S34-music.md §6.4（事件体形状，行 1228–1257）。**与其它五个生产 ready 事件最大的不同：这里发布的是候选数组，不是一个成品**。S34 的 `CANDIDATES_READY` 状态意味着「同一首曲子我生成了 N 个版本，等导演挑」，事件的 `selection_state` 就是 `pending`。所以消费方（S41）拿到它时还不能上时间线，要等 `music.cue.selected`（§6.4 行 1229，建议新增）。**不含**音频 URL、`music_intent` 原文、`attribution_text`、ISRC/ISWC、供应商信息、许可策略明细（§6.4 行 1259）。`attribution_text` 不进事件的原话是「它可能包含未公开的出版方关系或代理条款。事件流被多个消费者存档，不适合承载合同细节」（行 1270）。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "payload 自身的版本，与 envelope 的 schema_version 独立。来源：contracts 既有 payload 约定；S34 §6.4 的示例没有画它。"
+    },
+    "music_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1230。发布此事件的音乐作业。"
+    },
+    "cue_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1231（示例 `cue_ep3_sc7_bgm`）。音乐**提示**的 ID。§6.4 行 1232 的 `cue_revision` 与它一起构成完整引用。"
+    },
+    "cue_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S34 §6.4 行 1232 + §6.4 行 1272（「S06 / S07 的 `shot.spec.revised` / 情绪曲线变更 → cue 意图变更 → 新 revision」）。**必须带 revision**：情绪曲线变了之后，旧候选满足的是旧意图，S41 不能拿旧候选配新 cue。"
+    },
+    "scene_lineage_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1233 + 行 1222（aggregate 就是它）。**注意是 scene 而不是 shot**：与其它五个生产事件（都用 `shot_lineage_id`）不同，音乐是按场配的。S41 的时间线以镜头为单元，所以它需要一条 scene→shot 的映射才能把音乐放上去——见 x-conflicts PMR-1。"
+    },
+    "cue_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "来源：S34 §6.4 行 1234。该 cue 在场内的序号。S31/S33 的同名字段同样只给示例不给基准，本 schema 只约束 `>= 0`。"
+    },
+    "mood": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1235（示例 `melancholic`）。**不收窄为 enum，尽管 S34 §2.3 给了 12 个值**：S34 §2.3 行 245–246 的原话是「**建议的闭集**（S34 内部定义，契约里没有，§12 C1）：`mood ∈ {tender, melancholic, hopeful, tense, ominous, triumphant, playful, somber, awe, urgency, dissolution, neutral}`」。计划自己说这是建议、契约里没有。**但 S34 对这个字段的理由比 S33 的 sfx_family 更强**：§2.3 行 236–243 给了三条硬理由——(1) `strategy_class` 归一需要稳定维度；(2) 候选比较需要可比较的轴（导演要能说「这三个版本的 mood 都是 melancholic:0.7，区别在编制」）；(3) 情绪曲线一致性检查需要它（「一场戏从 tense 走到 cathartic，若中间某个 cue 是 joyful，这是一个可自动发现的不连续——但只有在闭集上才能发现」）。第三点尤其说明闭集不只是分类习惯，而是**质检能力的前提**。见 x-needs-owner。"
+    },
+    "mood_intensity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "来源：S34 §2.3 行 247（`mood_intensity ∈ [0.0, 1.0]`）+ §6.4 行 1236（示例 `0.7`）。**这个区间是有出处的**（与 mood 的闭集不同，S34 直接给了数值域），所以照收 0..1。它与 mood 一起构成可比较的轴——§2.3 行 239 的例子就是 `melancholic:0.7`。"
+    },
+    "instrumentation": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1237（示例 `solo_piano`）。编制。S34 没有列取值集合，也没有说它是否闭集。§2.3 行 239 说「区别在编制」——它是候选比较的另一个轴，但不像 mood 那样被要求成为闭集。不收窄。"
+    },
+    "requested_duration_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "来源：S34 §6.4 行 1238（示例 `39000`）。**这是「要多长」，不是「有多长」**：每个候选自己有 `natural_duration_ms`（行 1245，示例 `47000`）。两者不等是常态——S34 §11 T34-33（行 1436）的例子就是「时长 48s，曲子 47s（差 <1 小节），`tail_kind='sustaining'` → `end_strategy='bar_extend'`」。S42 要按 end_strategy 把 47 秒的曲子铺到 48 秒的窗口里。"
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "description": "来源：S34 §6.4 行 1239–1252。**本事件的成立前提**：`CANDIDATES_READY` 意味着至少有一个候选（§6.4 行 1222）。minItems 1 是形状约束，不是设计推断——空数组的 ready 事件没有意义，消费方拿到后无法做任何事。**每个候选自带自己的 `artifact_ref`**，所以一个事件里可能有多个 artifact 引用——这与其它五个事件「一个事件一个产物」不同。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "music_take_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：S34 §6.4 行 1242。候选的唯一标识。**注意事件里没有顶层 take id**（与 S31/S32/S33 不同）——因为这里有多个 take，主键在数组元素上。选定之后由 `music.cue.selected` 事件（§6.4 行 1229，建议新增）指明是哪一个。"
+          },
+          "artifact_ref": {
+            "type": "object",
+            "description": "来源：S34 §6.4 行 1243（示例已给完整四字段）。形状与 plans/S28-artifact-ingest.md 行 94 的规范定义一致（与 episode-manifest.v2 的 accepted_artifact_ref 同构）。",
+            "properties": {
+              "service_id": {
+                "const": "S28",
+                "description": "来源：S28 行 94 —— 归档产物引用恒指向 S28。S34 §6.4 的示例也写 `\"service_id\": \"S28\"`。"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.id。"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "来源：S28 行 94。S28 行 94 声明「`revision` 只在 `artifact_id` 内有意义」。"
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "来源：S28 行 94 / episode-manifest.v2 accepted_artifact_ref.content_hash。"
+              }
+            },
+            "required": [
+              "service_id",
+              "id",
+              "revision",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "natural_duration_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "来源：S34 §6.4 行 1245（示例 `47000`）+ §6.4 行 1274（S34 消费 S28 的 `artifact.ingested` 时需要它——§12 C4）。**候选级字段**：同一 cue 的多个候选可以长度不同（例如 30 秒版与 60 秒版），S42 挑哪个决定后续怎么剪。"
+          },
+          "detect_bpm": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "来源：S34 §6.4 行 1246（示例 `88.4`）+ §4 DDL 行 824（`detect_bpm numeric(6,2) CHECK (detect_bpm IS NULL OR detect_bpm > 0)`）。**必须可 null**：DDL 明确允许，探测失败的候选仍然存在（判断一个候选是否可用不该只靠 BPM）。名字是 `detect_bpm` 而不是 `bpm`——「探测出来的」而非请求的。"
+          },
+          "meter": {
+            "type": "string",
+            "minLength": 1,
+            "description": "来源：S34 §6.4 行 1247（示例 `4/4`）。拍号。S34 未列取值集合（4/4、3/4、6/8… 是无限集），只收非空字符串。它与 bpm 一起决定小节长度，而小节长度是 `bar_extend` 策略（§4 行 454）能否成立的前提。"
+          },
+          "detected_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "来源：S34 §6.4 行 1248（示例 `\"D minor\"`）+ §4 DDL 行 825（`detected_key text`，可空）。**必须可 null**，理由同 detect_bpm。值的写法（`D minor` / `Dm` / `d`）S34 没有规定，不收窄。"
+          },
+          "tail_kind": {
+            "type": "string",
+            "enum": [
+              "sustaining",
+              "hard_stop",
+              "fade_out",
+              "unknown"
+            ],
+            "description": "来源：S34 §4 DDL 行 826–827（`tail_kind text NOT NULL CHECK (tail_kind IN ('sustaining','hard_stop','fade_out','unknown'))`）+ §6.4 行 1249 + §4 行 454（「`bar_extend` 需要一个标记：`take.tail_kind ∈ {sustaining, hard_stop, fade_out}`。**只有 `sustaining` 和 `fade_out` 允许 `bar_extend`**」）。四个值照 DDL 收，包括 `unknown`——它是探测失败的状态，不是错误。F19（§4 行 608）测的是「`bar_extend` 但 `tail_kind='hard_stop'` → 跳过 `bar_extend`，走下一策略」。"
+          },
+          "loop_available": {
+            "type": "boolean",
+            "description": "来源：S34 §6.4 行 1250。**名字与 S33 的 `loopable` 不同但语义相近**（素材能否无缝循环）——见 x-conflicts PMR-2。S34 的 DDL 里没有这一列（§4 的 music_take 表行 820–840 没有 loop 布尔列），所以它是计算出来的。"
+          },
+          "rights_state": {
+            "type": "string",
+            "enum": [
+              "usable",
+              "void",
+              "unknown"
+            ],
+            "description": "来源：S34 §4 DDL 行 834（`rights_state text NOT NULL CHECK (rights_state IN ('usable','void','unknown'))`）+ §6.4 行 1251。**候选级字段，而且是发布时刻快照**：§4 行 633 说「`music_take` 的 `rights_state` / `state` 可变」；§6.4 行 1273 说 S02 的 `policy.revision.published` 到达时会「重新解析许可；可能使 take 变 void」。§4 行 496 特别说明 S34 把许可的**三个字段**（完整暴露在 `GET /music-cues/{id}` 与事件里）让 S43 自己判断地域可用性：「S34 只检查『当前是否已经到期』（`expires_at < now()`），不去判断『这块地区能不能用』」。所以 `usable` 不等于「任何地区都能发」。"
+          }
+        },
+        "required": [
+          "music_take_id",
+          "artifact_ref",
+          "natural_duration_ms",
+          "detect_bpm",
+          "meter",
+          "detected_key",
+          "tail_kind",
+          "loop_available",
+          "rights_state"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "selection_state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1254（`\"selection_state\": \"pending\"`）。**只有 `pending` 有出处**：S34 全文没有列取值集合，也没有 DDL 列（§4 的 DDL 里没有 selection_state）。它在语义上至少还应有「已选定」这一状态——但那个状态由 `music.cue.selected` 事件（§6.4 行 1229，建议新增）表达，而这个事件恒在刚生成完时发出，所以 `pending` 可能是它唯一的取值。见 x-needs-owner。"
+    },
+    "content_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1255 + §4 DDL 行 830（`content_fingerprint char(64) NOT NULL`）。**DDL 说定长 64**（`char(64)`，且 DDL 里没有 CHECK 限制字符集），所以可以收 `^(?:[0-9a-fA-F]{64})$`——但 S34 没说是 hex，只说 char(64)。本 schema 按 DDL 的字面收 64 个字符，不假设是 hex（收窄成 hex 会拒掉 DDL 允许的非 hex 64 字符串，而 DDL 允许的就必须允许）。**注意它是 cue 级的**，不是候选级的：同一 cue 的多个候选共享一个指纹——这与 S33 的 `content_fingerprint`（来自 cue_intent || sfx_family || loopable_required）是同一种设计（指纹标识「这个需求」，不是「这个产物」）。",
+      "pattern": "^.{64}$"
+    },
+    "gap_state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源：S34 §6.4 行 1256（`\"gap_state\": \"none\"`）。与 S33 的同名字段同一处境：只有示例里的 `none` 有出处，S34 没有列取值集合，也没有 DDL 列。§6.4 行 1231 的发布表建议新增 `music.gap.recorded` / `.closed` 两个独立事件，说明缺口是有状态的。§4 行 550 提到 `MusicGap` 的一个具体状态 `awaiting_selection`（「状态保持 `pending`，`production.music.ready` 已经发出，`MusicGap` 记 `awaiting_selection`（`kind='awaiting_selection'`）」）——那个值就发生在本事件发布之后，所以 gap_state 在 events 里可能确实只有 `none` 与别的值的组合。不收窄，见 x-needs-owner。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "music_job_id",
+    "cue_id",
+    "cue_revision",
+    "scene_lineage_id",
+    "cue_index",
+    "mood",
+    "mood_intensity",
+    "instrumentation",
+    "requested_duration_ms",
+    "candidates",
+    "selection_state",
+    "content_fingerprint",
+    "gap_state"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "mood",
+      "demanded_by": "plans/S34-music.md §6.4 行 1235 + §2.3 行 245（12 个值的「建议的闭集」）",
+      "s34_status": "S34 §2.3 明说这是「**建议的**闭集（S34 内部定义，契约里没有，§12 C1）」。S34 自己给了三条理由说明为什么必须是闭集（strategy_class 归一、候选比较、情绪曲线一致性检查），其中第三条意味着**没有闭集就没有自动的情绪不连续检测能力**。本 schema 因此不收 enum——把「建议」写成 enum 会让它变成已发布契约。需要把这个 12 值的集合正式落进 contracts（届时本 schema 改成 enum），或确认它可以冻结。这与 S33 的 `sfx_family` 是同一类缺口，但 S34 的紧迫性更高，因为 mood 直接参与质检。"
+    },
+    {
+      "field": "selection_state 的取值集合",
+      "demanded_by": "plans/S34-music.md §6.4 行 1254（示例 `pending`）",
+      "s34_status": "只有 `pending` 有出处，无 DDL 列、无取值集合。推断上本事件恒发 `pending`（生成完等挑），而「已选定」由另一个事件表达——但这是推断，S34 没有明确说。本 schema 只收非空字符串。"
+    },
+    {
+      "field": "gap_state 的取值集合",
+      "demanded_by": "plans/S34-music.md §6.4 行 1256（示例 `none`）+ §4 行 550（`MusicGap.kind='awaiting_selection'`）",
+      "s34_status": "与 S33 的同名字段同样缺取值集合、缺 DDL 列。§4 行 550 给出一个具体 kind（`awaiting_selection`），但它描述的是 `MusicGap` 记录而不是事件的 gap_state。本 schema 只收非空字符串。"
+    },
+    {
+      "field": "cue_index 的基准",
+      "demanded_by": "plans/S34-music.md §6.4 行 1234（示例 `0`）",
+      "s34_status": "与 S31/S33 同名字段同样只给示例不给基准。本 schema 只约束 `>= 0`。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "PMR-1",
+      "summary": "本事件按场（scene_lineage_id）聚合，其它五个生产事件按镜（shot_lineage_id）",
+      "s34": "§6.4 行 1222：aggregate 是 `scene_lineage_id`；行 1233 的 payload 字段也是 `scene_lineage_id`",
+      "others": "S29/S30/S31/S32/S33 的 ready 事件都用 `shot_lineage_id`（S31 旁白场景用 `utterance_id`）",
+      "why_it_matters": "音乐按场配是有道理的（BGM 通常铺满一场戏而不是一个镜头），但**消费方（S41 时间线）是以镜头为单位组织的**。它拿到一条 scene_lineage_id 的音乐事件后，必须自己算出「这一场有哪些镜头、分别在哪几秒」才能把音乐放上去。这个映射 S34 没有提供（事件里没有 shot 列表），S41 只能回查 S06/S41 自己的时间线。这不算错误，但意味着**音乐在所有生产产物里是唯一不能直接按镜头对齐的**——S41 的实现要单独处理它。本 schema 照 S34 收 scene_lineage_id。若 S34 加一个 `shot_lineage_ids[]`（或 `scene_span`），S41 就不必回查。"
+    },
+    {
+      "id": "PMR-2",
+      "summary": "「能不能循环」在 S33 叫 loopable，在 S34 叫 loop_available，且 S34 没有对应的 DDL 列",
+      "s33": "§6.4 行 1114：`\"loopable\": false`（S33 的 DDL 里这一列有 `loopable_verified`，见 §4 行 574）",
+      "s34": "§6.4 行 1250：`\"loop_available\": true`（S34 的 music_take 表 §4 行 820–840 **没有** loop 相关列）",
+      "why_it_matters": "名字不同只是表面问题；更实质的是**S34 的这个值是算出来的而不是存的**，而 S33 有持久化的检验结果（`loopable_verified`，S33 §4 行 574：「这是 S33 在归档后做的一次检验（检查首尾样本接近度）…如果声明可循环但实际不可循环，S42 循环时会露馅」）。若 S34 的 `loop_available` 只是「生成时假设的」而没做首尾检验，S42 循环音乐时会露馅——而 S33 已经为音效解决了这个问题。S34 要么也做这个检验并存下来，要么明确 `loop_available` 是未经验证的声明。本 schema 照 S34 收 loop_available。"
+    },
+    {
+      "id": "PMR-3",
+      "summary": "content_fingerprint 是 cue 级还是候选级，S34 的 DDL 与事件示例可能指不同层次",
+      "s34_event": "§6.4 行 1255：`\"content_fingerprint\": \"…\"` 在**顶层**（候选数组之外）",
+      "s34_ddl": "§4 行 830：`content_fingerprint char(64) NOT NULL` 在 **music_take 表**里（即候选级）",
+      "why_it_matters": "顶层的位置说明它是 cue 级的（一个 cue 一个指纹），但 DDL 把它放在 music_take（每个候选一行）。两种解释都不荒谬：cue 级指纹表示「这个需求没变，可以复用已有候选」，候选级指纹表示「这版曲子是这份内容」。但它们是不同的量，且如果 DDL 的 music_take.content_fingerprint 对同一 cue 的多个候选存同一个值，那这一列就没有区分作用（候选之间的差异在 artifact_ref 上）。S34 §4 行 830 附近没有解释。本 schema 按事件示例收在顶层。"
+    },
+    {
+      "id": "PMR-4",
+      "summary": "S34 消费 `qc.audio.report.published`，但仓库里的事件名是 `quality.alignment.completed`",
+      "s34": "§6.4 行 1277：「S37 的 `qc.audio.report.published` —— **只用于 `dialogue_density_hint` 的透传**（§4.5）」",
+      "contracts": "contracts/event-topics.v2.json 里 S37 发布的是 `quality.alignment.completed`（topic `drama.audio-alignment.v2`）；全仓库没有 `qc.audio.report.published` 这个 event_type",
+      "why_it_matters": "**这是一个会导致订阅永远收不到事件的错误**。S34 若按计划里的名字订阅，Kafka 上没有任何 topic 会匹配，`dialogue_density_hint` 永远是 null。note that S34 §4 行 840–842 的 DDL 有 `dialogue_density_hint jsonb` 与 `dialogue_density_source text CHECK (... IN ('s37_segments','s06_script','provided','unknown'))` —— `s37_segments` 这个来源值同样只能来自那个事件。本 payload schema 管不到 S34 的订阅侧，但这个错误值得记在它消费的那个事件旁边。已核实：contracts/event-topics.v2.json 的 55 个 topic 里没有 `qc.audio.report.published`。"
+    }
+  ]
+}

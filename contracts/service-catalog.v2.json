@@ -18,7 +18,7 @@
       "acceptance": "跨租户对象、撤销凭证、服务身份越权均被拒绝",
       "deployment_unit": "tenant-access",
       "schema_owner": "tenant_access",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {
@@ -40,7 +40,7 @@
       "acceptance": "项目→单集→阶段→节点覆盖正确；安全/预算硬约束不能被低级覆盖",
       "deployment_unit": "governance-policy",
       "schema_owner": "governance_policy",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {
@@ -62,7 +62,7 @@
       "acceptance": "重排集序不改变稳定ID；归档项目阻止新Run",
       "deployment_unit": "project-catalog",
       "schema_owner": "project_catalog",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "creation"
     },
     {
@@ -180,7 +180,7 @@
       "acceptance": "旧结果、旧审核、旧QC不能切换当前指针；回滚生成新manifest而非改历史",
       "deployment_unit": "revision-snapshot",
       "schema_owner": "revision_snapshot",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {
@@ -202,7 +202,7 @@
       "acceptance": "记忆事实改动可定位后续集、上下文包、剧本和镜头",
       "deployment_unit": "lineage-impact",
       "schema_owner": "lineage_impact",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {
@@ -366,7 +366,7 @@
       "acceptance": "谁知道什么、钥匙归属、伤势、伏笔跨集正确；改前集触发失效",
       "deployment_unit": "story-memory",
       "schema_owner": "story_memory",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "memory"
     },
     {
@@ -391,7 +391,7 @@
       "acceptance": "闪回、误导、合法特效与真实矛盾有区分；低置信度abstain",
       "deployment_unit": "continuity",
       "schema_owner": "continuity",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "memory"
     },
     {
@@ -415,7 +415,7 @@
       "acceptance": "分集可见性、角色知情状态、分支、故事时间和权限过滤生效",
       "deployment_unit": "context-retrieval",
       "schema_owner": "context_retrieval",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "memory"
     },
     {
@@ -486,7 +486,7 @@
       "acceptance": "数千子任务重启后续跑；暂停阻止新准入并继续结算已提交任务",
       "deployment_unit": "orchestration",
       "schema_owner": "orchestration",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {
@@ -509,7 +509,7 @@
       "acceptance": "Redis丢失不超并发；账号跨租户共享上限仍严格守恒",
       "deployment_unit": "scheduler-quota",
       "schema_owner": "scheduler_quota",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "execution"
     },
     {
@@ -531,7 +531,7 @@
       "acceptance": "并发抢额度不越界；预留和实际分离；跨run返工不能绕过集预算",
       "deployment_unit": "budget-ledger",
       "schema_owner": "budget_ledger",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "finance"
     },
     {
@@ -553,7 +553,7 @@
       "acceptance": "七家渠道能力按版本与地区建模；不把历史端点当active",
       "deployment_unit": "model-registry",
       "schema_owner": "model_registry",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "models"
     },
     {
@@ -577,7 +577,7 @@
       "acceptance": "能力先过滤再评分；成本含下游口型和预计返工；决策可解释",
       "deployment_unit": "model-routing",
       "schema_owner": "model_routing",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "models"
     },
     {
@@ -602,7 +602,7 @@
       "acceptance": "LLM/VLM/图像/视频/TTS全经本服务；单任务不会因超时盲目重复付费",
       "deployment_unit": "generation-jobs",
       "schema_owner": "generation_jobs",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "execution"
     },
     {
@@ -624,7 +624,7 @@
       "acceptance": "单一供应商故障隔离；重复乱序回调不倒退状态；无业务路由权限",
       "deployment_unit": "provider-connectors",
       "schema_owner": "provider_connectors",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "execution"
     },
     {
@@ -646,7 +646,7 @@
       "acceptance": "供应商URL到期前归档；SSRF/内网/恶意媒体拒绝；不可变hash可验",
       "deployment_unit": "artifact-ingest",
       "schema_owner": "artifact_ingest",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "media"
     },
     {
@@ -765,7 +765,7 @@
       "acceptance": "脚步/关门等跟随EDL重定位；有独立stem与来源",
       "deployment_unit": "sound-effects",
       "schema_owner": "sound_effects",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
@@ -932,7 +932,7 @@
       "acceptance": "四档模式门一致；预算增加与创作接受使用不同权限",
       "deployment_unit": "human-review",
       "schema_owner": "human_review",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {
@@ -968,7 +968,9 @@
       "command_api": "POST /render-jobs",
       "query_api": "GET /render-jobs/{id}",
       "published_events": [
-        "post.master.rendered"
+        "post.master.rendered",
+        "post.mix.completed",
+        "post.render.failed"
       ],
       "depends_on": [
         "S41",
@@ -994,7 +996,10 @@
       "command_api": "POST /delivery-packages",
       "query_api": "GET /delivery-packages/{id}",
       "published_events": [
-        "delivery.package.ready"
+        "delivery.package.created",
+        "delivery.package.sealed",
+        "delivery.package.published",
+        "delivery.publish.failed"
       ],
       "depends_on": [
         "S08",
@@ -1020,7 +1025,9 @@
       "command_api": "POST /evaluation-runs",
       "query_api": "GET /metrics",
       "published_events": [
-        "evaluation.report.published"
+        "analytics.metric.snapshot.created",
+        "analytics.evaluation.completed",
+        "analytics.cost.projection.updated"
       ],
       "depends_on": [
         "S23",

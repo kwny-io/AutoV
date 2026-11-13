@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drama.example.invalid/contracts/integration.command-accepted.v2.schema.json",
+  "title": "integration.command.accepted payload v2",
+  "description": "event `integration.command.accepted` 的 data 部分。定义在 plans/S46-developer-integration.md §4.5 行 369–392（计划给了完整示例，九个字段全部有值，是剩下 15 个 envelope-only topic 里证据最全的一条之一）。**这是 S46 唯一一条发布事件**（§4.5 行 399「只发 `accepted`，不发状态变更」），topic 是 `drama.developer-integration.v2`，`partition_key = tenant_id:aggregate_id`，`aggregate_id = operation_id`。\n\n**它的毛病集中在「事件是快照，消费方要的是流水」这一处。** S47 订阅它做外部客户端面板的「最近调用」列表（§10.6 行 1052、plans/S47-realtime-projection.md 行 85），而 §10.6 同一行要求 S47「**必须显示 `accepted_at` 作为水位，不得把『最新受理』呈现为『最新完成』**」——`accepted_at` 在 DDL 里（§5.2 行 517 `timestamptz NOT NULL DEFAULT now()`）、在 202 响应里（§3.1 行 167）、在轮询响应里（§4.2 行 328），**唯独不在本事件的字段清单里**（§4.5 行 381–389）。于是计划给 S47 派了一个它拿不到原料的活：见 ICA-1。再加上「只发 `accepted`」这一条，S47 的投影会永远停在 `ACCEPTED`——回执后来变成 `FORWARDED` 或 `REJECTED` 时没有任何信号，面板上的「最近调用」于是全部显示为「受理中」，而这正是 §10.6 警告过的那种呈现的升级版。C46-6（§11 行 1067）把「没有命令状态流转事件」登记为缺口，但没连到 §10.6 这条硬要求上。\n\n**不含的东西是有意的，但不完全。** §4.5 行 395 说不含 params 全文、外部 URL 签名、任何凭据，消费方需要细节时用 `data_ref` 回查。§4.5 行 397 补充说「字段形状上：事件只带 `params_sha256` / `params_bytes`，正文根本没有可落的位置」——**这两个字段不在行 381–389 的清单里，也不在示例里**：见 ICA-4。而「用 `data_ref` 回查」这一句也落不了地：回执表只存 `params_sha256` 与 `params_bytes`（§5.2 行 503–504，「params 只存摘要，不存正文」），所以回查**拿得到回执、拿不到入参**——C46-11（§11 行 1072）登记了这一点的重放风险。\n\n**`target` 是本文件唯一放开内部键的字段**（`additionalProperties: true`），因为它的形状由 `command` 决定，而十二条命令各要一套 id，计划没有给任何一份 shape（§2.2 行 85 的示例只有 `project_id` + `episode_id` 两个键，对应的只是 `episode.generate` 这一条）。见 ICA-5。\n\n**本 schema 不收凭据字段**：`kid`（DDL 行 497 `NOT NULL`）、`delegation_id`（行 499）、`request_hash`（行 494）都不在事件里，也不该在——`kid` 是密钥标识，事件流是长期保留的（`normal_retention_days = 14`，registry），把 kid 搬进去等于给轮换历史留一份永久副件。",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "description": "信封与 payload 各有一份 `schema_version`，两者都是 `\"2.0\"`（见 `contracts/examples/audit-export-ready.json` 等既有示例）。这里的是 payload 那份。"
+    },
+    "operation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "对外主 id，`op_01J...` 形态（§4.1 行 315 的 202 响应、§4.2 行 324 的轮询响应都用它）。**它同时是信封的 `aggregate_id`**（§4.5 行 369「`aggregate_id = operation_id`」），所以这个字段在事件里发了两遍——顶层 `aggregate_id` 与 `data.operation_id` 恒等。照示例收，不消除冗余。出处：§4.5 行 382；DDL §5.2 行 492（`operation_id text NOT NULL`，注释「对外 id」）。**DDL 里它是 `UNIQUE (tenant_id, operation_id)`（行 522）而不是主键**——带租户，所以跨租户探测不到存在性（E28 在这一列上是安全的）。"
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "回执行的主键，`rcpt_01J...` 形态。出处：§4.5 行 383；DDL §5.2 行 490（`receipt_id text PRIMARY KEY`）。**这是裸主键**——不带 `tenant_id`，全局唯一，而它**出现在 202 响应里**（§3.1 行 167：`202 { operation_id, receipt_id, poll_url, accepted_at }`），即外部调用方拿得到。见本文件 `x-needs-owner` 第四条（「`receipt_id` 是裸主键」）。"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "外部命令名，取自 §2.3 行 108–119 的十二行白名单（`episode.generate` / `run.get` / `run.command` / `change.plan` / `change.apply` / `review.decide` / `delivery.prepare` / `delivery.publish` / `memory.query` / `context.preview` / `policy.get` / `cost.query`）。出处：§4.5 行 384；DDL §5.2 行 501。**不收成 `enum`**：§2.3 行 104 明说这是白名单且「未登记一律 404」，但白名单本身没有机器可读定义（C46-2 行 1063），而新增一条命令不该让本 schema 判既有事件为非法——目录的权威在 S46 的注册表，不在这份 schema。"
+    },
+    "state": {
+      "enum": [
+        "ACCEPTED",
+        "FORWARD_RETRYING",
+        "FORWARDED",
+        "REJECTED",
+        "FORWARD_UNKNOWN",
+        "STALE_UNKNOWN",
+        "CANCELLED"
+      ],
+      "description": "回执状态。取值表照抄 DDL §5.2 行 506–508 的 `CHECK`——**七个值全部收，一个不删**（house style：DDL 有 `CHECK (... IN (...))` 才收 enum，且收全）。但**实际只有 `ACCEPTED` 可达**：本事件在 §3.1 步骤 8 与 `INSERT` 同一事务内写 outbox（§3.1 行 159、§5 行 652），payload 在那一刻冻结，而那一刻回执刚被插成 `ACCEPTED`；§4.5 行 399 又明说「**只发 `accepted`，不发状态变更**」。后六个值不会出现在任何一条本事件里。其余各值的出处：`FORWARDED` / `REJECTED` / `FORWARD_RETRYING` / `FORWARD_UNKNOWN` 见 §3.2 行 179–186 的状态机；`STALE_UNKNOWN` 见 §3.3 行 218（7 天窗口）；`CANCELLED` **在回执状态机里没有入边**，见 ICA-7。§3.1 行 174 写的 `FORWARD_FAILED` 不在这个集合里，见 ICA-2。"
+    },
+    "target": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true,
+      "description": "命令的作用对象，形如 `{\"project_id\": \"prj_ep\", \"episode_id\": \"ep_03\"}`（§4.5 行 386，§2.2 行 85 同形）。出处：DDL §5.2 行 502（`target jsonb NOT NULL`）。**形状随 `command` 变**：§2.3 行 108–119 的十二条命令分别打到 S21 / S07 / S40 / S43 / S16 / S18 / S02 / S23 / S44，各自要的 id 不同（`episode.generate` 要 project+episode，`run.get` 要 run_id，`change.apply` 要 change_plan_id，`memory.query` 要什么未写）。所以本 schema **只要求它是非空对象**、内部键全放开（`additionalProperties: true`，全仓先例是 `post.timeline-revision-created.v2.schema.json:51` 的 `built_against.manifest_ref`），收窄就等于替十二条命令各定一份契约。**不收 `params`**——§4.5 行 395 明确「不含 params 全文（可能含剧情细节）」，§4.5 行 397 说「事件只带 `params_sha256` / `params_bytes`」，但那两个字段既不在行 381–389 的字段清单里、也不在示例里，见 ICA-4。见 ICA-5。"
+    },
+    "api_client_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "调用方客户端 id，`clic_01J...` 形态。出处：§4.5 行 387；DDL §5.2 行 496（`api_client_id text NOT NULL`）。来自 `AuthContext`（§2.1 行 70–71 的派生结果），**不来自请求体**——§2.2 行 95 明说请求里「没有 `tenant_id` 字段。也没有 `actor`」。本 schema 不校验前缀：DDL 只写 `text NOT NULL`，没有 `CHECK`。"
+    },
+    "principal_type": {
+      "enum": [
+        "api_client",
+        "mcp_client"
+      ],
+      "description": "凭据主体类型。取值照抄 DDL §5.2 行 498 的 `CHECK (principal_type IN ('api_client','mcp_client'))`。出处：§4.5 行 388。**两个值覆盖不了 §2.1 的三种凭据**：§2.1 行 61–65 的表列了 API key（`api_client`）、OAuth2 access token（企业 SSO 直连，行 64）、MCP client（`mcp_client`）三种，**OAuth2 那一行没有对应的 `principal_type` 取值**，而 `integration_command_receipt` 里没有任何一列能表达「这次调用是 SSO 用户授权的」。本 schema 照 DDL 只收两个值——把第三种猜成 `api_client` 会掩盖一个真实的建模缺口。见 ICA-6。"
+    },
+    "client_trace_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "客户端自带的观测 id，`trace-abc` 形态（§4.5 行 389）。出处：DDL §5.2 行 515（`client_trace_id text`，**可为 NULL**）。**必须是可空**：§2.2 行 89 的请求体里它是普通字段、没标必需，而 §6.1 行 671 把它列进 `request_hash` 的排除集——理由（行 674）是「它是观测字段，客户改它不该导致 409」，一个「可改、可不给」的字段在受理行里就必然可空。示例给了值（`trace-abc`）所以正向路径有覆盖，但 `null` 是合法取值，不收成纯 `string`。"
+    }
+  },
+  "required": [
+    "schema_version",
+    "operation_id",
+    "receipt_id",
+    "command",
+    "state",
+    "target",
+    "api_client_id",
+    "principal_type",
+    "client_trace_id"
+  ],
+  "additionalProperties": false,
+  "x-needs-owner": [
+    {
+      "field": "`accepted_at` / `forwarded_at` / 上游水位：S47 要显示的东西事件里没有",
+      "demanded_by": "plans/S46-developer-integration.md §10.6 行 1052（「S47 必须显示 `accepted_at` 作为水位」）+ plans/S47-realtime-projection.md 行 85（订阅本事件）+ §4.5 行 381–389（字段清单没有它）",
+      "s46_status": "§10.6 给了 S47 一条硬要求：把 `accepted_at` 当水位显示，且不得把「最新受理」呈现为「最新完成」。但本事件的字段清单（§4.5 行 381–389）里没有 `accepted_at`；它只在别处出现——DDL §5.2 行 517（`accepted_at timestamptz NOT NULL DEFAULT now()`）、202 响应 §3.1 行 167、轮询响应 §4.2 行 328。**S47 §2.1 行 88 明说「事件里没有的字段，投影里就没有——而不是按上一次的值保留」**，所以 S47 无法从本事件得到这个时刻，只能：拿信封的 `time` 顶替（那是发布时刻，不等于受理时刻，但在这个事务里两者相差毫秒级）、或改用轮询 API（S47 是投影服务，按 §2.1 就是靠事件吃饭的）。更根本的是 §4.5 行 399「只发 `accepted`，不发状态变更」——回执后来变 `FORWARDED`/`REJECTED`/`FORWARD_UNKNOWN` 时**没有任何信号**，S47 的「最近调用」面板会永远显示「受理中」。C46-6（§11 行 1067）把「没有状态流转事件」记成缺口，但它的影响栏只写「外部客户只能轮询」，没写「S47 被 §10.6 要求做的事做不到」。同样缺的还有 `forwarded_at`（DDL 行 518）与 `upstream_ref` / `upstream_state` / `upstream_state_as_of`（行 511–513）——§4.2 的轮询响应把它们当必填展示（行 335「必填：上游快照的水位」），本事件一个都没有。本 schema 照示例收九个字段，不代 S46 往事件里加字段——加字段要 S46 和 S47 一起改。"
+    },
+    {
+      "field": "`target` 的形状（十二条命令一套 `jsonb`）",
+      "demanded_by": "plans/S46-developer-integration.md §5.2 行 502（`target jsonb NOT NULL`）+ §2.3 行 106–119（十二条命令各打一个上游）+ §4.5 行 386（示例只给了 `episode.generate` 那一套）",
+      "s46_status": "§2.3 的白名单把十二条外部命令映射到八个服务：`episode.generate`→S21 `POST /runs`、`run.get`→S21 `GET /runs/{id}`、`run.command`→S21 的 `:pause|:cancel|:resume`、`change.plan`→S07、`change.apply`→S07、`review.decide`→S40、`delivery.prepare`/`delivery.publish`→S43、`memory.query`→S16、`context.preview`→S18、`policy.get`→S02、`cost.query`→S23/S44。每一条要的 target 键都不同，而 §2.2 行 85 与 §4.5 行 386 只给了一套（`{project_id, episode_id}`）。**没有一处写第二套**——全文找不出 `run_id` 作为 target 键的示例。C46-2（§11 行 1063）登记「无外部命令目录的机器可读定义」，正是这一点的根因：没有 `contracts/integration-commands.v1.json`，`target` 就无法按 `command` 分派 schema。本 schema 只要求非空对象、内部键全放开，不猜任何一套。"
+    },
+    {
+      "field": "`principal_type` 只有两个值，凭据有三种",
+      "demanded_by": "plans/S46-developer-integration.md §5.2 行 498（`CHECK (principal_type IN ('api_client','mcp_client'))`）+ §2.1 行 61–65（三种凭据）+ §11 C46-3 行 1064",
+      "s46_status": "§2.1 的表列了三种凭据：API key（服务端到服务端）、OAuth2 access token（企业 SSO 直连场景，行 64）、MCP client（Agent 编排）。派生规则（行 70–72）产出 `{tenant_id, principal_id, principal_type, scopes[], delegation_id?, home_region, exp}`，**`principal_type` 由 `verify()` 决定**。但 DDL 的 `CHECK` 只允许 `api_client` / `mcp_client` 两个值，回执表里也没有任何列能表达「这次调用是 SSO 用户授权的」（`delegation_id` 是委派链，不是主体类型）。于是 OAuth2 调用要么被记成 `api_client`（丢失它是用户授权的这一事实，而 S45 审计要靠这个区分机器与人在 §10.5 行 1039–1044）、要么加第三个值。C46-3 登记的是「`principal_type='api_client'` 在 S01 侧如何映射未定义」，比这更早的一层是「OAuth2 该记成什么」都没定。本 schema 照 DDL 收两个值，不加第三个——那是 S46 与 S01 的裁决。"
+    },
+    {
+      "field": "`receipt_id` 是裸主键，且出现在外部可见的 202 响应里",
+      "demanded_by": "plans/S46-developer-integration.md §5.2 行 490（`receipt_id text PRIMARY KEY`）+ §3.1 行 167（202 响应含 `receipt_id`）+ §9.1 行 913–921 / T46-04 行 920（E28）",
+      "s46_status": "`operation_id` 是带租户的（`UNIQUE (tenant_id, operation_id)`，行 522），跨租户探测不到存在性；**但 `receipt_id` 是裸主键**（行 490），全局唯一，而 §3.1 行 167 的 202 响应把它**发给外部调用方**。本服务 §9.1 行 913–921（T46-04 行 920）要求「租户 B 用合法凭据访问租户 A 的 `run_id` → 404，响应不含 A 的任何标识」（E28），§5.6 行 661 还专门拒绝了「全局跨租户 `external_id_mapping` 唯一索引」并写明「跨租户唯一会泄漏（E28）」——**同一条纪律没有落到 `receipt_id` 上**。读取路径有 RLS 兜（§9.1），但 E28 要的是不泄漏存在性，而唯一冲突发生在写入路径。`receipt_id` 是暴露面最小的一类 id（它不像 `export_id` 会进客户工单、SIEM 规则），所以风险低于 S45 的 AEX-3，但它同样是外部可见的裸主键。事件层不受影响（事件里的 `receipt_id` 本来就是单租户内的值），记在这里是因为它决定了本事件能不能被跨租户试探。"
+    }
+  ],
+  "x-conflicts": [
+    {
+      "id": "ICA-1",
+      "summary": "§10.6 要求 S47 拿 `accepted_at` 当水位，而 `accepted_at` 不在事件的九个字段里；且「只发 accepted」让投影永远停在受理态",
+      "s46_event": "`plans/S46-developer-integration.md` §4.5 行 381–389 的字段清单：`operation_id` / `receipt_id` / `command` / `state` / `target` / `api_client_id` / `principal_type` / `client_trace_id`——八项，加上 `schema_version` 是九项，没有 `accepted_at`。",
+      "s46_ddl": "§5.2 行 517：`accepted_at timestamptz NOT NULL DEFAULT now(),` 然后是 518 `forwarded_at`、519 `last_attempt_at`、520 `next_attempt_at`。四个时刻，一个都没进事件。",
+      "why_it_matters": "§10.6 行 1052 是全篇唯一一条给消费方的**硬性呈现要求**：「S47 订阅 `integration.command.accepted`，用于外部客户端面板的『最近调用』列表。S47 必须显示 `accepted_at` 作为水位，不得把『最新受理』呈现为『最新完成』。」plans/S47-realtime-projection.md 行 85 确实把本事件登记进订阅表（用途「外部调用列表」），但 S47 §2.1 行 88 又写着「事件里没有的字段，投影里就没有——而不是『按上一次的值保留』」。两条合起来是个死结：**S47 被要求显示一个它按自己的规则不该有的字段**。而「不得把最新受理呈现为最新完成」这半句在本事件上还有第二层含义——§4.5 行 399「只发 `accepted`，不发状态变更」，回执变 `FORWARDED` / `REJECTED` / `FORWARD_UNKNOWN` 时不发任何事件，所以 S47 不但拿不到水位，还会**把每一条调用永久显示为受理态**。讽刺的是，这个呈现恰恰是那句禁令想防的那种呈现的一种更糟的版本：不是把「受理」说成「完成」，而是**把「已完成」也说成「受理」**。C46-6（§11 行 1067）记了「没有命令状态流转事件」，但影响栏只写「外部客户只能轮询」，没有把 §10.6 这条内部硬要求牵进去。",
+      "consequence": "本 schema 不收 `accepted_at`——照示例的九字段收，不替 S46 加字段（加字段要事件生产方与消费方一起改，且会立刻影响 S47 的投影重放资格 `replay_side_effects: false`）。S47 若要落地 §10.6，最短路径是让 S46 把 `accepted_at` 加进 payload；替代路径是 S47 改用信封 `time`（同一事务内，差在毫秒），但那样「水位」与「发布时刻」就成了同一个量，将来若引入延迟发布（outbox 积压）会立刻失真——而 `outbox_unpublished_idx`（§5 行 649）的存在说明延迟发布是被预期的。",
+      "fix_shape": "两处一起改：(a) §4.5 行 381–389 的清单加 `accepted_at`，示例（行 385 附近）给值，DDL 已有列无需改；(b) 若要满足「不得把受理呈现为完成」，需要一个状态流转事件（`integration.command.state-changed` 之类），或明确 C46-6 的产品裁决是「只做受理通知 + 轮询」。**只改 (a) 能修好水位，修不好状态**；只改 (b) 则水位仍缺。"
+    },
+    {
+      "id": "ICA-2",
+      "summary": "§3.1 写回执有 `FORWARD_FAILED` 这个态，§3.2 的状态机和 DDL 的 CHECK 里都没有它",
+      "s46_transition": "§3.1 行 174：「因此回执有 `state`：`ACCEPTED → FORWARDED | FORWARD_FAILED`，客户端通过轮询看到 `FORWARD_FAILED` 后按 §7.3 处理。」",
+      "s46_machine": "§3.2 行 178–187 的状态机只有四条出边：上游 2xx → `FORWARDED`；上游 4xx 且明确未执行 → `REJECTED`；上游 5xx/超时 → `FORWARD_RETRYING` →（成功）`FORWARDED` /（超次数）`FORWARD_UNKNOWN`；上游 409 明确未执行 → `REJECTED`。**没有 `FORWARD_FAILED`。**",
+      "s46_ddl": "§5.2 行 506–508 的 `CHECK (state IN ('ACCEPTED','FORWARD_RETRYING','FORWARDED','REJECTED','FORWARD_UNKNOWN','STALE_UNKNOWN','CANCELLED'))`——七个值，同样没有 `FORWARD_FAILED`。",
+      "why_it_matters": "§7.3（行 780–788）是「客户端在 `FORWARD_UNKNOWN` 之后该做什么」，不是「看到 `FORWARD_FAILED` 之后该做什么」——所以行 174 那句「按 §7.3 处理」指向的是**另一个态**的处理流程。这正是最容易被后来者当证据链的一类错误：一个有出处的引用，配一个不存在的名字，结论（「客户端要轮询处理」）碰巧对得上。真正的问题是「转发失败」在本服务里**没有对应状态**：可重试的失败进 `FORWARD_RETRYING`，超次数的进 `FORWARD_UNKNOWN`（行 184），明确未执行的进 `REJECTED`（行 181/186）。三种都各归各位，所以正确做法不是加 `FORWARD_FAILED`，而是把行 174 的两个名字改成真实集合。`FORWARD_UNKNOWN` 尤其不能混同于「失败」——行 189「转发结果未知，不等于失败」、行 199「**`FORWARD_UNKNOWN` 绝不自动重提**」，那条纪律（AGENTS.md 第 19 行禁令在 S46 的落点）正靠这个区分成立。把「失败」这个词写进状态名，等于给未来实现者一个「它失败了所以可以重试」的暗示，而重试会走到 S26 重复付费。",
+      "consequence": "本 schema 的 `state` enum 照 DDL 收七个值，不收 `FORWARD_FAILED`——DDL 的 `CHECK` 是这一列唯一的机器可读定义。",
+      "fix_shape": "改 §3.1 行 174 的两个态名为真实集合，建议：`ACCEPTED → FORWARDED | REJECTED | FORWARD_RETRYING | FORWARD_UNKNOWN`，并把「客户端通过轮询看到 `FORWARD_FAILED` 后按 §7.3 处理」改成「看到 `FORWARD_UNKNOWN` 后按 §7.3 处理」。不要反过来往 DDL 里加 `FORWARD_FAILED`：那会造出一个既不可重试又不可对账的终点。"
+    },
+    {
+      "id": "ICA-3",
+      "summary": "§3.1 的 `INSERT` 只给四个值，DDL 有十二个 `NOT NULL` 无默认值的列——那段伪代码直接跑会报错",
+      "s46_pseudocode": "§3.1 行 158：`INSERT integration_command_receipt(ACCEPTED, request_hash, command, target)`。**连列名都没写**——格式是 `INSERT 表(值...)`，不是 `INSERT 表(列...) VALUES(值...)`。§6.2 行 681 的版本稍好：`INSERT INTO integration_command_receipt (command_id, tenant_id, request_hash, ...) VALUES (...)`，但用 `...` 收尾。",
+      "s46_ddl": "§5.2 行 489–524：**必填且无 `DEFAULT`** 的列有十三个——显式 `NOT NULL` 的十二个（`tenant_id`、`operation_id`、`command_id`、`request_hash`、`api_client_id`、`kid`、`principal_type`、`command`、`target`、`params_sha256`、`params_bytes`、`state`），加上 `receipt_id`（行 490 写的是 `text PRIMARY KEY`，主键隐含 `NOT NULL`，DDL 没有明写）。`attempt_count` 也不可空但有 `DEFAULT 0`，所以它不是必填。",
+      "why_it_matters": "四个值对十三个必填列。写成这样不是排版问题：`operation_id` 是 `UNIQUE (tenant_id, operation_id)` 的一半（行 522），`kid` 与 `principal_type` 是凭据归属，`params_sha256` / `params_bytes` 是幂等与限额的依据（§6.1 行 671 的 `request_hash` 公式只排除三个字段，`params` 参与哈希）。**步骤 8 是整个受理路径唯一写库的地方**，它写不全，后面所有关于「先落回执再转发」的论证（行 170–172）都建立在一条跑不通的 SQL 上。§6.2 行 678–688 的版本用 `...` 盖住了缺口，所以两处对照也发现不了问题——只有回 DDL 数 `NOT NULL` 才看得见。这类「伪代码写四个值、DDL 要十二个」在实现阶段会被静默补全（实现者照着 DDL 填），从而掩盖「谁负责生成 `operation_id`」这个真问题：行 172 说「重试得到同一个 `operation_id`」，但 `operation_id` 由谁在哪一步生成（受理前？事务内？）全文没写。",
+      "consequence": "本 schema 不受影响（payload 里的字段是有值的）。记在这里是因为这直接决定实现时 `operation_id` 的生成位置，而 `operation_id` 就是本事件的 `aggregate_id`——它的一次生成还是两次生成，决定分区键稳定不稳定。",
+      "fix_shape": "把 §3.1 行 158 补成完整列清单与 `VALUES`，或直接指向 §6.2 行 678–688 并把 `...` 展开。同时补一句 `operation_id` 的生成时机（建议在事务内、由 `receipt_id` 或独立序列派生，保证同 `command_id` 重放恒等）。"
+    },
+    {
+      "id": "ICA-4",
+      "summary": "§4.5 说「事件只带 `params_sha256` / `params_bytes`」，但这两个字段既不在字段清单里也不在示例里；而「用 `data_ref` 回查细节」也拿不到 params",
+      "s46_prose": "§4.5 行 397：「**『不含』由两道交叉保证，不是靠上游自觉。** 字段形状上：事件只带 `params_sha256` / `params_bytes`，正文根本没有可落的位置。」",
+      "s46_field_list": "§4.5 行 381–389 的八项字段清单没有这两个；行 385 附近示例的 `data` 对象也没有。§5.2 行 503–504 的 DDL 列有（`params_sha256 char(64) NOT NULL`、`params_bytes integer NOT NULL`）。",
+      "s46_lookup": "§4.5 行 395：「消费方（S45 审计、S44 统计）需要细节时用 `data_ref` 回查。」§5.6 行 659 的「不建的表」里写着 `request_body_log` 不建，理由「params 含剧情正文；驻留与泄漏面（E31）」。",
+      "why_it_matters": "「两道交叉保证」这个论点本身是对的，但它的第一道（字段形状）在**这份文件自己的字段清单里就不成立**——讲防控的那一段引用了两个不在清单里的字段。第二道（内容替换，`INGRESS_SECRET_SCAN`）是实的，§2.2 行 100 有完整顺序论证（先替换后哈希，否则合法重试变 `REQUEST_HASH_MISMATCH`）。所以缺失的这两个字段不是小事：`params_sha256` 是**幂等比较的依据**（行 100 原话），把它排除在事件外，意味着消费方无法从事件判断「两次调用是不是同一份入参」——S45 审计要复现一次可疑调用时会缺这一环。而「用 `data_ref` 回查」这条退路也堵着：回执表只存摘要不存正文（行 503 注释「params 只存摘要，不存正文」），`request_body_log` 又明确不建，**所以 params 正文在整个 S46 里不存在**。回查拿得到回执、拿不到入参。C46-11（§11 行 1072）登记的是重放能力的缺口，没有登记「§4.5 行 397 引用的两个字段不存在」这一层。",
+      "consequence": "本 schema 不放 `params_sha256` / `params_bytes`——示例是唯一给出取值的地方，示例没有它们；加进去等于凭空给 shape（`sha256` 的十六进制模式可以推，但「有还是没有」是 S46 的裁决）。`target` 的 `additionalProperties: true` 兜不住它们：它们是 payload 顶层的键，不在 `target` 里。",
+      "fix_shape": "二选一并改另一处：(a) 若事件确实要带这两个字段（行 397 的原意），§4.5 行 381–389 的清单与示例都补上，本 schema 跟着加两个属性；(b) 若事件确实不带（示例写的是这个），把行 397 改成「事件不带入参摘要，回执表里有」——但那样 `data_ref` 回查就只剩回执元数据，§4.5 行 395 的「需要细节时回查」应同步说明「细节指回执与上游状态，不含入参」。"
+    },
+    {
+      "id": "ICA-5",
+      "summary": "`target` 是 `jsonb NOT NULL`，而十二条命令各要一套 id，计划只给了一套示例",
+      "s46_ddl": "§5.2 行 502：`target jsonb NOT NULL,`——没有 `CHECK`、没有注释、没有形状。",
+      "s46_commands": "§2.3 行 106–119 的十二行：`episode.generate`（→S21 `POST /runs`）、`run.get`（→S21 `GET /runs/{id}`）、`run.command`（→S21 `:pause|:cancel|:resume`）、`change.plan`（→S07）、`change.apply`（→S07）、`review.decide`（→S40）、`delivery.prepare` / `delivery.publish`（→S43）、`memory.query`（→S16）、`context.preview`（→S18）、`policy.get`（→S02）、`cost.query`（→S23/S44）。",
+      "s46_example": "§2.2 行 85：`\"target\": { \"project_id\": \"prj_ep\", \"episode_id\": \"ep_03\" }`；§4.5 行 386 同一套。两处示例都是 `episode.generate` 的 target。",
+      "why_it_matters": "十二条命令里至少六条不可能用 `{project_id, episode_id}`：`run.get` / `run.command` 要 `run_id`，`change.apply` 要 `change_plan_id`，`review.decide` 要待决项 id，`policy.get` 要 policy 引用，`cost.query` 要一个时间窗与维度。**全文没有第二套 target 示例**——找不出 `run_id` 作为 target 键的任何一处。于是 `target` 是「一个字段，十二种形状，零份定义」。它进事件后不再是 S46 内部的事：S47 要按它渲染「外部调用列表」（plans/S47-realtime-projection.md 行 85），S45 要按它做审计检索（§10.5 行 1042 把 `target` 列进审计 details）。一个键名不固定的对象，消费方无法建索引、无法校验、无法写 UI。C46-2（§11 行 1063）提出的 `contracts/integration-commands.v1.json` 正是缺的那份东西——有了它，每条形如 `{command, required_scope, requires_admission, upstream, target_schema}`，`target` 才能被分派校验。",
+      "consequence": "本 schema 只要求 `target` 是非空对象（`minProperties: 1`）、内部键全部放开（`additionalProperties: true`）。这是全仓第二处放开内部键的地方（第一处是 `post.timeline-revision-created.v2.schema.json:51` 的 `built_against.manifest_ref`，理由同为「形状全文未定义」）。`minProperties: 1` 是我的判断，不是出处：一个空 `{}` 的 target 在十二条命令里没有一条说得通，但它也不是从哪句原文推出来的——若要严格照「只锁出处」，应连这个也去掉。保留它的理由是 §2.2 行 96「`target` 里的 id 必须在认证租户内存在」，一个空对象让这句话无事可做。",
+      "fix_shape": "补 `contracts/integration-commands.v1.json`（C46-2 已提出），至少含每命令的 `target_schema`；`target` 在本 schema 里保持放开，等那份文件落地后再按 `command` 用 `if/then` 分派（JSON Schema 2020-12 支持，但需要 `target` 按命令枚举，而 `command` 现在还不是 enum——两个改动是绑在一起的）。"
+    },
+    {
+      "id": "ICA-6",
+      "summary": "DDL 的 `principal_type` 只允许两个值，而 §2.1 列了三种凭据——企业 SSO 的 OAuth2 调用无处落",
+      "s46_credentials": "§2.1 行 61–65 三行：API key（服务端到服务端）、OAuth2 access token（企业 SSO 直连场景，`tenant_id` 来自 JWT `tid` 声明）、MCP client（同 API key，`principal_type='mcp_client'`）。",
+      "s46_ddl": "§5.2 行 498：`principal_type text NOT NULL CHECK (principal_type IN ('api_client','mcp_client')),`。",
+      "why_it_matters": "第二行明说 OAuth2 走的是「JWT `tid` 声明，由 S01 签发与验签」——这是一条与 API key 完全不同的认证路径，`verify()` 的实现（行 74「JWT 走『验签 + `kid` 查表』」）也不同。但回执表里只有 `api_client` 与 `mcp_client` 两个值，没有第三个位置放「这次调用是 SSO 用户授权的」。而 §10.5 行 1042 要求审计 details 含 `principal_type='api_client'`——审计要区分机器与人在（这正是 S45 的存在意义之一）。把 OAuth2 调用记成 `api_client`，审计里就分不出「客户的服务在调」还是「客户的员工在调」；记成 `mcp_client` 更错。这不是 DDL 的小疏忽：`delegation_id`（行 499）能表达「A 委派 B」，但表达不了「B 本人是 SSO 用户」。C46-3（§11 行 1064）登记的是「`principal_type='api_client'` 在 S01 `principal` 侧如何映射未定义」，比它更早的一层——OAuth2 该记成什么——还没人问。",
+      "consequence": "本 schema 的 `principal_type` enum 照 DDL 收两个值。加第三个值会让 schema 变成 S46 与 S01 都没同意过的契约（AGENTS.md：契约与文档冲突时停下，不自行选边）。",
+      "fix_shape": "S46 与 S01 一起裁：若 OAuth2 是一等主体类型，DDL 的 `CHECK` 加 `'oauth_user'`（或 S01 已定的名字），§2.1 的表补一列写清它映射到哪个 `principal_type`，本 schema 同步加值；若 OAuth2 被有意折叠成 `api_client`（即「平台只认机器主体，SSO 用户也算 client」），那么 §2.1 行 64 应写明这一点，否则实现者会按字面理解去新建第三个值。"
+    },
+    {
+      "id": "ICA-7",
+      "summary": "回执的 `CANCELLED` 态没有入边——这个值来自 §3.5 的 webhook 投递状态机，不是命令回执的",
+      "s46_receipt_state": "§5.2 行 508 的 `CHECK` 收 `CANCELLED`，§3.2 行 178–187 的状态机**没有一条边指向它**。",
+      "s46_webhook_state": "§3.5 行 242–247 的 webhook 投递状态机里有 `└──(订阅被删/停用)──► CANCELLED`，§5 行 565 的 `webhook_delivery` 表另有自己的 `CHECK (state IN ('PENDING','DELIVERING','DELIVERED','FAILED','CANCELLED'))`。",
+      "why_it_matters": "两个状态机共享了值名（`CANCELLED`，以及形似的 `FAILED` / `FORWARDED`）却装两件不同的事：回执的态是「这条外部命令走到哪了」，投递的态是「这个 webhook 发出去没有」。`CANCELLED` 在两处都有，但只有投递那边有入边（订阅被删/停用，行 247）。回执表里它没有任何触发条件——`run.command` 的 `:cancel` 是**新的一条外部命令**（§2.3 行 110），它自己会被受理成一条新的回执，取消的是 S21 的 run，不是取消另一条回执。§3.3 行 218 的 `STALE_UNKNOWN` 有明确入边（7 天无结论），所以 `CANCELLED` 的孤立不是「还没写」的问题——它更像是从 webhook 那份 `CHECK` 抄过来时多带了一个值。这类错误的杀伤力在于 §3.2 行 191–197 的状态表（五行的「客户端看到什么」）里没有 `CANCELLED`，所以连「这个态该怎么呈现」都没有答案。",
+      "consequence": "本 schema 的 enum 照 DDL 收全七值（house style：DDL 有 `CHECK` 就收全，到达性写在描述里，先例是 `breakdown.revision-created` 与 `adaptation.training-completed` 的 `state`）。删掉 `CANCELLED` 就等于替 S46 定「这个值不存在」，而 DDL 里它在。",
+      "fix_shape": "S46 owner 二选一并改另一处：(a) 回执确实需要「被取消」这个终点（例如租户被停用时要终止在途命令），在 §3.2 的状态机补一条入边，并在行 191–197 的状态表补一行「客户端看到什么」；(b) 不需要，从 §5.2 行 508 的 `CHECK` 删掉 `CANCELLED`，本 schema 同步收窄。顺带值得确认 `webhook_delivery` 与 `integration_command_receipt` 是否该共享值名（现在共享 `CANCELLED`），因为两个表的态在 S47/S45 的消费侧会被混读。"
+    },
+    {
+      "id": "ICA-8",
+      "summary": "示例的 `causation_id: null` 与裸字符串 `data_ref` 都被信封拒绝；`aggregate_sequence` 的来源 `$seq` 全文未定义",
+      "s46_example": "§4.5 行 379：`\"correlation_id\": \"ext_01J8...\", \"causation_id\": null,`；行 391：`\"data_ref\": \"integration-command/op_01J...\"`；行 378：`\"aggregate_sequence\": 1`。",
+      "envelope": "`contracts/event-envelope.v2.schema.json`：`causation_id` 是 `{\"type\":\"string\",\"minLength\":1}` 且列在 16 个 `required` 里——**没有 `null` 分支**；`data_ref` 是 `oneOf`[四键对象 | `null`]——**没有字符串分支**。",
+      "why_it_matters": "`causation_id: null` 的动机是「这次调用没有上游命令」（它是入口，不是响应）。同仓写 `null` 的还有 S45 行 453 与 S48 行 431——**三篇计划、同一个动机、同一个错误**，所以这不是单篇笔误而是信封与计划之间一处系统性的误解。本仓库既有示例的做法是填「触发它的那条外部命令 id」（`cmd_...` 形态，28 个示例这么写），S46 恰好有一条真实存在的 `command_id`（客户端生成，`ext_01J...`，§2.2 行 82），所以 `causation_id` 可以填它，不必填 `null`。`data_ref` 写裸字符串想表达的是对象存储/归档路径，但信封的 `data_ref` 不是放路径的地方——S45 的 AEX-5 里已记过同一件事（想表达的信息有用，容器不对）。S46 的回执**有**真实的 id（`receipt_id`）与真实的服务 id（`S46`），但**没有 `revision` 列**（§5.2 行 489–524 全表无 revision 字段），也没有「回执整行」的 `content_hash`（`request_hash` 是请求的哈希，不是回执的）。所以示例的 `data_ref` 只能写 `null`——与 S48 的处境相同，理由不同（S48 是「没有对外 id」，S46 是「有 id 没有 revision」）。`aggregate_sequence` 写 `1`：本事件每个 `operation_id` 只发一次（§4.5 行 399），所以 `1` 是对的，但 §6.2 行 685 的 `$seq` 变量**全文没有定义**，只在 `outbox` 的 DDL 里有一个 `aggregate_sequence bigint NOT NULL`（行 640）与 `UNIQUE (aggregate_id, aggregate_sequence, event_type)`（行 647）。`1` 是从「只发一次」推出来的，不是从 `$seq` 的赋值读出来的。",
+      "consequence": "本仓库的示例按信封收：`causation_id` 填客户端生成的 `command_id`，`data_ref` 写 `null`，`aggregate_sequence` 写 `1`。三处改动都在示例里，schema 本身不受影响。",
+      "fix_shape": "S46 改 §4.5 示例三处：`causation_id` → 客户端的 `command_id`（与 `correlation_id` 同值时也照既有示例的写法，28 个示例里有同值先例）；`data_ref` → `null` 或给出「回执的 revision 是什么」的答案（若 S46 想提供可回查的引用，需要在 `integration_command_receipt` 加一列，语义待定）；`aggregate_sequence` → 把 §6.2 行 685 的 `$seq` 定义为常量 `1`（既然只发一条）。三处都是示例层，不阻塞实现。"
+    }
+  ]
+}

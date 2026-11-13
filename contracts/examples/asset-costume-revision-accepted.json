@@ -1,0 +1,53 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCP9M4T6V8W0X2Y4Z6A8B0C",
+  "source": "S12",
+  "type": "asset.costume.revision.accepted",
+  "subject": "costume/cos_linlan_reddress",
+  "time": "2026-11-06T09:30:00Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "cos_linlan_reddress",
+  "aggregate_sequence": 2,
+  "correlation_id": "cmd_01JCP9K2R4T6V8W0X2Y4Z6A8B",
+  "causation_id": "cmd_01JCP9K2R4T6V8W0X2Y4Z6A8B",
+  "traceparent": "00-3f7c19a5d2e80461b9c3d5f7a1e2b4c6-8d0f2a4c6e8b1d37-01",
+  "data": {
+    "schema_version": "2.0",
+    "costume_ref": {
+      "service_id": "S12",
+      "id": "cos_linlan_reddress",
+      "revision": 2,
+      "content_hash": "cd05d50ab30b1c220895cd17c3bebec3f133999b79210f3885e24d24d588bbce"
+    },
+    "character_ref": {
+      "service_id": "S11",
+      "id": "chr_linlan"
+    },
+    "costume_kind": "character_outfit",
+    "became_canonical": true,
+    "canonical_revision": 2,
+    "variant_axes": {
+      "damage": [
+        "none",
+        "light",
+        "torn_shoulder",
+        "bloodied"
+      ],
+      "wetness": [
+        "dry",
+        "damp",
+        "soaked"
+      ]
+    },
+    "unverified_refs": [],
+    "rights_ref": {
+      "rights_owner": "S02",
+      "rights_id": "rights_costume_linlan_reddress",
+      "rights_revision": 1,
+      "rights_hash": "444b882c4a7ec6ce302ddecf5aeeaf3b0e1bd9d22a5bf517a19e9d874b12f628"
+    }
+  },
+  "data_ref": null
+}

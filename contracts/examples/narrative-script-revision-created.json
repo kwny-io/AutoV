@@ -1,0 +1,39 @@
+{
+  "specversion": "1.0",
+  "schema_version": "2.0",
+  "id": "evt_01JCM8Q2T4V6X8Z0B2D4F6H8J0",
+  "source": "S04",
+  "type": "narrative.script.revision.created",
+  "subject": "script/scr_01JCM7A3K5M7P9R1T3V5X7Z9B1",
+  "time": "2026-10-29T13:42:07Z",
+  "tenant_id": "t_demo",
+  "home_cell": "cell_a1",
+  "aggregate_id": "scr_01JCM7A3K5M7P9R1T3V5X7Z9B1",
+  "aggregate_sequence": 7,
+  "correlation_id": "evt_01JCM8PYC3W5Y7A9C1E3G5J7L9",
+  "causation_id": "evt_01JCM8PYC3W5Y7A9C1E3G5J7L9",
+  "traceparent": "00-7c4d2a91f6b3e8d05a1c4f7b2e9d3a68-2b6f8d4c1e7a9053-01",
+  "data": {
+    "schema_version": "2.0",
+    "script_id": "scr_01JCM7A3K5M7P9R1T3V5X7Z9B1",
+    "revision": 7,
+    "episode_id": "ep_01JCHQ3B5N7K9M1P3R5T7V9X1Z",
+    "series_id": "ser_01JCGX7D2F4H6J8K0L2M4N6P8Q",
+    "content_hash": "f8534fe8ccd089d0a3dcea3db8bc2021a0bac2b40d150f18ee1ce7b765fe1c64",
+    "line_set_hash": "cc9d955ed8187ce63e720485268024fd717a5653cab3a985f7a22e9eb36a4587",
+    "line_count": 42,
+    "scene_markers": [
+      "1",
+      "2",
+      "3"
+    ],
+    "structure_hash": "structure-of-scr_01JCM7A3K5M7P9R1T3V5X7Z9B1-rev7",
+    "author": {
+      "principal_id": "prn_01JCF1K3M5P7R9T1V3X5Z7B9D",
+      "principal_type": "human"
+    },
+    "produced_by": null,
+    "parent_revision": 6
+  },
+  "data_ref": null
+}
