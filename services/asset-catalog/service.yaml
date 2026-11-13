@@ -4,7 +4,7 @@
 service_id: S10
 slug: asset-catalog
 name: 资产目录与绑定解析
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
