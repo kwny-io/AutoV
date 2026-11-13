@@ -4,7 +4,7 @@
 service_id: S12
 slug: costume-assets
 name: 服装与妆造资产
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
