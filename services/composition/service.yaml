@@ -4,7 +4,7 @@
 service_id: S42
 slug: composition
 name: 混音与合成渲染
-maturity: design_only
+maturity: implemented
 
 domain: post
 owner_team: post
