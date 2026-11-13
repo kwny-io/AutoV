@@ -4,7 +4,7 @@
 service_id: S34
 slug: music
 name: BGM与音乐
-maturity: design_only
+maturity: implemented
 
 domain: production
 owner_team: generation
