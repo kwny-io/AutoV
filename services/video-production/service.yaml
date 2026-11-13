@@ -4,7 +4,7 @@
 service_id: S30
 slug: video-production
 name: 视频片段生产
-maturity: design_only
+maturity: implemented
 
 domain: production
 owner_team: generation
