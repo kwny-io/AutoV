@@ -39,5 +39,7 @@ pythonpath = [
     "services/project-catalog/api",
     "services/sound-effects/src",
     "services/sound-effects/api",
+    "services/model-routing/src",
+    "services/model-routing/api",
 ]
 testpaths = ["services", "platform"]

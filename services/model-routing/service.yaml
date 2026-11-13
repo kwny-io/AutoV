@@ -4,7 +4,7 @@
 service_id: S25
 slug: model-routing
 name: 模型路由与估价
-maturity: design_only
+maturity: implemented
 
 domain: models
 owner_team: models

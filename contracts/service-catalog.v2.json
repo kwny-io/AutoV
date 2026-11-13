@@ -577,7 +577,7 @@
       "acceptance": "能力先过滤再评分；成本含下游口型和预计返工；决策可解释",
       "deployment_unit": "model-routing",
       "schema_owner": "model_routing",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "models"
     },
     {
