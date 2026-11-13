@@ -4,7 +4,7 @@
 service_id: S19
 slug: agent-runtime
 name: Agent运行与工具沙箱
-maturity: design_only
+maturity: implemented
 
 domain: agents
 owner_team: agents
