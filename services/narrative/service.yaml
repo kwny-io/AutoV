@@ -4,7 +4,7 @@
 service_id: S04
 slug: narrative
 name: 创意与剧本
-maturity: design_only
+maturity: implemented
 
 domain: creation
 owner_team: creation
