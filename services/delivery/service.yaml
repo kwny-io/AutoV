@@ -4,7 +4,7 @@
 service_id: S43
 slug: delivery
 name: 交付与外部分发
-maturity: design_only
+maturity: implemented
 
 domain: post
 owner_team: post
