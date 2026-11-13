@@ -4,7 +4,7 @@
 service_id: S13
 slug: scene-assets
 name: 场景与空间资产
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
