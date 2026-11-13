@@ -4,7 +4,7 @@
 service_id: S36
 slug: semantic-qc
 name: 视觉语义与时序质检
-maturity: design_only
+maturity: implemented
 
 domain: quality
 owner_team: quality
