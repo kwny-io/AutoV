@@ -4,7 +4,7 @@
 service_id: S11
 slug: character-assets
 name: 角色身份资产
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
