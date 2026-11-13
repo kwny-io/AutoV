@@ -4,7 +4,7 @@
 service_id: S47
 slug: realtime-projection
 name: 实时状态与通知投影
-maturity: design_only
+maturity: implemented
 
 domain: experience
 owner_team: experience
