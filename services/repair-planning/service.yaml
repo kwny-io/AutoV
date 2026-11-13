@@ -4,7 +4,7 @@
 service_id: S39
 slug: repair-planning
 name: 返工与修复决策
-maturity: design_only
+maturity: implemented
 
 domain: quality
 owner_team: quality
