@@ -4,7 +4,7 @@
 service_id: S44
 slug: evaluation-analytics
 name: 效果评测与经营分析
-maturity: design_only
+maturity: implemented
 
 domain: analytics
 owner_team: data
