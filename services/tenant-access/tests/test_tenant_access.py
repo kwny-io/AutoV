@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -245,9 +247,11 @@ def test_grant_emits_outbox_event():
 # ---- HTTP 幂等 ----------------------------------------------------------
 
 def test_http_same_key_same_body_replays_and_different_body_is_409():
-    import importlib
-    import app as app_module
-    importlib.reload(app_module)
+    # 不能平名 `import app`：别的服务也有 `api/app.py` 且可能先入 `sys.modules`。
+    path = Path(__file__).resolve().parents[1] / "api" / "app.py"
+    spec = importlib.util.spec_from_file_location("s01_api_app", path)
+    app_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app_module)
     client = TestClient(app_module.app)
     body = {"payload": {"slug": f"acme-{time.time_ns()}"}}
     h = {"Idempotency-Key": "cmd-http-1", "X-Tenant-Id": "platform"}
