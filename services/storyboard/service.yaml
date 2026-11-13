@@ -4,7 +4,7 @@
 service_id: S06
 slug: storyboard
 name: 分镜与导演规范
-maturity: design_only
+maturity: implemented
 
 domain: creation
 owner_team: creation
