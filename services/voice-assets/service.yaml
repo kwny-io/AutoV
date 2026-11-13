@@ -4,7 +4,7 @@
 service_id: S15
 slug: voice-assets
 name: 音色与声音授权
-maturity: design_only
+maturity: implemented
 
 domain: assets
 owner_team: assets
