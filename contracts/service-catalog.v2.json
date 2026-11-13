@@ -86,7 +86,7 @@
       "acceptance": "改稿追加版本；未接受剧本不能提交为正史",
       "deployment_unit": "narrative",
       "schema_owner": "narrative",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "creation"
     },
     {
@@ -109,7 +109,7 @@
       "acceptance": "场次关联到固定剧本版本；显示序号与ID分离",
       "deployment_unit": "breakdown",
       "schema_owner": "breakdown",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "creation"
     },
     {
@@ -133,7 +133,7 @@
       "acceptance": "仰拍4秒指令能产生合法DSL；对白及主动作不被默默删改",
       "deployment_unit": "storyboard",
       "schema_owner": "storyboard",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "creation"
     },
     {
@@ -158,7 +158,7 @@
       "acceptance": "重复命令同结果；并发修改409；只重做相关子图",
       "deployment_unit": "change-management",
       "schema_owner": "change_management",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "workflow"
     },
     {
@@ -228,7 +228,7 @@
       "acceptance": "绑定必须固定revision与权利版本；升级资产显示影响清单",
       "deployment_unit": "asset-catalog",
       "schema_owner": "asset_catalog",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     },
     {
@@ -251,7 +251,7 @@
       "acceptance": "跨集同人物固定ID；妆造变化不偷偷改变身份",
       "deployment_unit": "character-assets",
       "schema_owner": "character_assets",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     },
     {
@@ -274,7 +274,7 @@
       "acceptance": "角色身份与服装拆开；场次换装与破损有明确状态",
       "deployment_unit": "costume-assets",
       "schema_owner": "costume_assets",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     },
     {
@@ -297,7 +297,7 @@
       "acceptance": "日夜与闪回引用正确版本；门窗位置与运动轴可检查",
       "deployment_unit": "scene-assets",
       "schema_owner": "scene_assets",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     },
     {
@@ -320,7 +320,7 @@
       "acceptance": "同道具跨集外观稳定；持有关系与外观来源可区分",
       "deployment_unit": "prop-assets",
       "schema_owner": "prop_assets",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     },
     {
@@ -343,7 +343,7 @@
       "acceptance": "跨供应商映射回归；未授权音色不可新调用",
       "deployment_unit": "voice-assets",
       "schema_owner": "voice_assets",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     },
     {
@@ -438,7 +438,7 @@
       "acceptance": "编剧/分场/导演等角色工具权限不同；LLM不能绕过预算与接受门",
       "deployment_unit": "agent-runtime",
       "schema_owner": "agent_runtime",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "agents"
     },
     {
@@ -461,7 +461,7 @@
       "acceptance": "导演意图保留；主体参考顺序正确；对白文本不被编译改写",
       "deployment_unit": "prompt-compiler",
       "schema_owner": "prompt_compiler",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "agents"
     },
     {
@@ -670,7 +670,7 @@
       "acceptance": "多视图参考和mask可追溯；关键帧版本变化传播相关视频失效",
       "deployment_unit": "image-production",
       "schema_owner": "image_production",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
@@ -694,7 +694,7 @@
       "acceptance": "4s目标可选原生或允许裁切档位；对白主动作不被截断",
       "deployment_unit": "video-production",
       "schema_owner": "video_production",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
@@ -718,7 +718,7 @@
       "acceptance": "每句对白固定文本和声音版本；原生视频人声不覆盖锁定声音",
       "deployment_unit": "speech-production",
       "schema_owner": "speech_production",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
@@ -742,7 +742,7 @@
       "acceptance": "口型与锁定音频对齐；低可见度不伪装精确通过",
       "deployment_unit": "lipsync",
       "schema_owner": "lipsync",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
@@ -788,7 +788,7 @@
       "acceptance": "BGM版本可替换、独立导出；不遮盖对白并可追溯许可",
       "deployment_unit": "music",
       "schema_owner": "music",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
@@ -810,7 +810,7 @@
       "acceptance": "截断/空文件/错误时长必须检出；报告不依赖VLM主观判断",
       "deployment_unit": "technical-qc",
       "schema_owner": "technical_qc",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "quality"
     },
     {
@@ -834,7 +834,7 @@
       "acceptance": "缺陷有时间段与证据；合法特效/妆造变化不简单误判",
       "deployment_unit": "semantic-qc",
       "schema_owner": "semantic_qc",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "quality"
     },
     {
@@ -858,7 +858,7 @@
       "acceptance": "口型检查使用连续音视频；错读/漏词与字幕偏移有独立证据",
       "deployment_unit": "audio-alignment",
       "schema_owner": "audio_alignment",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "quality"
     },
     {
@@ -882,7 +882,7 @@
       "acceptance": "字幕后期合成；对白文本与字幕版本关联，不交给视频模型画字",
       "deployment_unit": "subtitles",
       "schema_owner": "subtitles",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "post"
     },
     {
@@ -908,7 +908,7 @@
       "acceptance": "视频修复需时序能力；策略不能套子工作流绕过返工上限",
       "deployment_unit": "repair-planning",
       "schema_owner": "repair_planning",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "quality"
     },
     {
@@ -956,7 +956,7 @@
       "acceptance": "4秒修改使下游时码变化；缺必要素材不能提交正式合成",
       "deployment_unit": "editorial",
       "schema_owner": "editorial",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "post"
     },
     {
@@ -984,7 +984,7 @@
       "acceptance": "音轨与字幕可分离导出；帧边界、色彩、响度与画幅一致",
       "deployment_unit": "composition",
       "schema_owner": "composition",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "post"
     },
     {
@@ -1013,7 +1013,7 @@
       "acceptance": "无缺口且验收通过才标完整交付；预览水印与正式包明确区分",
       "deployment_unit": "delivery",
       "schema_owner": "delivery",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "post"
     },
     {
@@ -1042,7 +1042,7 @@
       "acceptance": "成片可用率/每可用分钟成本/人工干预/返工可从事件重算",
       "deployment_unit": "evaluation-analytics",
       "schema_owner": "evaluation_analytics",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "data"
     },
     {
@@ -1064,7 +1064,7 @@
       "acceptance": "谁改何版本、谁接受、谁授权费用均可追踪；导出可校验完整性",
       "deployment_unit": "audit",
       "schema_owner": "audit",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "platform"
     },
     {
@@ -1089,7 +1089,7 @@
       "acceptance": "外部Agent可计划和查询；执行需scope与预算；只读不能付费",
       "deployment_unit": "developer-integration",
       "schema_owner": "developer_integration",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "experience"
     },
     {
@@ -1111,7 +1111,7 @@
       "acceptance": "SSE重复乱序去重；通知只按用户配置渠道与权限发送",
       "deployment_unit": "realtime-projection",
       "schema_owner": "realtime_projection",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "experience"
     },
     {
@@ -1137,7 +1137,7 @@
       "acceptance": "LoRA基座/hash与数据来源可追溯；训练不占满在线生成资源",
       "deployment_unit": "adaptation-training",
       "schema_owner": "adaptation_training",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "assets"
     }
   ]
