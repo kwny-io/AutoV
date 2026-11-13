@@ -677,15 +677,26 @@ class SfxService:
                      uuid.uuid4().hex, body.get("budget_scope_id") or "default",
                      checked["deadline"], now, now, now))
             except sqlite3.IntegrityError as exc:
-                if "sfx_job_open_uniq" in str(exc):
-                    # 同一意图已有未终结的 job（真正的并发双提交）。不是错误，
-                    # 是"这次生产已经在路上了"，返回那个 job（§7.1 业务幂等）。
+                # SQLite 报的是**列名**，不是索引名：这条部分唯一索引撞了会得到
+                # `UNIQUE constraint failed: sfx_job.tenant_id, sfx_job.business_key`。
+                # 按索引名去 grep 永远不命中，会把并发双提交变成 500。
+                # 两个条件都要看：列名对上，且同一 (tenant, business_key) 真有
+                # 未终结的行 —— 否则不是我们想接的那一种冲突。
+                if ("UNIQUE constraint failed: sfx_job.tenant_id, "
+                        "sfx_job.business_key") in str(exc):
                     existing = _row(self.conn.execute(
                         "SELECT * FROM sfx_job WHERE tenant_id=? AND "
-                        "business_key=?", (tenant_id, business_key)).fetchone())
-                    return self._job_response(
-                        existing, fingerprint, requested_ms,
-                        extra={"duplicate_suppressed": True})
+                        "business_key=? AND state NOT IN ("
+                        "'READY','POLICY_BLOCKED','GAP_RECORDED',"
+                        "'REJECTED_LOCAL','FAILED','RECONCILED_FAILED',"
+                        "'CANCELED')",
+                        (tenant_id, business_key)).fetchone())
+                    if existing is not None:
+                        # 同一意图已有未终结的 job（真正的并发双提交）。不是错误，
+                        # 是"这次生产已经在路上了"，返回那个 job（§7.1 业务幂等）。
+                        return self._job_response(
+                            existing, fingerprint, requested_ms,
+                            extra={"duplicate_suppressed": True})
                 raise
             job = self._job(tenant_id, job_id)
             outbox = self.outbox
