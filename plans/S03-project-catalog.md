@@ -984,25 +984,36 @@ SQLite），所以没有触发点。两个都保留在 §5.4 里不动 —— �
 `409 COMMAND_IN_PROGRESS`（平台 SDK 的原名，HTTP 层映射成方案里的
 `COMMAND_IN_FLIGHT`，见 G6）。
 
-### 12.2 PEC-1 未改，理由是它属于 NEEDS_OWNER
+### 12.2 PEC-1：待 owner 裁定，本服务已按「生效规格」实现
 
-`contracts/project.episode-created.v2.schema.json` 的 `fix_shape` 要求二选一：
-(a) 在创建事务里补一行 `spec_revision(scope=episode)`；(b) 把 §5.3 的字段改成
-`effective_spec_hash` 并注明。**本轮两条都没做**，原因不是没时间：
+**问的是什么**：`project.episode.created` 的 `spec_hash` 哈希的是哪个对象。
+§5.3 行 656 只写了字段名，没有出处；§2.5 里有两个都能当来源的列，键不同：
+`spec_revision.content_hash`（`(tenant, spec_id, revision)`）与
+`episode_spec_effective.content_hash`（`(tenant, episode_id)`）。
 
-- `x-needs-owner` 第 1 条问的正是「`spec_hash` 哈希的是哪个对象」。这不是实现能
-  从代码里推出来的事实（两个候选列都在 §2.5 里，都合法），是契约设计决策。
-- 约束是「不代填 NEEDS_OWNER」。改 §5.3 就是在替 owner 选 (b)，改 schema 就是在
-  替 owner 选 (a) —— 两条都越界。
-- 实际行为已钉住、可复核：`service.py` 的 `_emit_created` 填的是
-  `episode_spec_effective.content_hash`（物化后的生效规格），理由写在
-  `schema.CONTRACT_GAPS` 的 PEC-1 条里，并且 `test_event_payload_matches_registered_schema`
-  拿真 schema 校形状。**形状对、语义登记、计划不动** —— 三条同时成立才叫「没选边」。
+**为什么这不是实现能决定的事**：两个候选在 DDL 里都合法，差别是语义 —— 一个是
+「某一层发布过什么」，一个是「这一集最终生效的是什么」。选错不会立刻炸，只会让
+S06 比对 `ShotSpec.output_spec` 时比到另一个东西。这正是
+`contracts/project.episode-created.v2.schema.json` 的 `x-needs-owner` 第 1 条
+在问的，也是 `fix_shape` 说「任一都要改计划，不能只改 schema」的原因：
+改 schema 是替 owner 选 (a)，改 §5.3 是替 owner 选 (b)，两条都越界。
 
-若 owner 选 (b)，要改的是四处：§5.3 行 656 的字段名、`contracts/examples/
-project-episode-created.json`、schema 的 `properties` 与 `required`、以及
-`contracts/README.md` 行 821 那句引用。四处必须一起改，否则 `check_examples`
-会先在示例上炸。
+**当前实现（可复核）**：填 `episode_spec_effective.content_hash`，即物化后的
+生效规格。`service.py` 的 `_emit_created` 一行；理由写在
+`schema.CONTRACT_GAPS` 的 PEC-1 条；`test_event_payload_matches_registered_schema`
+拿**真**已登记的 schema 校形状。形状对、语义登记、计划不动 —— 三条同时成立。
+
+**两个选项的实际代价**（owner 判的时候用得上，本轮都不做）：
+
+| | (a) 创建时补 episode 级 `spec_revision` | (b) 字段改名 `effective_spec_hash` |
+|---|---|---|
+| 改哪里 | `_insert_episode` 里加一次 `_write_spec(scope="episode")`；`_write_spec` 与 DDL 的 `scope_kind` CHECK **已经支持** `'episode'`，不用改表 | §5.3 行 656、`contracts/examples/project-episode-created.json:23`、schema 的 `properties` 与 `required`、`contracts/README.md:821` |
+| 语义后果 | 每集多一条 coverage 规格行；事件里的哈希从此**就是** `spec_revision.content_hash`，与 `episode_spec_effective` 可能不同（后者是三层合并结果） | 字段名自带出处，消费方不用猜；但**事件不带 `derived_from`**，改名后仍无法从事件反推是哪三层合并出来的 |
+| 会不会炸 | 不会，且 `spec_revision` 的 `UNIQUE(tenant, scope_kind, scope_id, content_hash)` 已经能去重 | 只改 schema 会在示例上先炸：变异测试实测 `'effective_spec_hash' is a required property`，所以四处必须同时改 |
+| 与 §6.2 的关系 | 仍然只比 `content_hash`，不引入 revision 比较 | 同左 |
+
+**我没有替你选。** 若这份登记要转成决策，在 `x-needs-owner` 第 1 条或本表上
+写一句「选 (a)」或「选 (b)」即可，实现与契约按上表一起改。
 
 ### 12.3 与方案的实质偏离
 
