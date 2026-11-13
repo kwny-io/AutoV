@@ -4,7 +4,7 @@
 service_id: S33
 slug: sound-effects
 name: 音效生产
-maturity: design_only
+maturity: implemented
 
 domain: production
 owner_team: generation

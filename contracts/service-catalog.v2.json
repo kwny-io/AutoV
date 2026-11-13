@@ -765,7 +765,7 @@
       "acceptance": "脚步/关门等跟随EDL重定位；有独立stem与来源",
       "deployment_unit": "sound-effects",
       "schema_owner": "sound_effects",
-      "maturity": "design_only",
+      "maturity": "implemented",
       "runtime_owner_team": "generation"
     },
     {
