@@ -1400,6 +1400,12 @@ def test_t46_92_http_idempotency_replays_and_conflicts(monkeypatch, tmp_path):
 
 
 def test_t46_93_http_rate_limit_sets_retry_after(monkeypatch, tmp_path):
+    # 固定窗口计数器按 `int(time.time())` 切桶（§6.5 明文取舍：跨界突发
+    # 是允许的）。测试若跨秒运行，两次请求会落进两个窗口，计数各从 1 起，
+    # 第二个请求就不会 429 —— 那不是内核 bug，是断言盯错了对象。把时钟
+    # 钉在窗口中央，这条测试才只在测「超限 → 429 + Retry-After」。
+    monkeypatch.setattr("developer_integration.service.time.time",
+                        lambda: 1_767_225_600.5)
     api, service = _api(monkeypatch, tmp_path)
     _, raw = _seed(service)
     service.conn.execute(
