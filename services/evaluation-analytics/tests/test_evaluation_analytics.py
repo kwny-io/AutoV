@@ -1786,8 +1786,14 @@ def test_projection_has_a_ci_and_is_never_used_for_admission_hint(h):
     assert projection["actual_to_date_micro"] == 11_650_000
     assert projection["based_on_rate"] == pytest.approx(4_500_000.0)
     assert projection["projected_total_micro"] == 11_650_000 + 27 * 4_500_000
-    assert projection["ci_low_micro"] == 40_000_000
-    assert projection["ci_high_micro"] == 176_350_000
+    # n=3 的重采样均值只有 3**3 = 27 个，bootstrap 走穷举而非抽样，所以
+    # 区间是确定的：均值 2.5/97.5 分位 = 1,797,500 / 5,753,333.33。
+    # 11,650,000 + 27 × 那两个数 = 60,182,500 / 166,990,000。
+    # 这两个数是 27 点精确分布的分位数，**不是** [min, max]——区间端点
+    # 落在 1.05M 和 6.1M 上，是「400 次抽样恰好摸到极值」才有的取巧结果，
+    # 换个运行日期就不成立。
+    assert projection["ci_low_micro"] == 60_182_500
+    assert projection["ci_high_micro"] == 166_990_000
     assert projection["ci_low_micro"] <= projection["projected_total_micro"] \
         <= projection["ci_high_micro"]
     assert projection["used_for_admission"] is False
@@ -1922,6 +1928,27 @@ def test_roi_requires_external_revenue_and_a_real_allocation(h):
     stored = h.conn.execute("SELECT * FROM customer_roi").fetchone()
     assert (stored["revenue_micro"], stored["allocated_cost_micro"],
             stored["gross_margin"]) == (20_000_000, 10_150_000, 0.4925)
+
+
+def test_bootstrap_interval_is_exact_and_seed_free_when_n_is_tiny():
+    """n**n 可穷举时走精确路径：分位数是数学量，与种子无关。
+
+    抽样在 n=3 时分辨不出尾部（尾部三项各 1/27），97.5 分位会在 max 与
+    次大值之间随种子摇摆——而投影的种子含日额日期，于是同一个 cohort
+    换一天算就报另一个区间。这条测试盯住的是「同输入 → 同区间」，不是
+    某个具体数值。
+    """
+    values = [6_100_000.0, 4_500_000.0, 1_050_000.0]
+    intervals = {tuple(sorted(bootstrap_interval(
+        values, seed_material=f"seed-{index}").items()))
+        for index in range(40)}
+    assert len(intervals) == 1, f"区间随种子变化：{intervals}"
+
+    interval = bootstrap_interval(values, seed_material="anything")
+    # 3**3 = 27 个重采样均值，2.5/97.5 分位落在 1,797,500 / 5,753,333.33。
+    # 若退化成抽样，这里会漂到 1,050,000 / 6,100,000 这类端点值。
+    assert interval["low"] == pytest.approx(1_797_500.0)
+    assert interval["high"] == pytest.approx(5_753_333.333333332)
 
 
 # ============================================================= HTTP 层

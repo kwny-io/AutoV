@@ -42,6 +42,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import sqlite3
@@ -272,6 +273,9 @@ def wilson_interval(successes: int, total: int, z: float = 1.96) -> dict | None:
     return {"low": max(0.0, centre - margin), "high": min(1.0, centre + margin)}
 
 
+EXACT_RESAMPLE_LIMIT = 50_000   # n**n 以内可穷举，见 bootstrap_interval
+
+
 def bootstrap_interval(values: list[float], *, seed_material: str,
                        iterations: int = 400) -> dict | None:
     """确定性 bootstrap percentile CI（§2.5：n<30 必须用 bootstrap）。
@@ -279,6 +283,13 @@ def bootstrap_interval(values: list[float], *, seed_material: str,
     随机源由 `seed_material` 派生：同 cohort 同 watermark 重算必须逐字段
     相同（E38-S44-03 / §4.6 最后一行）。用系统随机数会让每一次重算都报
     `nondeterministic_snapshot`。
+
+    n 很小的时候 n**n 个重采样均值可以整个枚举出来（n=3 只有 27 个），
+    这时走精确路径：2.5/97.5 分位是确定的数学量，与种子无关。抽样路径
+    在 n=3 时根本分辨不出尾部——P(三次都抽到最大值) = 1/27 ≈ 3.7%，而
+    2.5% 分位只留 10 个样本位，于是 97.5 分位会随种子在 `max` 与次大值
+    之间摇摆，同一个 cohort 换个日期（日期进种子）就换一个区间。这不是
+    「重算不确定」，是抽样次数不够描绘尾部；能穷举就别抽。
     """
     if not values:
         return None
@@ -286,9 +297,13 @@ def bootstrap_interval(values: list[float], *, seed_material: str,
         value = float(values[0])
         return {"low": value, "high": value}
     samples = [float(value) for value in values]
+    size = len(samples)
+    if size ** size <= EXACT_RESAMPLE_LIMIT:
+        means = sorted(sum(combo) / size for combo in
+                       itertools.product(samples, repeat=size))
+        return {"low": percentile(means, 0.025), "high": percentile(means, 0.975)}
     state = int(_sha256_hex(seed_material)[:16], 16) or 1
     means = []
-    size = len(samples)
     for _ in range(iterations):
         total = 0.0
         for _ in range(size):
