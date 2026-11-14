@@ -1606,7 +1606,12 @@ class TestEventConsumption:
         h.specs[(TENANT, "spec_1", 1)] = {**DEFAULT_SPEC, "video_codec": "hevc"}
         job_id = h.create("cmd_b")["render_job_id"]
         h.upload_all(job_id)
-        new = h.finish(job_id, audio_hash="9" * 64)
+        # 换了 codec 就是另一次渲染，产物必须与上一版可区分：`finish` 默认
+        # 复用 `vid_master` 的同一 ref，两个候选就会在
+        # (id, revision, content_hash) 上逐字段相同，快照只能靠毫秒级的
+        # `created_at DESC` 猜哪条是"新的"——同一毫秒里它就是掷硬币。
+        hevc = h.put_artifact("vid_master_hevc", 1, VID_HASH)
+        new = h.finish(job_id, audio_hash="9" * 64, video_ref=hevc)
         assert new["candidate_id"] != old["candidate_id"]
 
         h.service.consume_snapshot_committed(TENANT, {
