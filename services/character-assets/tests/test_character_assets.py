@@ -1445,8 +1445,20 @@ class TestCanonicalPointer:
         with raises(404, "CANONICAL_NOT_SET"):
             h.service.get_canonical("t1", character["character_id"])
 
-    def test_rollback_moves_pointer_without_new_revision(self):
+    def test_rollback_moves_pointer_without_new_revision(self, monkeypatch):
         # E08-B2
+        # 这条断言 `decided_at > accepted_at` 是严格大于，而时间戳只有毫秒
+        # 精度：两次写入落在同一毫秒时二者相等，断言就塌了（与真实执行快慢
+        # 有关）。用单调递增的时钟把"先接受、后决定"这个顺序钉死。
+        clock = {"tick": 0}
+
+        def _monotonic_now():
+            clock["tick"] += 1
+            tick = clock["tick"]
+            return (f"2026-11-14T00:{tick // 60000:02d}:"
+                    f"{tick // 1000 % 60:02d}.{tick % 1000:03d}Z")
+
+        monkeypatch.setattr("character_assets.service._now", _monotonic_now)
         h = Harness()
         character_id, _ = h.seeded()
         cand2 = h.draft(character_id, command_id="c280",
