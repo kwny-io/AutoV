@@ -349,7 +349,7 @@ class Harness:
 
     def audits(self):
         return [dict(row) for row in self.conn.execute(
-            "SELECT * FROM audit_intent ORDER BY sent_at, intent_id")]
+            "SELECT * FROM audit_intent ORDER BY sent_at, rowid")]
 
     def packaged(self, package_id, tenant=TENANT):
         return dict(self.conn.execute(
