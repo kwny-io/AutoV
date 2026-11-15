@@ -36,3 +36,6 @@ _inbox/
 # 本地生成物
 coverage/
 *.log
+
+# studio-web 本地预览的 SQLite 与日志（每次启动重建）
+apps/studio-web/_run/

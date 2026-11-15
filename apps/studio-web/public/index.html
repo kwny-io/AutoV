@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>镜序 · Enterprise — 企业工作台</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <strong>镜序</strong>
+      <small>Enterprise studio</small>
+    </div>
+    <nav id="nav"></nav>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="title">
+        <h1 id="page-title">企业总览</h1>
+        <div class="sub" id="page-sub">加载中…</div>
+      </div>
+      <div class="ctx">
+        <span class="pill" id="tenant-pill">tenant-demo</span>
+        <button class="pill" id="reload" type="button">刷新</button>
+      </div>
+    </header>
+    <div class="content" id="content">
+      <div class="loading">正在读取服务</div>
+    </div>
+  </main>
+
+  <aside class="rail">
+    <div class="blk">
+      <div class="ttl">运行水位</div>
+      <div id="rail-summary"><div class="loading">读取中</div></div>
+    </div>
+    <div class="blk">
+      <div class="ttl">需要处理</div>
+      <div id="rail-alerts"></div>
+    </div>
+    <div class="blk">
+      <div class="ttl">数据来源</div>
+      <div class="note" id="rail-note"></div>
+    </div>
+  </aside>
+
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
