@@ -35,6 +35,9 @@
 - **`get_job` docstring** 写「14 个字段」，实际 15 个（多 `frozen`）。断言按代码。
 - **`record_submit_outcome` 的 `accepted` 无 ref** 按 §7.1 归入 UNKNOWN（S27 自己
   也是这么归类的），所以这里不测「accepted 但缺 ref 应视为 QUEUED」。
+- **T26-20b/20c**：步骤 4 第 3 条复查的反面 ——「端口没接线」与「端口超时」都
+  必须停在 `ADMITTED`、不签 grant。此前的 `_check_capability` 在端口缺失时
+  `return True`，等于跳过 S24 复查，已改为 `_require` 抛 503（与超时同路）。
 """
 
 from __future__ import annotations
@@ -381,6 +384,12 @@ def _submitted(svc, ports, *, command=None):
     job_id = _admitted(svc, ports, command=command)
     _claim(svc, job_id)
     return job_id
+
+
+def _grant_count(svc, tenant=T) -> int:
+    return svc.conn.execute(
+        "SELECT COUNT(*) FROM dispatch_grant WHERE tenant_id = ?",
+        (tenant,)).fetchone()[0]
 
 
 def _submit_events(conn) -> int:
@@ -784,6 +793,39 @@ def test_t26_20_capability_invalid_blocks_dispatch():
     assert _submit_events(svc.conn) == 0
     assert ports.count("release_budget") == 1
     assert ports.count("release_permit") == 1
+
+
+def test_t26_20b_unwired_capability_port_blocks_dispatch():
+    """端口表承诺「没注入就抛 503，不静默降级」，S24 复查也不能例外。
+
+    派单前必须实时复查能力（AGENTS.md / §4 步骤 4 第 3 条）。只缺这一个端口时，
+    job 必须停在 `ADMITTED`、不签 grant、不发派单事件 —— 与端口调用超时同路。
+    """
+    ports = Ports()
+    wired = ports.as_ports()
+    wired.pop("check_capability_validity")
+    svc = GenerationJobsService(_conn(), clock=Clock(), **wired)
+    job_id = _create(svc)["provider_job_id"]
+    with pytest.raises(ServiceError) as exc:
+        svc.advance(T, job_id)
+    assert exc.value.code == "DEPENDENCY_UNAVAILABLE"
+    assert exc.value.retryable is True
+    assert _state(svc, job_id) == "ADMITTED"
+    assert _submit_events(svc.conn) == 0
+    assert _grant_count(svc) == 0
+
+
+def test_t26_20c_capability_port_timeout_stays_admitted():
+    """S24 超时/5xx → 停在 `ADMITTED` 重试，不签 grant（§4 步骤 4「超时」一行）。"""
+    ports = Ports()
+    ports.capability_error = ServiceError(503, "CAPABILITY_UNAVAILABLE", "timeout",
+                                          retryable=True)
+    svc = _svc(ports=ports)
+    with pytest.raises(ServiceError) as exc:
+        svc.advance(T, _create(svc)["provider_job_id"])
+    assert exc.value.code == "DEPENDENCY_UNAVAILABLE"
+    assert exc.value.retryable is True
+    assert _submit_events(svc.conn) == 0
 
 
 def test_t26_21_plain_rejection_keeps_account_pool():

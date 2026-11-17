@@ -1345,10 +1345,13 @@ class GenerationJobsService:
                                  correlation_id=correlation_id)
 
     def _check_capability(self, job, attempt):
-        """返回 `True` 表示可用；否则返回 S24 的失效码（字符串）。"""
-        check = self._ports.get("check_capability_validity")
-        if check is None:
-            return True         # 未注入 = 不做这项检查（测试/降级），不猜失效
+        """返回 `True` 表示可用；否则返回 S24 的失效码（字符串）。
+
+        端口没接线时和后端超时同路：抛 `DEPENDENCY_UNAVAILABLE`。派单前的实时
+        复查不能被跳过（AGENTS.md「派单前必须实时复查」/ §4 步骤 4），所以"没接
+        线"只能是"未知"，不能当成"通过"。
+        """
+        check = self._require("check_capability_validity")
         requirement_set = _loads(attempt["requirement_set"]) or {}
         try:
             answer = check(job["tenant_id"], {"items": [{
