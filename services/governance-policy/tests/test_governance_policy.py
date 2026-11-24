@@ -610,3 +610,55 @@ def test_http_effective_policy_path_version_is_a_coarse_query(monkeypatch,
                    headers={"X-Tenant-Id": TA})
     assert r.status_code == 200, r.text
     assert r.json()["evaluated_for"]["node_epoch"] is None
+
+
+# -- POL-* 契约缺口：登记，不解决 -----------------------------------------
+
+def test_pol_1_the_declared_query_endpoint_does_not_exist(monkeypatch,
+                                                          tmp_path):
+    """catalog 声明 `:evaluate`，代码只有 `:resolve-effective`。
+
+    两边都是事实：这条**不**断言谁对，只钉住「声明与实现在当前不一致」，
+    这样下一轮补齐 `:evaluate` 时测试会红，逼着一起改（或改 catalog）。
+    """
+    module = _load_app(monkeypatch, tmp_path)
+    module.service.create_revision(TA, "policy_base", {
+        "policy": _doc(), "expected_revision": 0, "command_id": "cmd_pol1",
+        "scope": {"type": "tenant", "id": TA}})
+    client = TestClient(module.app)
+    # 声明的入口不存在（405/404 都算，取决于路由匹配方式）
+    r = client.post("/policy-decisions:evaluate", json={"kind": "dispatch_admission"},
+                    headers={"Idempotency-Key": "cmd_e", "X-Tenant-Id": TA})
+    assert r.status_code in (404, 405), r.text
+    # 真实存在的是另一条
+    r2 = client.post("/policy-decisions:resolve-effective",
+                     json={"context": {"tenant_id": TA, "project_id": "p"}},
+                     headers={"X-Tenant-Id": TA})
+    assert r2.status_code == 200, r2.text
+
+
+def test_pol_2_readiness_publishes_the_gaps():
+    """readiness 必须把缺口吐出来，否则运维会把「只有 resolve」当成「面齐了」。"""
+    from governance_policy import CONTRACT_GAPS
+    ids = {g["id"] for g in CONTRACT_GAPS}
+    assert {"POL-1", "POL-2", "POL-3"} <= ids
+    for gap in CONTRACT_GAPS:
+        assert gap["kind"] in ("conflict", "gap", "needs_owner")
+        assert gap["summary"] and gap["handling"]
+
+
+def test_pol_3_shape_validation_accepts_keys_the_contract_forbids():
+    """`additionalProperties: false` 没有被运行期校验——S25 就这样读到了 routing。
+
+    这是一个**已知的不一致**，不是想要的行为：契约拒、本服务收。用例把它写成
+    断言而不是注释，等到某轮补上多余键检查时会立刻红。
+    """
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(POLICY_SCHEMA.read_text(encoding="utf-8"))
+    doc = _doc(routing={"flags": {"kill_switch": True}})
+    # 契约拒绝
+    with pytest.raises(jsonschema.ValidationError) as exc:
+        jsonschema.Draft202012Validator(schema).validate(doc)
+    assert "routing" in exc.value.message
+    # 本服务接受（只查必填键）
+    _svc()._validate_document_shape(doc)

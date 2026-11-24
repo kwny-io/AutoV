@@ -796,6 +796,35 @@ def test_http_query_reports_contract_gaps(client):
     assert body["x-contract-gaps"]  # 冲突不藏着
 
 
+def test_catalog_entry_paths_are_not_routed(client):
+    """catalog / service.yaml / service.md 的入口在本服务是 404。
+
+    这是 `CONTRACT_GAPS` 第 4 条。断言两个方向都成立：catalog 的路径不通，
+    openapi 的路径通——否则这条探针只是「路径不存在」，证明不了是路径分歧。
+    """
+    api_client, _service = client
+    for path in ("/memory-commits", "/memory-queries"):
+        assert api_client.post(
+            path, json={},
+            headers={"X-Tenant-Id": TA, "Idempotency-Key": "k"},
+            follow_redirects=False).status_code == 404
+    ok = api_client.post(f"/series/{SERIES}/memory/query",
+                         json={"branch_id": "canon", "minimum_checkpoint": 0},
+                         headers={"X-Tenant-Id": TA})
+    assert ok.status_code == 200
+
+
+def test_readiness_publishes_the_gaps(client):
+    """readiness 与 query 响应吐的是同一份缺口，且每条都非空、不重复。"""
+    api_client, _service = client
+    body = api_client.get("/health/readiness").json()
+    assert body["status"] == "ready"
+    gaps = body["contract_gaps"]
+    assert gaps and all(isinstance(gap, str) and gap.strip() for gap in gaps)
+    assert len(gaps) == len(set(gaps))
+    assert any("/memory-commits" in gap and "/series/" in gap for gap in gaps)
+
+
 def test_http_replays_idempotent_command(client):
     api_client, service = client
     service.register_clock(TA, SERIES, {"clock_id": "story_main",

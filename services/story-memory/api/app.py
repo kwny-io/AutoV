@@ -17,6 +17,10 @@
   没有 `branch_id`，`POST /branches` 也不在 openapi 里。服务照 openapi 的键名收
   `claim_refs`，同时接受 `branch_id` / `batch_id` / `claim_revisions`，以便实现
   plan §3.5 / §4.1 / §4.2。
+- **入口路径本身**：catalog / `service.yaml` / `service.md` 写的是
+  `POST /memory-commits` 与 `POST /memory-queries`，openapi 与本文写成
+  `/series/{series_id}/memory/commits|query`。按 openapi 实现，catalog 那两个
+  路径实测 404；要统一哪一边等 owner 决定（`CONTRACT_GAPS` 第 4 条）。
 
 其余写命令强制 `Idempotency-Key` + `X-Tenant-Id`；跨租户一律 404/403（E28）。
 """
@@ -47,6 +51,15 @@ CONTRACT_GAPS = [
     "commits request has claim_refs as a bare object array with no branch_id; "
     "plan §3.5/§4.1 need branch_id, batch_id, claim_revisions",
     "plan §4.1 POST /branches and §4.2 merge have no openapi path",
+    # 第 4 条是本服务唯一没写进方案 §11.4 的一条，却最容易被集成方踩到：
+    # catalog/`service.yaml`/`service.md` 声明的是 POST /memory-commits 与
+    # POST /memory-queries，而 openapi.v2.yaml 与代码都是
+    # /series/{series_id}/memory/commits|query。方案自己也两头写（§4.3 行 576、
+    # §6 行 638 用 catalog 形态，§11.4 只登记 openapi 的响应/请求差异）。
+    # 实测 POST /memory-commits 与 POST /memory-queries 均返回 404。
+    "catalog/service.yaml/service.md declare POST /memory-commits and "
+    "POST /memory-queries; openapi and this service use "
+    "/series/{series_id}/memory/commits and .../memory/query",
 ]
 
 app = FastAPI(title="S16 story-memory", version="2.0.0")
@@ -208,4 +221,6 @@ def create_series(payload: dict, x_tenant_id: str = Header(alias="X-Tenant-Id"))
 def readiness():
     with closing(_conn.execute("SELECT 1")) as cur:
         cur.fetchone()
-    return {"status": "ready"}
+    # catalog 声明的入口路径在本服务是 404（`CONTRACT_GAPS` 第 4 条），
+    # 不在这里说，运维会照 catalog 去调，然后以为服务挂了。
+    return {"status": "ready", "contract_gaps": CONTRACT_GAPS}

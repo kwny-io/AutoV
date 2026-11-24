@@ -2452,7 +2452,7 @@ class DeliveryService:
             "sent_at": row["sent_at"],
         } for row in self.conn.execute(
             "SELECT * FROM audit_intent WHERE tenant_id=? AND package_id=?"
-            " ORDER BY sent_at", (tenant_id, package_id)).fetchall()]
+            " ORDER BY sent_at, rowid", (tenant_id, package_id)).fetchall()]
 
     def _get_attempt(self, tenant_id: str, attempt_id: str) -> dict:
         row = _row(self.conn.execute(
@@ -2837,7 +2837,7 @@ class DeliveryService:
         else:
             rows = self.conn.execute(
                 "SELECT * FROM audit_intent WHERE tenant_id=? AND delivered=0"
-                " ORDER BY sent_at LIMIT 50", (tenant_id,)).fetchall()
+                " ORDER BY sent_at, rowid LIMIT 50", (tenant_id,)).fetchall()
         results = []
         for row in rows:
             intent = {

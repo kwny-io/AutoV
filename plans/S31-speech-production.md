@@ -1342,15 +1342,104 @@ S31 不做例外处理：它只如实把 `shot_lineage_id` 与 `locale` 都写�
 
 **建议**：`speech.input.pronunciation_lexicon` 改为 `{id, revision, content_hash, scope_kind}`，或新增 `lexicon_ref` 指向 S15 的完整引用。
 
-### C4 `speech.input` 没有音色授权字段，S26/S27 无从复核
+### C4 `speech.input` 没有音色授权字段：已定的两道防线 + 一个待裁决的契约改动
 
-`generation-command.v2` 的 `speech.input` 只有 `voice_binding{id, revision}`，**没有授权状态、没有 `state_seq`**。
+**现状（实测，非推断）**：`contracts/generation-command.v2.schema.json` 的 `allOf` 共 **9** 个模态分支。`voice_binding{id, revision}` 只出现在 **1** 支（`speech`）；`rights_policy_ref` 只出现在 **3** 支（`sound_effect` / `music` / `training`），其余 **6** 支（`video` / `image` / `speech` / `text` / `understanding` / `lipsync`）没有（3 + 6 = 9，逐支点过）。`speech.input` 的 `properties` 与 `required` 同为那 7 个字段，`additionalProperties: false`。
 
-**冲突点**：E30 要求"不用撤销声音新调用"。S31 在五个时点复查（§4.2），但那是**一个服务的自律**。S26 在准入时无法区分"一个带已撤销音色的 speech 命令"和正常命令；S27 在提交时同样无法区分。如果 S31 的复查有漏洞（或有人绕过 S31 直接调 S26），没有任何下一条防线。
+**冲突点**：E30 要求"不用撤销声音新调用"。S31 在五个时点复查（§4.2），但那是**一个服务的自律**。S26 在准入时无法区分"一个带已撤销音色的 speech 命令"和正常命令；S27 在提交时同样无法区分。若 S31 的复查有漏洞，或有人绕过 S31 直接调 `POST /generation-jobs`，没有任何下一条防线。
 
-**不选边**：本文在 S31 侧做完整复查并在 `GET /speech-jobs/{id}` 里暴露 `rights_rechecks`（§6.2），但不改契约、不让 S26 承担这个职责。
+下面把这一条拆成"已决"与"待裁决"两半。已决的部分是本文自己的立场；待裁决的部分属于契约所有者与 S02/S15/S26 的方案作者，本文只给形态与影响面，**不替谁做决定**。
 
-**建议**：`speech.input` 增加 `voice_authorization: {state, state_seq, checked_at}`，并让 S26 的 `POST /generation-jobs` 在准入时对 `AUTHORIZATION_REVOKED`/`EXPIRED` 直接 409。这样 E30 就有两道防线，且第二道不依赖 S31 的正确性。
+---
+
+**已决 1：S31 的五时点复查不改，也不加第六条。** §4.2 的五个时点各自防一个不同的窗口（同步拒绝、worker 开工前、提交前、归档后交付前、事件止血），再加一条只是重复。S31 侧的补强是 §6.2 暴露 `rights_rechecks`，这一条已在正文，不依赖本缺口解决。
+
+**已决 2：第二道防线不能落在 S27，只能落在 S26。** 三条依据都在 S27 方案里：§4 把 `submit_payload` 定为"S26 生成（来自 S25 的 `normalized_input`），S27 只翻译"；catalog 的 `depends_on = ['S26']`，S27 没有 S15 依赖；§4.1 标题写"三种 modality 的差异"，但没有 speech 的 mapper。在 S27 加一次权利判定，就是把"译码器"变成"第二个权利权威"，违反本仓库的单权威约束。S27 的结构性保护是它只在 grant 被领取后才动，所以判定必须在 S26 完成。
+
+**已决 3：第二道防线必须是"实时查询一个权威"，不是"读命令里的一个字段"。** 理由见下面的裁决项 2——任何写进 `speech.input` 的授权值，填方都是 S31，也就是被兜底的那个服务本身。一个由被证明方签名的事实，不能当证明用。
+
+---
+
+**待裁决 1：S26 向谁查。** 两个形态都能满足"第二道不依赖 S31 正确性"，但缺的东西不同：
+
+| 形态 | 怎么走 | 现成的东西 | 缺的东西 |
+|---|---|---|---|
+| b1 直查 S15 | S26 在 §4 step 4 调 `POST /voices/{id}:check-eligibility`（[S15 §4.2](S15-voice-assets.md)：强一致读、不缓存、`if_state_seq` 乐观检查） | 接口语义已经写死；`deny_reason` 枚举已定；S15 §8 的 E30-C3 本来就是按这个写的 | `check-eligibility` 不在 `service-catalog.v2.json`（S15 的 `query_api` 仍是 `GET /voices/{id}/bindings`），也不在 `openapi.v2.yaml`（实测出现 **0** 次）——即 S15 的 C15-1 仍未落地；S26 的 `depends_on` 要加 S15 |
+| b2 经 S02 判定 | S26 调 `POST /policy-decisions:evaluate`（`kind=dispatch_admission`），由 S02 扇出 | [S02 §8](S02-governance-policy.md) 第 8 行**就是** E30 的这条检查（"资产/音色权利未吊销、未过期"，来源 S10–S15，`deny RIGHTS_REVOKED`），且 `RIGHTS_REVOKED ∈ PERMANENT`。一次调用同时补上 S26 现在漏掉的 kill switch 与数据驻留两项 | S02 §7.2 的 `subject` 里没有任何字段能指明是哪个音色；S02 §11 G3 自认 `voice_eligibility` 是**缺失**的 gate；`contracts/` 里没有 `policy-decision` 的 schema，`openapi.v2.yaml` 里 `policy-decisions` 出现 **0** 次 |
+
+两者共同的成本，无论选哪个：S26 §4 step 4 现在只做三条检查（S23 余额、S22 permit、S24 能力/报价），要加第四条；S26 的 job 终态集合里没有权利类——实测 `REJECTED_*` 共 6 个（`BUDGET` / `INSUFFICIENT` / `NO_CAPACITY` / `PERMISSION` / `QUOTA` / `TENANT_LIMIT`），需要一个新终态或一个复用口径；`admission-record.v2.schema.json` 里只有通用的 `REJECTED` 字符串，没有细分原因码。
+
+**两种形态都不需要给 `speech.input` 加字段**：S26 手上已经有 `input.voice_binding{id, revision}`，而 `context.series_id` 是 `execution-context.v2` 的必填项（实测 `required` 含 `series_id`），正好是 S15 `requested_use.series_id` 要的那个值。换句话说，S26 用现成的命令就能问出答案，缺的是依赖边、路由条目和"要问"这句话。
+
+---
+
+**待裁决 2：要不要在 `speech.input` 加一个可选的确认字段。** 加，则形状如下（JSON Schema 片段，尚未写入 `contracts/`）：
+
+```jsonc
+// contracts/generation-command.v2.schema.json → speech 分支的 then.properties.input.properties
+"voice_authorization": {
+  "type": "object",
+  "properties": {
+    "state": {
+      "type": "string",
+      "enum": ["granted", "suspended", "revoked", "expired"]
+    },
+    "state_seq":   { "type": "integer", "minimum": 1 },
+    "checked_at":  { "type": "string", "format": "date-time" },
+    "expires_at":  { "type": ["string", "null"], "format": "date-time" }
+  },
+  "required": ["state", "state_seq", "checked_at"],
+  "additionalProperties": false
+}
+```
+
+五个必须一并裁定的问题：
+
+| 项 | 建议值 | 依据 |
+|---|---|---|
+| 字段形状 | 如上；`state` 的四个枚举值直接取 S31 的 `voice_binding_ref.authorization_state` CHECK 约束（`granted`/`suspended`/`revoked`/`expired`），不另造一套词 | S31 §5.2 已有这张表 |
+| 谁填 | **只有 S31**。S31 是唯一构造 `modality=speech` 命令的服务（实测见下表） | catalog `domain=production` 的 6 个服务里只有 S31 的 `command_api` 是 `POST /speech-jobs` |
+| 谁读 | S26 把它当 `if_state_seq` 的输入（`STATE_SEQ_STALE` 要按 409 处理，不能按 pass 处理）；**S27 不得读**（§4 边界）；S02 可以记进 `checks[].detail` 供审计，但**不能拿它当判定依据** | 同上 |
+| 缺省行为 | 整个对象**可选、不进 `required`**。缺省 = "调用方没有声明"，S26 必须照常实时查一次；存在 = 多一次乐观确认，不能省掉实时查 | 本文已决 3 |
+| 影响面 | 纯 additive。`additionalProperties: false` 意味着只需在 speech 分支的 `properties` 里加这一项、不改 `required`，其余 8 个模态分支与 5 个非 speech 生产服务（S29 / S30 / S32 / S33 / S34）的校验结果不变 | 实测 9 支中 1 支受影响 |
+
+**这条字段为什么仍然只能算"确认"而不能算"防线"**：填方是 S31——也就是本缺口里被兜底的那一方。如果它的复查有漏洞，它写进去的 `state` 也是错的，而 schema 只会验证"它长得像一个授权状态"。所以无论这条字段加不加，S26 都必须自己实时查。加了它的收益只有两个：`if_state_seq` 有了可追溯的起点，以及事后能回答"提交那一刻 S31 认为是什么"——与 §2.3 的 `VoiceBindingRef` 是同一类东西。
+
+**同源待改**：`contracts/domain-v1/generation-request.v1.schema.json` 只有 3 个分支（video/image/speech），`speech` 一支同样是"有 `voice_binding`、无 `rights_policy_ref`"。它目前只被 `docs/design-package/MANIFEST.md` 与 S05 C2 引用，不在运行路径上，但若裁决加字段，应同步改，避免两份 schema 分叉。
+
+---
+
+**口径核对（"5 个 speech 生产服务"这个数回源测不到）。** 任务书要求按"对 5 个 speech 生产服务的影响"给结论。逐口径回源数，没有一个等于 5：
+
+| 口径 | 怎么数的 | 结果 |
+|---|---|---|
+| `domain=production` 的服务 | `service-catalog.v2.json` 按 `domain` 分组 | **6**：S29 image / S30 video / S31 speech / S32 lipsync / S33 sound_effect / S34 music |
+| 构造 `modality=speech` 命令的服务 | 六个生产方案逐个数 | **1**：S31 |
+| `depends_on` 含 S15 的服务 | catalog 逐条读 `depends_on` | **3**：S10 / S31 / S37 |
+| 方案文本里出现 `voice_binding` 的文件 | `plans/` 下 49 个 `.md`（48 篇 Sxx 方案 + `README.md`）全文检索 | **5** 个文件：S15 / S25 / S27 / S31 / S37——但其中只有 S31 是 speech 生产者，S15 是权威，S25/S27/S37 是消费者 |
+| `generation-command.v2` 的 speech 分支 | 遍历 `allOf` | 9 支中的 **1** 支 |
+
+"5"只对得上第 4 行，而那 5 个文件里 4 个不是 speech 生产服务。本文按**实测口径**写影响面（1 个写方、1 个读方、其余 5 个生产服务不受影响），并在此记录任务书与仓库的这处不一致，等所有者裁决以哪个为准。
+
+---
+
+**本缺口涉及的冲突，逐条列出，本文不选边：**
+
+| # | 冲突点 | 事实 | 需要谁改 |
+|---|---|---|---|
+| 1 | 五条实时检查 vs 三条 | [docs/06 §4](../docs/06-automation-governance.md) 写"账号撤销、资产/声音授权撤销、企业 kill switch、数据驻留禁用和实时预算余额在每次 dispatch 前重新检查"；S26 §4 把这句话原样引用了，但紧接着只实现 S23 / S22 / S24 三条 | S26 方案（引文与实现在同一段内不自洽） |
+| 2 | S02 判得了吗 | S02 §8 第 8 行把音色权利判给 S10–S15 并产出 `deny RIGHTS_REVOKED`；但 §11 G3 把 `voice_eligibility` 列为缺失 gate，§7.2 的 `subject` 无音色字段 | S02 方案 |
+| 3 | S15 的接口不在契约里 | S15 C15-1 明确说 `check-eligibility` 必须进契约；实测 catalog 的 `query_api` 未收录，`openapi.v2.yaml` 出现 0 次 | `contracts/service-catalog.v2.json` + `contracts/openapi.v2.yaml` |
+| 4 | 同一份 schema 两种权利表达 | `speech` 是唯一带 `voice_binding` 的模态，同时是 6 个没有 `rights_policy_ref` 的模态之一；反而 `sound_effect` / `music` / `training` 带 `rights_policy_ref`，例子值指向 S02 | `contracts/generation-command.v2.schema.json` |
+| 5 | 没有 `policy-decision` 的 schema | `contracts/` 下只有 `automation-policy.v2.schema.json` 与 `redaction-policy.v2.json`；b2 形态因此无可校验的请求/响应定义 | `contracts/` |
+| 6 | 两份方案对同一验收项的描述不互相承认 | S15 §8 的 E30-C3 写"S26 消费事件 + 调资格接口 → 不提交"；S26 方案里 `voice_binding` / `S15` / `check-eligibility` / `rights` 出现次数均为 **0**，`depends_on` 也不含 S15 | S26 方案 + S15 方案 |
+| 7 | 数量口径 | 见上一张表；"5"与仓库对不上 | 任务书 / 所有者 |
+
+**本文不做的事：**
+
+- 不改 `contracts/`。上面那段 JSON Schema 是待裁决条目，不是已生效的契约。
+- 不改 S26 / S27 / S02 / S15 的方案——那是别的服务所有者的文件。
+- 不声称 S31 的复查能绝对防止撤销后的付费调用。[S15 §6.3](S15-voice-assets.md) 已经把这句话写死了："声称 S15 的资格检查可以绝对防止撤销后的付费调用。那需要分布式事务，本架构没有。" S31 的复查是**减少窗口**，不是**消除窗口**；能消除窗口的只有 S26 的实时判定加上这份文档记录不了的下游保证。
 
 ### C5 `emotion` 是自由字符串
 

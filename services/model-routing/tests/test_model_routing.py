@@ -1016,3 +1016,37 @@ class TestHttpLayer:
         assert r.json()["ready"] is True
         ids = {g["id"] for g in r.json()["contract_gaps"]}
         assert "MRT-17" in ids
+        assert "MRT-22" in ids
+
+
+def test_mrt_22_routing_section_is_forbidden_by_the_policy_contract():
+    """MRT-22：本服务读的 `routing` 段在 `automation-policy.v2` 里不合法。
+
+    这条用契约自己判，而不是用一句注释。S02 的 `_validate_document_shape` 只查
+    必填键，所以带 `routing` 的文档能发出去；这里证明的是**契约不会接受它** ——
+    两个事实同时成立，就是这个冲突本身。
+    """
+    jsonschema = pytest.importorskip("jsonschema")
+    root = Path(__file__).resolve().parents[3]
+    schema = json.loads(
+        (root / "contracts" / "automation-policy.v2.schema.json")
+        .read_text(encoding="utf-8"))
+    doc = {
+        "schema_version": "2.0", "policy_id": "pol_1", "revision": 3,
+        "tenant_id": "t1", "mode": "guided", "generation_mode": "manual",
+        "acceptance_mode": "manual", "overrides": [],
+        "repair_limits": {"max_business_attempts_per_shot": 2,
+                          "max_identical_strategy_repeats": 1},
+        "exception_behavior": "wait_review", "required_gates": [],
+        "hard_rules": {"budget_scope_id": "bs1", "rights_required": True,
+                       "enforce_data_residency": True,
+                       "no_incomplete_formal_delivery": True,
+                       "allow_silent_identity_downgrade": False},
+        "effective_at": "2026-01-01T00:00:00Z", "created_by": "alice",
+    }
+    jsonschema.Draft202012Validator(schema).validate(doc)   # 基线合法
+    with pytest.raises(jsonschema.ValidationError) as exc:
+        jsonschema.Draft202012Validator(schema).validate(
+            {**doc, "routing": {"flags": {"kill_switch": True}}})
+    assert "routing" in exc.value.message
+    assert "Additional properties" in exc.value.message

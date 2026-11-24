@@ -3851,7 +3851,7 @@ producers affected: ['S04', 'S06', 'S11', 'S12', 'S13', 'S14', 'S15', 'S20', 'S4
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
 | 1 | 本节初稿把 `contracts/README.md:1469` 那张关系图读成「`service.yaml` 引用 topic 的 `schema_ref`」，据此打算报「图说有、实物没有」 | 图读错了：`──schema_ref──▶` 那条箭头**从 `event-topics.v2.json` 出发**指向 payload schema，跟 `service.yaml` 无关；`schema_ref` 在 48 个 yaml 里出现 0 次是设计如此 | 三层图里箭头起点在行尾、终点在下一行，我把「上一行末尾的对象」当成了起点。**读 ASCII 图要先定位每段箭头两端的文件名，再判方向** |
-| 2 | 本节初稿按 `topic` 名把 `service.yaml` 连回 `event-topics.v2.json`，得到「7 行对不上」 | `topic` **不是唯一键**：3 个 topic 名被 10 个事件共用（`drama.delivery.v2` 一个挂了 4 个）。换 `event_type` 连接，55/55 全中 | 拿"看起来像主键"的字段去 join，没先查它是否唯一。这正是 `check_all.py:check_catalog:289-294` 注释里记过的同一个坑（作者当时也是先按 topic 比错的） |
+| 2 | 本节初稿按 `topic` 名把 `service.yaml` 连回 `event-topics.v2.json`，得到「7 行对不上」 | `topic` **不是唯一键**：3 个 topic 名被 10 个事件共用（`drama.delivery.v2` 一个挂了 4 个）。换 `event_type` 连接，55/55 全中 | 拿"看起来像主键"的字段去 join，没先查它是否唯一。这正是 `check_all.py:check_catalog:284-296` 注释里记过的同一个坑（作者当时也是先按 topic 比错的） |
 | 3 | 本节初稿称 docs/16:25 的「发布版本」在 `service.yaml` 里不存在，是缺陷 | 不报：那是 `docs/16 §2`「**建议**仓库与交付结构」里的条目，指未来交付仓的形态，不是本仓现状 | 把「建议结构」当成「当前产物规格」来验收 |
 
 ## 16.32 `contracts/*.schema.json` 有 8 个不挂在任何 topic 上——它们是接口的请求/响应体，也是 `openapi.v2.yaml` 里 11 条从没人核过的 `$ref`
@@ -3966,12 +3966,12 @@ YAML 那 11 处逐条：
 | 接口的请求/响应体 | 8 | `openapi.v2.yaml` 11 处 + 别的 schema 6 处，全部被引用 |
 
 **`check_payload_refs` 只查正向，查不出这个。** 它遍历 55 个 topic、把 `schema_ref` /
-`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:check_payload_refs:1401-1440`），
+`data_schema_ref` 指向的路径 `os.path.exists` 一遍（`tools/check_all.py:check_payload_refs:1425-1437`），
 从不反向问「contracts/ 下有没有哪个 schema 没被任何 topic 指到」。两个方向里缺了反向那一个，
 所以上面那个 8 从来没人报过，它也就一直被那行说明文字盖着。
 
 **`openapi.v2.yaml` 的 `$ref` 更是完全没人核。** 全仓对这个文件只做了两件事：
-`readme` 检查用正则数它有几个 `get:` / `post:`（`tools/check_all.py:check_readme_counts:1153`），
+`readme` 检查用正则数它有几个 `get:` / `post:`（`tools/check_all.py:check_readme_counts:1155`），
 缺口 5 记过它一个 `:verb` 都不用。**没有任何检查解析它的 `$ref`**——
 把 11 条里任意一条改成不存在的文件名，十项检查照样全绿。这是本轮真正测到的空洞，
 比那 8 个文件怎么归类重要得多。
@@ -3985,7 +3985,7 @@ YAML 那 11 处逐条：
 | # | 原写 | 正确 | 错因 |
 |---|---|---|---|
 | 1 | 本节初稿「`contracts/*.schema.json` 有 63 个 payload schema，而 README 说 55 个，差 8 个」 | 63 里 55 个是 payload、8 个是接口的请求/响应体；被 topic 引用的共 56 个（多出的 1 个是 envelope）。两个数都没错，错的是把 64 个归成一类 | 先数了「文件数减 envelope」，再拿它直接和「payload schema 数」比。**两个口径的数相减之前，要先确认它们是不是同一类东西** |
-| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:check_payload_refs:1401-1440`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
+| 2 | 本节初稿「`check_payloads` 没有反向检查」 | 检查函数叫 `check_payload_refs`（`check_all.py:check_payload_refs:1425-1437`），注册名才是 `payloads` | 把注册表 `CHECKS` 里的名字当成了函数名。抄函数名要 `grep "def check_"`，不能用 `grep -n "payloads"` 找到的首个结果 |
 | 3 | 本节初稿「`execution-context` 被 13 个 JSON 引用、`episode-manifest` 被 16 个引用」 | 文件名被提到的次数是 **11** 和 **6**；`memory-claim` 是 **0**（只被 S16 方案与一个 example 用到）。但这仍是「提到」，不是「`$ref`」，见第 5 行 | 13 / 16 是上一轮 `grep -rl` 的**文件命中数**（含 md 与自引用），不是 `contracts/**/*.json` 里的引用数。两个口径混用了一次 |
 | 4 | 本节初稿「55 个 payload schema 全是过去分词或事件名词」 | 末段分布里 `ready` 有 8 个（形容词），`prompt.compiled` 的末段还带点号；只能说"绝大多数是过去分词" | 先下了"全是"这个强判断，再去找例子印证。**枚举类判断必须先数分布再写程度词** |
 | 5 | 上一轮修正后写「被别的 schema 用 `$ref` 挂着」并给出 11 / 6 / 3 / 3 / 2 / 2 / 1 / 0 | **真正 `$ref` 进去的只有 2 个目标文件**：`execution-context` 与 `automation-policy`，其余 6 个一条都没有。那 11/6/3… 是「文件正文里提到该文件名的次数」，多数是 `description` 里写「与 `episode-manifest` 的 `accepted_artifact_ref` 完全相同」这类散文对照 | **数引用边必须解析 JSON 取 `$ref` 的值，不能在原文里搜文件名。** 上一轮的更正已经指出过「两个口径混用」，我却把同一类错误又犯了一次：换成"数引用"这个动作，用的还是字符串搜索 |
@@ -3999,7 +3999,7 @@ YAML 那 11 处逐条：
 ### 补记：让 `payloads` 的绿说出这个数
 
 上面写了「`check_payload_refs` 只查正向，所以这 8 个从来没人报过」。把反向那一半补成**报数**
-（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:check_payload_refs:1401-1440`）
+（不是报错）之后，这一项就不会再默默盖着了。`check_payload_refs`（`tools/check_all.py:check_payload_refs:1425-1437`）
 现在顺带算一遍 `contracts/*.schema.json` 里没有出现在任何 topic 的 `schema_ref` /
 `data_schema_ref` 上的文件：
 
@@ -5061,7 +5061,7 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 | `99999` / `0` / 跨两个函数 / 反向区间 | FAIL，各自报自己的话 |
 
 漏掉的两条都是「漂进了旁边的 `check_*`」——**这恰恰是真实发生的那种错**。
-所以判定标准改成：**引用必须带函数名**，`check_all.py:check_payload_refs:1401-1440`，
+所以判定标准改成：**引用必须带函数名**，`check_all.py:check_payload_refs:1425-1437`，
 并核对该函数确实覆盖整个区间；匿名行号直接 FAIL，不给后门（注释里写明「别为了让
 陈旧数字通过而削弱它——数字才是错的那一半」）。
 
@@ -5097,7 +5097,7 @@ Windows 下 `os.path.relpath` 给出的是 `services\generation-jobs\service.md`
 | 2 | 六处匿名引用，典型的一处是 `check_all.py:` 后只跟 763-772 | 六处全部改成带函数名的写法（`citerefs` 今天数到 8 处，后来几处是本补记与 `contracts/README.md` 新增说明时自己引入的） | 只记行号不记函数名；文件被改写后行号整体漂移而长度不变，任何只查行号的判据都会放过 |
 | 3 | `citerefs` 第一版「落在某个 `check_*` 里即可」 | 必须是指名的那一个 | 判据比声称的弱一档。「在某个 check 里」和「在它说的是那个 check 里」差着整整一类真实错误，而变异测试里那两条正好落在缝里 |
 | 4 | 本节初稿写「`check_payload_refs` 这一轮换了四个位置：1346 / 1454 / 1480 / 1366」 | 函数这一轮只待过**两个**位置：HEAD 的 1346，和插入 `check_citerefs` 后的 1460。1454、1480 是我**自己敲错的引用值**（先按未插入时的印象写 1454，把 citeefs 挪走后又按错的边界写 1480），不是函数待过的地方 | 把「我写错的引用数」和「函数的实际位置」混成一列。**凡是写「某物在 A/B/C」之前，每个值都要回文件里数出来**，不能把中间的手误当成历史位置 |
-| 5 | 上一行修好之后，`1110` 这个值被当成了"已核对"的正确答案，留在了正文两处：§16.32 的 `check_readme_counts:1110` 与本节错位表第 4 行「数 get/post 那行（1110）」 | 数 `get:` / `post:` 的那行在本节写作的树（`bd1eab5`）上是 **1135**、`971e5ff` 给 `check_links` 插 18 行之后漂到 **1153**（`check_all.py:check_readme_counts:1153`）。`1110` 现在是 `listed_note = f"; count list {len(entries)} value(s)"`，`("services", ...)` 那一行在 `bd1eab5` 上是 **1130**、`971e5ff` 之后是 **1148** | 这个值在父提交 `231bad7` 里**确实**是 1110，而被同一次修改插入的那条 `README_CLAIMS`（`citerefs citation`）把它推到了 1115——**改它的人正是写 1110 的人**。`citerefs` 抓不到：1110 和 1135 都在 `check_readme_counts` 里，而它只校验"行号落在所指名的函数内"，不校验"这行是不是说的那件事"。**带函数名只挡住了跨函数漂移，挡不住同函数内的滑行** |
+| 5 | 上一行修好之后，`1110` 这个值被当成了"已核对"的正确答案，留在了正文两处：§16.32 的 `check_readme_counts:1110` 与本节错位表第 4 行「数 get/post 那行（1110）」 | 数 `get:` / `post:` 的那行在本节写作的树（`bd1eab5`）上是 **1135**、`971e5ff` 给 `check_links` 插 18 行之后漂到 **1153**（`check_all.py:check_readme_counts:1155`）。`1110` 现在是 `listed_note = f"; count list {len(entries)} value(s)"`，`("services", ...)` 那一行在 `bd1eab5` 上是 **1130**、`971e5ff` 之后是 **1148** | 这个值在父提交 `231bad7` 里**确实**是 1110，而被同一次修改插入的那条 `README_CLAIMS`（`citerefs citation`）把它推到了 1115——**改它的人正是写 1110 的人**。`citerefs` 抓不到：1110 和 1135 都在 `check_readme_counts` 里，而它只校验"行号落在所指名的函数内"，不校验"这行是不是说的那件事"。**带函数名只挡住了跨函数漂移，挡不住同函数内的滑行** |
 
 #### 写这一节本身，又给 `citerefs` 喂了两次反例
 
@@ -5700,9 +5700,9 @@ files checked：                  139                  139
 **缺陷。** `unresolved` 这个列表里装的是两种东西：不带点的分支塞 `(key, msg)` 二元组，
 带点的分支塞一条**裸字符串**。消费它的循环按二元组解包：
 
-- 塞二元组：`check_all.py:check_docrefs:2700-2707`（不带点分支，`docs/10 §1` 走这条）
-- 塞裸字符串：`check_all.py:check_docrefs:2695-2698`（带点分支，既不是标题也不是列表项时走这条）—— 修前
-- 消费：`check_all.py:check_docrefs:2709-2713` `for key, msg in unresolved:`
+- 塞二元组：`check_all.py:check_docrefs:2466-2475`（不带点分支，`docs/10 §1` 走这条）
+- 塞裸字符串：`check_all.py:check_docrefs:2459-2464`（带点分支，既不是标题也不是列表项时走这条）—— 修前
+- 消费：`check_all.py:check_docrefs:2477-2484` `for key, msg in unresolved:`
 
 裸字符串被解包成二元组，于是 `ValueError: too many values to unpack (expected 2)`。
 
@@ -5800,7 +5800,7 @@ owner 决策（是否允许「第一段」这种写法），我不替 owner 裁�
 **改法。** 围栏正则同时认 `~~~` 与三反引号；行内改成「按等长反引号串配对」，而不是只配一对单反引号。
 
 **为什么改成行数中性。** 第一版是 2 行换 8 行（加了一段说明注释），干净克隆上立刻 `FAIL citerefs 6`：
-`contracts/README.md` 与本节共 6 处引用 `check_all.py:check_payload_refs:1401-1440`，插入 8 行把
+`contracts/README.md` 与本节共 6 处引用 `check_all.py:check_payload_refs:1425-1437`，插入 8 行把
 该区间推进了 `check_registry`。这正是 `citerefs` 存在的理由，也说明**在这个仓库里，改动一个被行号
 引用的文件时，行号中性是硬约束**。最终版 2 行换 2 行，`wc -l` 前后都是 **2564**，注释写进本节而不进代码。
 

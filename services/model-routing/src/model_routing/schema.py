@@ -146,6 +146,24 @@ CONTRACT_GAPS = [
      "handling": "没有实现这条拒绝，也没有 T25-0x 覆盖它（T25 表里没有一项）。"
                  "要么补一个 S20 编译检查源并加用例，要么把 S20 从依赖里去掉——"
                  "现在是两个都没做，属于已知未实现，不是已完成。"},
+    {"id": "MRT-22", "kind": "conflict",
+     "summary": "`deps.build_policy_source` 读 `document['routing']['flags']`"
+                "（连同 `weights` / `thresholds`），而 "
+                "`contracts/automation-policy.v2.schema.json` 的根级 "
+                "`additionalProperties: false` 且没有 `routing` 键。"
+                "S02 的 `_validate_document_shape` 只查必填键、不查多余键，"
+                "所以一份带 `routing` 的文档**能**发布成功并原样回源；"
+                "但它违反契约，任何按 schema 严格校验的消费方都会拒。"
+                "`filters.py:111` 的 `flags.get(\"kill_switch\")` 也挂在这条链上",
+     "handling": "`deps.py:95` 用 `document.get(\"routing\") or {}`：缺 `routing` "
+                 "段时给空 flags 与 `scoring.DEFAULT_WEIGHTS`，**不** 503。"
+                 "方案对此没有正面规定——§9 只说「S02 策略读取失败 → 503，不套用"
+                 "默认策略」（行 612），§4.1 的表是默认**权重**而非「允许缺路由段」。"
+                 "所以这是实现自己的选择，不是契约要求；不发明 `routing` 的 schema。"
+                 "真正的 kill switch 语义要等 S02 的 `safety_tightening`"
+                 "（plans/S02 §10.2）落地；在此之前 `kill_switch` 这个 flag"
+                 "在真实上游下恒为缺席，只能当「无信号」读，不能当「未启用」"
+                 "证明。不修改 contracts/。"},
 ]
 
 

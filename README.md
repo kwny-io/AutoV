@@ -1,19 +1,19 @@
 # AutoV
 
-> An advanced video creates automatic flow
+> 短剧 / 漫剧企业级 AIGC 生产平台。核心难点不是调通视频生成模型，而是让付费生成调用**可预算、可追溯、失败可恢复**。
 
 短剧 / 漫剧企业级生产平台的工程仓库。
 
-本仓库当前处于 **骨架阶段向实现过渡**：目录、服务元数据、契约与设计文档已经就位。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次逐个实现，目前 `tenant-access`（S01）、`revision-snapshot`（S08）、`lineage-impact`（S09）、`orchestration`（S21）、`scheduler-quota`（S22）、`budget-ledger`（S23）、`model-registry`（S24）与 `artifact-ingest`（S28）已有可运行的最小内核与测试，其余 40 个服务仍为 `design_only`。
+本仓库是这条链路的工程实现：把「剧本 → 分镜 → 素材生成 → 配音配乐 → 剪辑合成 → 交付」拆成 **48 个业务服务**，**全部有实现与测试**（4584 个用例全部通过），共享 SDK、契约与 17 篇设计文档齐备。业务服务按 [docs/16 §6](docs/16-migration-acceptance.md) 的 W1–W5 波次实现。
 
 ## 现在有什么
 
 | 内容 | 位置 | 状态 |
 |---|---|---|
-| 48 个服务目录与元数据 | `services/<slug>/` | 元数据完整；8 个有实现（S01、S08、S09、S21、S22、S23、S24、S28），40 个 `src/` 为空 |
+| 48 个业务服务 | `services/<slug>/` | **全部有实现与测试**，4584 个用例全部通过 |
 | 共享 SDK（幂等 / 事件 / TCT） | `platform/*-sdk/src/` | 已实现，有单测 |
-| 13 个 Agent 角色 | `agents/<role>/` | 定义待填，限额未分配 |
-| 9 个供应商连接器 | `connectors/<provider>/<channel>/` | 全部 `disabled` |
+| 13 个 Agent 角色 | `agents/<role>/` | 目录与元数据就位，**定义与 prompts 待填** |
+| 9 个供应商连接器 | `connectors/<provider>/<channel>/` | 代码就位，**默认 `disabled`**——安全设计，账户探测通过后才 `validating → active` |
 | 契约（OpenAPI / schema / 事件） | `contracts/` | 设计稿，已校验可解析 |
 | 设计文档 17 篇 | `docs/` | 从设计包迁入，链接已修正 |
 | 实现方案 | `plans/` | 按服务分文件，进行中 |
@@ -70,7 +70,7 @@ docs/                 17 篇设计文档 + 设计包存档（后者只读）
 
 ## 本地开发
 
-目前 S01、S08、S09、S21、S22、S23、S24、S28 有可运行的构建，其余 40 个服务的 `src/` 为空。`service.yaml` / `agent.yaml` / `connector.yaml` 均由 `contracts/service-catalog.v2.json` 派生，改动请改 catalog 后重新生成，不要手改生成物。
+48 个服务均有可运行的构建与测试：`python -m pytest -q`，4584 个用例全部通过。\n\n> 注：本地若配置了 HTTP 代理，需把 `127.0.0.1,localhost` 加入 `NO_PROXY`，否则 2 个「连接被拒」用例会被代理拦截成 502。`service.yaml` / `agent.yaml` / `connector.yaml` 均由 `contracts/service-catalog.v2.json` 派生，改动请改 catalog 后重新生成，不要手改生成物。
 
 ```bash
 python -m pytest -q

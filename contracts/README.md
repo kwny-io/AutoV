@@ -1483,7 +1483,7 @@ python tools/check_all.py --list
 python tools/check_all.py --only links,examples
 ```
 
-二十三项检查：`json`（148 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
+二十三项检查：`json`（149 个 JSON 解析）、`payloads`（110 条 `schema_ref` / `data_schema_ref`
 都指向真实文件，其中 55 个 topic 带 payload schema；另报 64 个顶层 schema 文件里有 8 个不被任何
 topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 用 `$ref` 指着，不是错误，见缺口 7）、
 `openapi`（`openapi.v2.yaml` 里 43 处 `$ref`：11 处指向真实文件、全部可达；另 32 处是
@@ -1497,7 +1497,7 @@ topic 指到——那 8 个是接口的请求/响应体，被 `openapi.v2.yaml` 
 `len(tools)`：12 个工具的 `readOnlyHint` 必须与 `required_scope` 在只读/写入上一致、
 `required` 的键必须在 `properties` 里、3 处跨文件 `$ref` 必须指向真实 schema；6 个 scope
 取值只报不判——`publish` 不在 `docs/13` 的五档闭集内是授权决策，见缺口 2）、`checkids`（四份 QC 方案里 99 个
-`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1186 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数；
+`check_id` 是否符合 schema 的三段命名，以及 146 处正文引用是否都有登记）、`links`（1193 条相对链接全部可达；另有 `docs/design-package/` 的 56 个 md、94 条链接按 AGENTS.md 是只读存档，不核但报数；
 还走遍全树核对「有多少 md 被 `glob` 藏起来」——点目录里只允许 `.claude/worktrees/` 里的 md 不被扫，
 别处出现一个就报错，此前这是 `glob` 的副作用而非断言）、`catalog`
 （服务 id、topic `producer`、`published_events`、`depends_on` 的目标都存在，
@@ -1532,9 +1532,9 @@ S47 把 `drama.model-registry.v2` 和 `model.route.selected` 配在一起，而�
 `drama.model-routing.v2` 上——两边 producer 都是 S25，这正是 `来源` 列看起来没问题而 topic 错了的原因。
 不判的东西也说清楚：**未声明的事件名不判**。作为反引号 token 它和权限动作名
 （`asset.voice.authorize`、`platform.tenant.provision`）分不开——`plans/*.md` 里未声明的
-带点反引号 token 共 709 处，其中 231 是文件名（`service.yaml`）、59 是带版本的文档名
-（`shot-spec.v1`），剩下 419 处「事件或动作形状」的里权限动作名占大头，没有任何注册表
-能把这 419 处一条条判开；且方案本来就会提议新事件并当场写明（S04「新增，待登记」、S06、S44）。S47 的三条、
+带点反引号 token 共 744 处，其中 252 是文件名（`service.yaml`）、65 是带版本的文档名
+（`shot-spec.v1`），剩下 427 处「事件或动作形状」的里权限动作名占大头，没有任何注册表
+能把这 427 处一条条判开；且方案本来就会提议新事件并当场写明（S04「新增，待登记」、S06、S44）。S47 的三条、
 S29 的一条这类「写了但注册表没有」的行，在各自方案的缺口表里都记着，这里只报**不可判**的数量）、
 `readme`（上面这段里的数必须还是各检查真跑出来的数）、
 `docsreadme`（`docs/README.md` 的 9 条断言——7 处数字：开头「17 篇」、两处「48 服务」、
@@ -1544,7 +1544,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 另外 6 个数当时都是对的，这正是要补检查的理由——6 个对的和 1 个错的花在同一段里，
 读起来像一段校对过的文字）、
 `citerefs`（正文里引用 `check_all.py` 行号的地方，必须**连函数名一起写**，如
-`check_all.py:check_payload_refs:1401-1440`，且那个函数确实覆盖这几行；扫 139 个 md，
+`check_all.py:check_payload_refs:1425-1437`，且那个函数确实覆盖这几行；扫 139 个 md，
 今天共 **13** 处引用、13 处都指名。
 补这一格的理由是本轮实测到的：一批引用早已漂进**旁边的**函数里，而文件长度还够，任何只看
 「行号存在」的检查都会放过它们；其中一处就在本文件的 `links` 那一格里，是描述 `payloads`
@@ -1553,7 +1553,7 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 **确实**还在某个 `check_*` 里。函数名是这段引用里唯一不随插入代码移动的部分，所以它是必填项，
 匿名行号直接 FAIL）、
 `planrefs`（方案引方案的 `Snn §X` 必须命中 `plans/Snn-*.md` 里真实存在的标题；扫 139 个 md，
-今天共 **491** 处引用，其中 **456** 处受检（另 35 处在豁免的更正报告里），470 个段号对，470/470 命中。
+今天共 **502** 处引用，其中 **467** 处受检（另 35 处在豁免的更正报告里），481 个段号对，481/481 命中。
 这一类可查是因为**归属写进了文本**：`Snn §X` 自带 `Snn`，而「行 537」要另找上下文才知道属于谁。
 补它之前已经查出两处真错：`plans/S45-audit.md` 引了 S07 的 §11（S07 只到 §10）与
 `plans/S19-agent-runtime.md` 引了 S08 的 §6.5（S08 的 §6 只到 §6.4）。
@@ -1561,8 +1561,8 @@ S29 的一条这类「写了但注册表没有」的行，在各自方案的缺�
 它的更正表故意把错误写法放进单元格，而没有任何词法特征能把它和活引用分开，实测过两种都不成立
 （遮行内代码会连 11 处真引用一起遮掉，遮 `「」` 又漏掉反引号里的那一处）。
 这是真缺口：报告之外的错引用会被拦住，报告里的不会。）、
-`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **474** 处引用，其中 **444** 处受检，
-488 个段号对：484 个命中标题、3 个命中有序列表项、1 个两样都不是（见下）。
+`docrefs`（`docs/NN §X` 必须命中 `docs/NN-*.md` 的编号标题；共 **480** 处引用，其中 **450** 处受检，
+494 个段号对：490 个命中标题、3 个命中有序列表项、1 个两样都不是（见下）。
 和 `planrefs` 同一族，但这类引用**几乎都写在 markdown 链接里**（`[docs/07 §1.5](../docs/07-…)`），
 路径由 `links` 验，这里只验段号——此前没有任何检查看这一段。
 `§N.M` 有两种落法：标题 `## N.M`，或者 §N 之下第 M 个有序列表项。后者是 `docs/07 §1.5` 的写法，
@@ -1583,14 +1583,14 @@ mcp-tools、openapi.yaml），因为没有检查报这几个数。加这一格�
 「48 个 topic，注册 55 个 event_type」，而 `event-topics.v2.json` 里是 **55 个 topic**，
 本文件另外 9 行也都写 55——同一份文件里，第五节之后全对，开头那张表错了一个数。
 
-那 32 个数是 `json` 148、`schema_ref` 110、payload topic 55、openapi file ref 11、
-topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1186、stated invariant 5、
+那 32 个数是 `json` 149、`schema_ref` 110、payload topic 55、openapi file ref 11、
+topic field 10、secret class 6、MCP tool 12、`check_id` 99、`links` 1193、stated invariant 5、
 `scaffold` 118、`examples` 71、unmapped 1、archive match 51、safety provider 8、
 interaction step 18、interaction endpoint 36、plantopics plan file 49、plantopics topic mention 58、
-plantopics unjudged tokens 709、plantopics filename tokens 231、
-plantopics versioned-doc tokens 59、plantopics event-or-action tokens 419、docsreadme count 9、
-citerefs citation 13、planrefs ref 491、planrefs judged 456、planrefs pair 470、planrefs pair hit 470、
-docrefs ref 474、docrefs judged 444、docrefs pair 488。
+plantopics unjudged tokens 744、plantopics filename tokens 252、
+plantopics versioned-doc tokens 65、plantopics event-or-action tokens 427、docsreadme count 9、
+citerefs citation 13、planrefs ref 502、planrefs judged 467、planrefs pair 481、planrefs pair hit 481、
+docrefs ref 480、docrefs judged 450、docrefs pair 494。
 加这一格当天就抓到一个：
 `scaffold` 原写着 120，而它实际只比对了 **118** 个生成物——多出来的 2 个是 `check_scaffold`
 自己拷进临时根做输入的 `service-catalog.v2.json` 和 `event-topics.v2.json`，
@@ -1835,7 +1835,7 @@ owner 的决定，不是我能在检查里替它选的。白名单**双向**校�
    `contracts/**/*.json` 6 处（`execution-context` 5、`automation-policy` 1）。
    其中 6 个的唯一引用入口就是那 11 条 YAML。
 
-   `payloads` 检查两个方向都报（`check_all.py:check_payload_refs:1401-1441`）：topic 指到的文件
+   `payloads` 检查两个方向都报（`check_all.py:check_payload_refs:1425-1437`）：topic 指到的文件
    必须存在，反向则数「`contracts/*.schema.json` 里几个没被任何 topic 指到」，今天印
    `8 of them named by no topic`。**反向只报数不判红**——这 8 个不是错误，是接口的请求/响应体，
    每一个都有入向 `$ref`（见上表）。`openapi.v2.yaml` 的 `$ref` 也有检查（注册名 `openapi`，

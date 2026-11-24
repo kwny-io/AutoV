@@ -25,6 +25,7 @@ from idempotency_sdk import (
     canonical_request_hash,
 )
 
+from governance_policy.schema import CONTRACT_GAPS
 from governance_policy.service import GovernancePolicyService, ServiceError
 
 DB_PATH = os.environ.get("S02_DB", ":memory:")
@@ -161,4 +162,6 @@ def get_policy_revision(policy_id: str, revision: int,
 def readiness():
     with closing(_conn.execute("SELECT 1")) as cur:
         cur.fetchone()
-    return {"status": "ready"}
+    # `contract_gaps` 一起吐出：catalog 把 `:evaluate` 写成查询入口而本服务
+    # 只有 `:resolve-effective`（POL-1），不在这里说，运维会以为面已经齐了。
+    return {"status": "ready", "contract_gaps": CONTRACT_GAPS}
